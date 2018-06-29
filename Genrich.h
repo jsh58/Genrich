@@ -124,7 +124,6 @@ typedef union file {
 typedef struct chrom {
   char* name;
   int len;
-  struct chrom* next;
 } Chrom;
 
 typedef struct read {
@@ -134,5 +133,4 @@ typedef struct read {
   char* name;
   char* chrom;
   struct read* next;
-//  struct read* prev;
 } Read;

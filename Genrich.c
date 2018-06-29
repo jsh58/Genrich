@@ -779,13 +779,15 @@ int calcDist(char* qname, char* seq, char* cigar) {
   return length + offset;
 }
 
-/* Chrom* loadChrom()
+/* void loadChrom()
  * Save chromosome and length from SAM header line.
  */
-Chrom* loadChrom(char* line, int xcount, char** xchrList) {
+void loadChrom(char* line, int* chromLen, Chrom*** chrom,
+    int xcount, char** xchrList) {
+  // determine if SAM header line has chrom info
   char* tag = strtok(line, TAB);
   if (tag == NULL || strcmp(tag, "@SQ"))
-    return NULL;
+    return;
   char* name = NULL, *len = NULL;
   char* field = strtok(NULL, TAB);
   while (field != NULL) {
@@ -796,26 +798,29 @@ Chrom* loadChrom(char* line, int xcount, char** xchrList) {
     field = strtok(NULL, TAB);
   }
   if (name == NULL || len == NULL)
-    return NULL;
+    return;
 
-  // skip if chrom is on list
+  // skip if chrom is on skipped list
   for (int i = 0; i < xcount; i++)
     if (!strcmp(xchrList[i], name))
-      return NULL;
+      return;
 
   // create Chrom*
   Chrom* c = (Chrom*) memalloc(sizeof(Chrom));
   c->name = (char*) memalloc(1 + strlen(name));
   strcpy(c->name, name);
   c->len = getInt(len);
-  c->next = NULL;
-  return c;
+
+  // save to list
+  *chrom = (Chrom**) memrealloc(*chrom, (*chromLen+1) * sizeof(Chrom*));
+  (*chrom)[*chromLen] = c;
+  (*chromLen)++;
 }
 
 /* int printBED()
  * Print BED interval. Return fragment length.
  */
-int printBED(File out, bool gzOut, Chrom* first,
+int printBED(File out, bool gzOut, int chromLen, Chrom** chrom,
     char* rname, int start, int end, char* qname) {
   // check validity of positions
   if (start < 0) {
@@ -823,14 +828,14 @@ int printBED(File out, bool gzOut, Chrom* first,
       qname, rname);
     start = 0;
   }
-  Chrom* c;
-  for (c = first; c != NULL; c = c->next)
-    if (! strcmp(c->name, rname))
+  int i;
+  for (i = 0; i < chromLen; i++)
+    if (! strcmp(chrom[i]->name, rname))
       break;
-  if (c != NULL && end > c->len) {
+  if (i < chromLen && end > chrom[i]->len) {
     fprintf(stderr, "Warning! Read %s prevented from extending past %d on %s\n",
-      qname, c->len, rname);
-    end = c->len;
+      qname, chrom[i]->len, rname);
+    end = chrom[i]->len;
   }
 
   // print BED record
@@ -847,7 +852,8 @@ int printBED(File out, bool gzOut, Chrom* first,
 /* int printPaired()
  * Control printing for a proper pair. Return length.
  */
-int printPaired(File out, bool gzOut, Chrom* first, Read* r) {
+int printPaired(File out, bool gzOut, int chromLen,
+    Chrom** chrom, Read* r) {
   // ensure start < end
   int start, end;
   if (r->posR1 > r->posR2) {
@@ -857,23 +863,26 @@ int printPaired(File out, bool gzOut, Chrom* first, Read* r) {
     start = r->posR1;
     end = r->posR2;
   }
-  return printBED(out, gzOut, first, r->chrom, start, end, r->name);
+  return printBED(out, gzOut, chromLen, chrom, r->chrom,
+    start, end, r->name);
 }
 
 /* void printSingle()
  * Control printing for an unpaired alignment.
  */
-void printSingle(File out, bool gzOut, Chrom* first,
-    char* qname, int flag, char* rname, int pos, int length,
-    bool extendOpt, int extend) {
+void printSingle(File out, bool gzOut, int chromLen,
+    Chrom** chrom, char* qname, int flag, char* rname,
+    int pos, int length, bool extendOpt, int extend) {
   if (extendOpt) {
     if (flag & 0x10)
-      printBED(out, gzOut, first, rname, pos + length - extend,
-        pos + length, qname);
+      printBED(out, gzOut, chromLen, chrom, rname,
+        pos + length - extend, pos + length, qname);
     else
-      printBED(out, gzOut, first, rname, pos, pos + extend, qname);
+      printBED(out, gzOut, chromLen, chrom, rname, pos,
+        pos + extend, qname);
   } else
-    printBED(out, gzOut, first, rname, pos, pos + length, qname);
+    printBED(out, gzOut, chromLen, chrom, rname, pos,
+      pos + length, qname);
 }
 
 /* int printAvgExt()
@@ -881,34 +890,35 @@ void printSingle(File out, bool gzOut, Chrom* first,
  *   "extend to average length" option.
  *   Return number printed.
  */
-int printAvgExt(File out, bool gzOut, Chrom* first,
-    Read* r, float totalLen, int pairedPr) {
-  int printed = 0;  // counting variable
+int printAvgExt(File out, bool gzOut, int chromLen,
+    Chrom** chrom, int readLen, Read** unpaired,
+    float totalLen, int pairedPr) {
+  // determine average fragment length
   int avgLen = 0;
   if (! pairedPr) {
     fprintf(stderr, "Warning! No paired alignments to calculate avg ");
     fprintf(stderr, "frag length --\n  Printing singletons \"as is\"\n");
   } else
     avgLen = (int) (totalLen / pairedPr + 0.5);
-  Read* temp;
-  while (r != NULL) {
+
+  int printed = 0;  // counting variable
+  for (int i = 0; i < readLen; i++) {
+    Read* r = unpaired[i];
     if (! avgLen)
-      printBED(out, gzOut, first, r->chrom, r->posR1,
-        r->posR2, r->name);
+      printBED(out, gzOut, chromLen, chrom, r->chrom,
+        r->posR1, r->posR2, r->name);
     else if (r->strand)
-      printBED(out, gzOut, first, r->chrom, r->posR1,
-        r->posR1 + avgLen, r->name);
+      printBED(out, gzOut, chromLen, chrom, r->chrom,
+        r->posR1, r->posR1 + avgLen, r->name);
     else
-      printBED(out, gzOut, first, r->chrom,
+      printBED(out, gzOut, chromLen, chrom, r->chrom,
         r->posR2 - avgLen, r->posR2, r->name);
     printed++;
 
     // free memory
-    temp = r->next;
     free(r->chrom);
     free(r->name);
     free(r);
-    r = temp;
   }
   return printed;
 }
@@ -917,8 +927,8 @@ int printAvgExt(File out, bool gzOut, Chrom* first,
  * Save info for an unpaired alignment (for "extend
  *   to average length" option).
  */
-void saveSingle(Read* dummy, char* qname, int flag,
-    char* rname, int pos, int length) {
+void saveSingle(int* readLen, Read*** unpaired, char* qname,
+    int flag, char* rname, int pos, int length) {
   // create new Read
   Read* r = (Read*) memalloc(sizeof(Read));
   r->name = (char*) memalloc(1 + strlen(qname));
@@ -929,9 +939,11 @@ void saveSingle(Read* dummy, char* qname, int flag,
   r->posR1 = pos;
   r->posR2 = pos + length;
 
-  // insert r into linked list
-  r->next = dummy->next;
-  dummy->next = r;
+  // save to list
+  *unpaired = (Read**) memrealloc(*unpaired,
+    (*readLen + 1) * sizeof(Read*));
+  (*unpaired)[*readLen] = r;
+  (*readLen)++;
 }
 
 Read* savePaired(Read* dummy, char* qname, int flag,
@@ -980,22 +992,23 @@ Read* savePaired(Read* dummy, char* qname, int flag,
   return NULL;
 }
 
-void parseAlign(File out, bool gzOut, Chrom* first,
-    Read* headPaired, Read* headSingle, char* qname,
-    int flag, char* rname, int pos, int length,
-    double* totalLen, int* paired, int* single, int* pairedPr, int* singlePr,
+void parseAlign(File out, bool gzOut, int chromLen,
+    Chrom** chrom, Read* dummy, int* readLen,
+    Read*** unpaired, char* qname, int flag, char* rname,
+    int pos, int length, double* totalLen, int* paired,
+    int* single, int* pairedPr, int* singlePr,
     bool singleOpt, bool extendOpt, int extend,
     bool avgExtOpt) {
 
   if (flag & 0x2) {
     // paired alignment: save information
     (*paired)++;
-    Read* prev = savePaired(headPaired, qname, flag,
+    Read* prev = savePaired(dummy, qname, flag,
       rname, flag & 0x10 ? pos + length : pos);
     if (prev != NULL) {
       Read* r = prev->next;
       (*pairedPr)++;
-      *totalLen += printPaired(out, gzOut, first, r);
+      *totalLen += printPaired(out, gzOut, chromLen, chrom, r);
 
       // remove Read from linked list
       prev->next = r->next;
@@ -1007,11 +1020,11 @@ void parseAlign(File out, bool gzOut, Chrom* first,
     (*single)++;
     if (singleOpt) {
       if (avgExtOpt)
-        saveSingle(headSingle, qname, flag, rname,
+        saveSingle(readLen, unpaired, qname, flag, rname,
           pos, length);
       else {
-        printSingle(out, gzOut, first, qname, flag, rname,
-          pos, length, extendOpt, extend);
+        printSingle(out, gzOut, chromLen, chrom, qname,
+          flag, rname, pos, length, extendOpt, extend);
         (*singlePr)++;
       }
     }
@@ -1037,28 +1050,23 @@ int readFile(File in, File out,
     char** match, char** mism, int threads) {
 
   char* line = (char*) memalloc(MAX_SIZE);
-  Chrom* first = NULL, *prev = NULL;
-  Read* headPaired = (Read*) memalloc(sizeof(Read));
-  Read* headSingle = (Read*) memalloc(sizeof(Read));
-  headPaired->next = headSingle->next = NULL;
+  int chromLen = 0;
+  Chrom** chrom = NULL;
+  int readLen = 0;
+  Read** unpaired = NULL;
+  Read* dummy = (Read*) memalloc(sizeof(Read));
+  dummy->next = NULL;
 
   int count = 0;
   while (getLine(line, MAX_SIZE, in, gz1) != NULL) {
 
     if (line[0] == '@') {
       // load chrom lengths from header
-      Chrom* c = loadChrom(line, xcount, xchrList);
-      if (c != NULL) {
-        if (first == NULL)
-          first = c;
-        else
-          prev->next = c;
-        prev = c;
-      }
+      loadChrom(line, &chromLen, &chrom, xcount, xchrList);
       continue;
     }
-/*for (Chrom* c = first; c != NULL; c = c->next)
-  printf("%s: %d\n", c->name, c->len);
+/*for (int i = 0; i < chromLen; i++)
+  printf("%s: %d\n", chrom[i]->name, chrom[i]->len);
 exit(0);
 */
 
@@ -1097,7 +1105,8 @@ exit(0);
 
     // save alignment information
     int length = calcDist(qname, seq, cigar); // distance to 3' end
-    parseAlign(out, gzOut, first, headPaired, headSingle,
+    parseAlign(out, gzOut, chromLen, chrom, dummy,
+      &readLen, &unpaired,
       qname, flag, rname, pos, length, totalLen,
       paired, single, pairedPr, singlePr,
       singleOpt, extendOpt, extend, avgExtOpt);
@@ -1108,14 +1117,15 @@ exit(0);
 
   // process single alignments w/ avgExtOpt
   if (avgExtOpt)
-    *singlePr += printAvgExt(out, gzOut, first,
-      headSingle->next, *totalLen, *pairedPr);
+    *singlePr += printAvgExt(out, gzOut, chromLen, chrom,
+      readLen, unpaired, *totalLen, *pairedPr);
 
   // free Reads; check for orphan paired alignments
-  Read* r = headPaired->next;
+  Read* r = dummy->next;
   Read* tmp;
   while (r != NULL) {
-    fprintf(stderr, "Warning! Read %s missing its pair -- not printed\n", r->name);
+    fprintf(stderr, "Warning! Read %s missing its pair -- not printed\n",
+      r->name);
     (*orphan)++;
     tmp = r->next;
     free(r->chrom);
@@ -1126,16 +1136,13 @@ exit(0);
 
   // free memory
   free(line);
-  free(headPaired);
-  free(headSingle);
-  Chrom* c = first;
-  Chrom* temp;
-  while (c != NULL) {
-    free(c->name);
-    temp = c->next;
-    free(c);
-    c = temp;
+  free(dummy);
+  for (int i = 0; i < chromLen; i++) {
+    free(chrom[i]->name);
+    free(chrom[i]);
   }
+  free(chrom);
+  free(unpaired);
 
 //exit(0);
 
@@ -1450,8 +1457,13 @@ void runProgram(char* outFile, char* inFile,
         fprintf(stderr, "    Unmapped:           %10d\n", unmapped);
       if (supp)
         fprintf(stderr, "    Supplementary:      %10d\n", supp);
-      if (skipped)
+      if (skipped) {
         fprintf(stderr, "    To skipped refs:    %10d\n", skipped);
+        fprintf(stderr, "      (%s", xchrList[0]);
+        for (int i = 1; i < xcount; i++)
+          fprintf(stderr, ",%s", xchrList[i]);
+        fprintf(stderr, ")\n");
+      }
       fprintf(stderr, "    Paired alignments:  %10d\n", paired);
       if (orphan)
         fprintf(stderr, "      orphan alignments:%10d\n", orphan);
@@ -1552,8 +1564,8 @@ void getArgs(int argc, char** argv) {
       case INFILE: inFile = optarg; break;
       case OUTFILE: outFile = optarg; break;
       case SINGLEOPT: singleOpt = true; break;
-      case EXTENDOPT: extend = getInt(optarg); extendOpt = singleOpt = true; break;
-      case AVGEXTOPT: avgExtOpt = singleOpt = true; break;
+      case EXTENDOPT: extend = getInt(optarg); extendOpt = true; break;
+      case AVGEXTOPT: avgExtOpt = true; break;
       case XCHROM: xchrom = optarg; break;
       case VERBOSE: verbose = true; break;
       case VERSOPT: printVersion(); break;
@@ -1582,8 +1594,15 @@ void getArgs(int argc, char** argv) {
     error("", ERRFILE);
     usage();
   }
-  if (extendOpt && extend <= 0)
-    exit(error("", ERREXTEND));
+  if (avgExtOpt) {
+    singleOpt = true;
+    extendOpt = false; // avgExtOpt takes precedence
+  }
+  if (extendOpt) {
+    singleOpt = true;
+    if (extend <= 0)
+      exit(error("", ERREXTEND));
+  }
 
   // save list of chromosomes to ignore
   int xcount = 0;
