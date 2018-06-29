@@ -29,7 +29,7 @@ void printVersion(void) {
  * Prints usage information.
  */
 void usage(void) {
-  fprintf(stderr, "Usage: ./Genrich {-%c <file> -%c <file>}", INFILE, OUTFILE);
+  fprintf(stderr, "Usage: ./Genrich  -%c <file>  -%c <file>", INFILE, OUTFILE);
   fprintf(stderr, "  [optional arguments]\n");
   fprintf(stderr, "Required arguments:\n");
   fprintf(stderr, "  -%c  <file>       Input SAM file\n", INFILE);
@@ -40,6 +40,7 @@ void usage(void) {
   fprintf(stderr, "                     increased to specified value\n");
   fprintf(stderr, "  -%c               Print unpaired alignments, with fragment length\n", AVGEXTOPT);
   fprintf(stderr, "                     increased to average value of paired alignments\n");
+  fprintf(stderr, "  -%c  <arg>        Comma-separated list of chromosomes to ignore\n", XCHROM);
 /*  fprintf(stderr, "  -%c               Option to check for dovetailing (with 3' overhangs)\n", DOVEOPT);
   fprintf(stderr, "  -%c  <int>        Minimum overlap of dovetailed alignments (def. %d)\n", DOVEOVER, DEFDOVE);
   fprintf(stderr, "  -%c               Option to produce shortest stitched read\n", MAXOPT);
@@ -74,6 +75,16 @@ int error(char* msg, enum errCode err) {
  */
 void* memalloc(int size) {
   void* ans = malloc(size);
+  if (ans == NULL)
+    exit(error("", ERRMEM));
+  return ans;
+}
+
+/* void* memrealloc()
+ * Changes the size of a heap block.
+ */
+void* memrealloc(void* ptr, int size) {
+  void* ans = realloc(ptr, size);
   if (ans == NULL)
     exit(error("", ERRMEM));
   return ans;
@@ -771,7 +782,7 @@ int calcDist(char* qname, char* seq, char* cigar) {
 /* Chrom* loadChrom()
  * Save chromosome and length from SAM header line.
  */
-Chrom* loadChrom(char* line) {
+Chrom* loadChrom(char* line, int xcount, char** xchrList) {
   char* tag = strtok(line, TAB);
   if (tag == NULL || strcmp(tag, "@SQ"))
     return NULL;
@@ -786,6 +797,11 @@ Chrom* loadChrom(char* line) {
   }
   if (name == NULL || len == NULL)
     return NULL;
+
+  // skip if chrom is on list
+  for (int i = 0; i < xcount; i++)
+    if (!strcmp(xchrList[i], name))
+      return NULL;
 
   // create Chrom*
   Chrom* c = (Chrom*) memalloc(sizeof(Chrom));
@@ -869,9 +885,10 @@ int printAvgExt(File out, bool gzOut, Chrom* first,
     Read* r, float totalLen, int pairedPr) {
   int printed = 0;  // counting variable
   int avgLen = 0;
-  if (! pairedPr)
-    fprintf(stderr, "Warning! No paired alignments to calculate avg frag length\n");
-  else
+  if (! pairedPr) {
+    fprintf(stderr, "Warning! No paired alignments to calculate avg ");
+    fprintf(stderr, "frag length --\n  Printing singletons \"as is\"\n");
+  } else
     avgLen = (int) (totalLen / pairedPr + 0.5);
   Read* temp;
   while (r != NULL) {
@@ -888,6 +905,7 @@ int printAvgExt(File out, bool gzOut, Chrom* first,
 
     // free memory
     temp = r->next;
+    free(r->chrom);
     free(r->name);
     free(r);
     r = temp;
@@ -1012,8 +1030,9 @@ int readFile(File in, File out,
     float mismatch, bool maxLen,
     double* totalLen, int* unmapped, int* paired, int* single,
     int* orphan, int* pairedPr, int* singlePr,
+    int* supp, int* skipped, int xcount, char** xchrList,
     bool singleOpt, bool extendOpt, int extend, bool avgExtOpt,
-    int offset, int maxQual,
+    int offset,
     bool gz1, bool gz2, bool gzOut, bool fjoin,
     char** match, char** mism, int threads) {
 
@@ -1028,7 +1047,7 @@ int readFile(File in, File out,
 
     if (line[0] == '@') {
       // load chrom lengths from header
-      Chrom* c = loadChrom(line);
+      Chrom* c = loadChrom(line, xcount, xchrList);
       if (c != NULL) {
         if (first == NULL)
           first = c;
@@ -1061,7 +1080,19 @@ exit(0);
       continue;
     }
     if (flag & 0xF00) {
+      (*supp)++;
       continue;
+    }
+    // check for alignment to ignored chromosome
+    if (xcount) {
+      int i;
+      for (i = 0; i < xcount; i++)
+        if (! strcmp(xchrList[i], rname))
+          break;
+      if (i != xcount) {
+        (*skipped)++;
+        continue;
+      }
     }
 
     // save alignment information
@@ -1080,13 +1111,14 @@ exit(0);
     *singlePr += printAvgExt(out, gzOut, first,
       headSingle->next, *totalLen, *pairedPr);
 
-  // check for orphan paired alignments
+  // free Reads; check for orphan paired alignments
   Read* r = headPaired->next;
   Read* tmp;
   while (r != NULL) {
     fprintf(stderr, "Warning! Read %s missing its pair -- not printed\n", r->name);
     (*orphan)++;
     tmp = r->next;
+    free(r->chrom);
     free(r->name);
     free(r);
     r = tmp;
@@ -1345,60 +1377,6 @@ bool openRead(char* inFile, File* in) {
   return gzip;
 }
 
-/* void loadQual()
- * Load quality score profiles from file.
- */
-void loadQual(char* qualFile, int maxQual,
-    char*** match, char*** mism) {
-  File qual;
-  bool gz = openRead(qualFile, &qual);
-  char* line = memalloc(MAX_SIZE);
-
-  char** arr = NULL;  // array to save to
-  int i = 0, matIdx = 0, misIdx = 0;  // array indices
-  while (getLine(line, MAX_SIZE, qual, gz) != NULL) {
-    if (line[0] == '#' || line[0] == '\n') {
-      // determine target array
-      i = 0;
-      if (! strcmp(line + 1, "match\n"))
-        arr = *match;
-      else if (! strcmp(line + 1, "mismatch\n"))
-        arr = *mism;
-    } else if (arr == NULL) {
-      continue;
-    } else {
-      // save values to array
-      char* tok = strtok(line, CSV);
-      for (int j = 0; j < maxQual + 1; j++) {
-        if (tok == NULL) {
-          char* msg = (char*) memalloc(MAX_SIZE);
-          sprintf(msg, "(range [0, %d])  %s",
-            maxQual, qualFile);
-          exit(error(msg, ERRRANGE));
-        }
-        arr[i][j] = getInt(tok);
-        tok = strtok(NULL, CSV);
-      }
-      i++;
-      if ( (arr == *match && ++matIdx > maxQual)
-          || (arr == *mism && ++misIdx > maxQual) )
-        arr = NULL;
-    }
-  }
-
-  // make sure all values were loaded
-  if (matIdx < maxQual + 1 || misIdx < maxQual + 1) {
-    char* msg = (char*) memalloc(MAX_SIZE);
-    sprintf(msg, "(range [0, %d])  %s", maxQual, qualFile);
-    exit(error(msg, ERRRANGE));
-  }
-
-  if ( (gz && gzclose(qual.gzf) != Z_OK) ||
-      (! gz && fclose(qual.f) ) )
-    exit(error("", ERRCLOSE));
-  free(line);
-}
-
 
 /* void runProgram()
  * Controls the opening/closing of files,
@@ -1411,7 +1389,8 @@ void runProgram(char* outFile, char* inFile,
     char* doveFile, int doveOverlap, char* alnFile,
     int alnOpt, int gzOut, bool fjoin,
     float mismatch, bool maxLen,
-    int offset, int maxQual, char* qualFile,
+    int offset,
+    int xcount, char** xchrList,
     bool verbose, int threads) {
 
   // get first set of input file names
@@ -1449,7 +1428,7 @@ void runProgram(char* outFile, char* inFile,
       fprintf(stderr, "Processing file: %s\n", filename);
     double totalLen = 0.0;  // total length of paired reads
     int unmapped = 0, paired = 0, single = 0, orphan = 0,
-      pairedPr = 0, singlePr = 0;  // counting variables
+      pairedPr = 0, singlePr = 0, supp = 0, skipped = 0;  // counting variables
     int count = readFile(in, out,
       un1, un2, unFile != NULL,
       log, logFile != NULL,
@@ -1457,32 +1436,40 @@ void runProgram(char* outFile, char* inFile,
       dovetail && doveFile != NULL, aln, alnOpt,
       mismatch, maxLen,
       &totalLen, &unmapped, &paired, &single, &orphan,
-      &pairedPr, &singlePr,
+      &pairedPr, &singlePr, &supp, &skipped,
+      xcount, xchrList,
       singleOpt, extendOpt, extend, avgExtOpt,
-      offset, maxQual, gz1, gz2, gzOut, fjoin,
+      offset, gz1, gz2, gzOut, fjoin,
       match, mism, threads);
     tCount += count;
 
     // log counts
     if (verbose) {
       fprintf(stderr, "  SAM records analyzed: %10d\n", count);
-      fprintf(stderr, "    Unmapped:           %10d\n", unmapped);
+      if (unmapped)
+        fprintf(stderr, "    Unmapped:           %10d\n", unmapped);
+      if (supp)
+        fprintf(stderr, "    Supplementary:      %10d\n", supp);
+      if (skipped)
+        fprintf(stderr, "    To skipped refs:    %10d\n", skipped);
       fprintf(stderr, "    Paired alignments:  %10d\n", paired);
+      if (orphan)
+        fprintf(stderr, "      orphan alignments:%10d\n", orphan);
       fprintf(stderr, "    Unpaired alignments:%10d\n", single);
       fprintf(stderr, "  BED intervals written:%10d\n", singlePr + pairedPr);
       fprintf(stderr, "    Full fragments:     %10d\n", pairedPr);
       if (pairedPr)
-        fprintf(stderr, "      (avg. frag. length: %.1fbp)\n",
+        fprintf(stderr, "      (avg. length: %.1fbp)\n",
           totalLen / pairedPr);
-      if (orphan)
-        fprintf(stderr, "      orphans:          %10d\n", orphan);
-      fprintf(stderr, "    Singletons:         %10d\n", singlePr);
-      if (singlePr) {
-        if (extendOpt)
-          fprintf(stderr, "      (extended to length %dbp)\n", extend);
-        else if (avgExtOpt && paired)
-          fprintf(stderr, "      (extended to length %dbp)\n",
-            (int) (totalLen/pairedPr + 0.5));
+      if (singleOpt) {
+        fprintf(stderr, "    Singletons:         %10d\n", singlePr);
+        if (singlePr) {
+          if (extendOpt)
+            fprintf(stderr, "      (extended to length %dbp)\n", extend);
+          else if (avgExtOpt && pairedPr)
+            fprintf(stderr, "      (extended to length %dbp)\n",
+              (int) (totalLen/pairedPr + 0.5));
+        }
       }
     }
 
@@ -1503,17 +1490,13 @@ void runProgram(char* outFile, char* inFile,
       fprintf(stderr, "  Successfully stitched: %d\n", tStitch);
   }
 */
-/*
-  // free memory for qual score profiles
-  if (! fjoin && ! adaptOpt) {
-    for (int i = 0; i < maxQual + 1; i++) {
-      free(match[i]);
-      free(mism[i]);
-    }
-    free(match);
-    free(mism);
+
+  // free memory
+  if (xcount) {
+    for (int i = 0; i < xcount; i++)
+      free(xchrList[i]);
+    free(xchrList);
   }
-*/
 
   // close files
   if ( ( gzOut && ( gzclose(out.gzf) != Z_OK ||
@@ -1526,6 +1509,23 @@ void runProgram(char* outFile, char* inFile,
     exit(error("", ERRCLOSE));
 }
 
+/* int saveXChrom()
+ * Save list of chromosomes (ref names) to ignore.
+ *   Return count.
+ */
+int saveXChrom(char* xchrom, char*** xchrList) {
+  int i = 0;
+  char* chrom = strtok(xchrom, COM);
+  while (chrom != NULL) {
+    *xchrList = (char**) memrealloc(*xchrList, (i+1) * sizeof(char*));
+    (*xchrList)[i] = (char*) memalloc(1 + strlen(chrom));
+    strcpy((*xchrList)[i], chrom);
+    i++;
+    chrom = strtok(NULL, COM);
+  }
+  return i;
+}
+
 /* void getArgs()
  * Parse the command-line. Check for errors.
  */
@@ -1534,10 +1534,11 @@ void getArgs(int argc, char** argv) {
   // default parameters/filenames
   char* outFile = NULL, *inFile = NULL,
     *unFile = NULL, *logFile = NULL, *doveFile = NULL,
-    *alnFile = NULL, *qualFile = NULL;
+    *alnFile = NULL;
+  char* xchrom = NULL;
   int extend = 0,
     overlap = DEFOVER, doveOverlap = DEFDOVE, gzOut = 0,
-    offset = OFFSET, maxQual = MAXQUAL, threads = DEFTHR;
+    offset = OFFSET, threads = DEFTHR;
   float mismatch = DEFMISM;
   bool singleOpt = false, extendOpt = false, avgExtOpt = false;
   bool dovetail = false, maxLen = true,
@@ -1553,6 +1554,7 @@ void getArgs(int argc, char** argv) {
       case SINGLEOPT: singleOpt = true; break;
       case EXTENDOPT: extend = getInt(optarg); extendOpt = singleOpt = true; break;
       case AVGEXTOPT: avgExtOpt = singleOpt = true; break;
+      case XCHROM: xchrom = optarg; break;
       case VERBOSE: verbose = true; break;
       case VERSOPT: printVersion(); break;
       case HELP: usage(); break;
@@ -1569,8 +1571,6 @@ void getArgs(int argc, char** argv) {
       case DOVEOVER: doveOverlap = getInt(optarg); break;
       case MISMATCH: mismatch = getFloat(optarg); break;
       case QUALITY: offset = getInt(optarg); break;
-      case SETQUAL: maxQual = getInt(optarg); break;
-      case QUALFILE: qualFile = optarg; break;
       case THREADS: threads = getInt(optarg); break;
       default: exit(-1);
     }
@@ -1585,9 +1585,13 @@ void getArgs(int argc, char** argv) {
   if (extendOpt && extend <= 0)
     exit(error("", ERREXTEND));
 
+  // save list of chromosomes to ignore
+  int xcount = 0;
+  char** xchrList = NULL;
+  if (xchrom != NULL)
+    xcount = saveXChrom(xchrom, &xchrList);
+
   bool inter = false;  // interleaved input
-  if (qualFile != NULL)
-    fjoin = false;  // given qualFile takes precedence over fastq-join method
   if (overlap <= 0 || doveOverlap <= 0)
     exit(error("", ERROVER));
   if (mismatch < 0.0f || mismatch >= 1.0f)
@@ -1598,7 +1602,7 @@ void getArgs(int argc, char** argv) {
   // adjust parameters for adapter-removal mode
   if (true) {
     dovetail = true;
-    unFile = logFile = alnFile = qualFile = NULL;
+    unFile = logFile = alnFile = NULL;
   }
   int alnOpt = (alnFile != NULL ? (diffOpt ? 2 : 1) : 0);
 
@@ -1607,8 +1611,9 @@ void getArgs(int argc, char** argv) {
     inter, unFile,
     logFile, overlap, dovetail, doveFile, doveOverlap,
     alnFile, alnOpt, gzOut, fjoin,
-    mismatch, maxLen, offset, maxQual, qualFile, verbose,
-    threads);
+    mismatch, maxLen, offset,
+    xcount, xchrList,
+    verbose, threads);
 }
 
 /* int main()
