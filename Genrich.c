@@ -699,11 +699,10 @@ void printFail(File un1, File un2, bool unOpt,
 
 bool loadFields(int* flag, char** rname, int* pos,
     int* mapq, char** cigar, char** rnext, int* pnext,
-    int* tlen, char** seq, char** qual) {
-  for (int i = 2; i < 12; i++) {
-    char* field = strtok(NULL, TAB);
-    if (field == NULL)
-      return false;
+    int* tlen, char** seq, char** qual, char** extra) {
+  int i = 2;
+  char* field = strtok(NULL, TAB);
+  while (field != NULL) {
     switch (i) {
       case FLAG: *flag = getInt(field); break;
       case RNAME: *rname = field; break;
@@ -715,9 +714,17 @@ bool loadFields(int* flag, char** rname, int* pos,
       case TLEN: *tlen = getInt(field); break;
       case SEQ: *seq = field; break;
       case QUAL: *qual = field; break;
+      /*default:
+        *extra = (char**) memrealloc(*extra,
+          (*extraCount + 1) * sizeof(char*));
+        (*extra)[*extraCount] = field;
+        (*extraCount)++;*/
     }
+    if (++i > 11)
+      *extra = strtok(NULL, "\n");
+    field = strtok(NULL, TAB);
   }
-  return true;
+  return i > 11;
 }
 
 int parseCigar(char* cigar, int* offset) {
@@ -1057,6 +1064,8 @@ int readFile(File in, File out,
   Read* dummy = (Read*) memalloc(sizeof(Read));
   dummy->next = NULL;
 
+  int flag, pos, mapq, pnext, tlen;  // SAM fields to save
+  char* qname, *rname, *cigar, *rnext, *seq, *qual, *extra; // ditto
   int count = 0;
   while (getLine(line, MAX_SIZE, in, gz1) != NULL) {
 
@@ -1072,13 +1081,13 @@ exit(0);
 
     // parse SAM record
     //printf("%s", line);
-    char* qname = strtok(line, TAB);
+    qname = strtok(line, TAB);
     if (qname == NULL)
       exit(error(line, ERRSAM));
-    int flag, pos, mapq, pnext, tlen;
-    char* rname, *cigar, *rnext, *seq, *qual;
-    if (! loadFields(&flag, &rname, &pos, &mapq,
-        &cigar, &rnext, &pnext, &tlen, &seq, &qual))
+    //int flag, pos, mapq, pnext, tlen;
+    //char* rname, *cigar, *rnext, *seq, *qual;
+    if (! loadFields(&flag, &rname, &pos, &mapq, &cigar,
+        &rnext, &pnext, &tlen, &seq, &qual, &extra))
       exit(error(line, ERRSAM));
 
     // skip unmapped, 0xF00 bits
@@ -1110,8 +1119,13 @@ exit(0);
       qname, flag, rname, pos, length, totalLen,
       paired, single, pairedPr, singlePr,
       singleOpt, extendOpt, extend, avgExtOpt);
+    // NOTE: the following SAM fields are ignored:
+    //   mapq, rnext, pnext, tlen, qual, extra (optional fields)
 
     //printf("%s %d %d %s\n", qname, pos, offset, flag & 0x10 ? "rev" : "fwd");
+    //for (int i = 0; i < extraCount; i++)
+    //  printf("  %s", extra[i]);
+    //printf("%s\n", extra);
     //while (!getchar()) ;
   }
 
