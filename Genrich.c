@@ -9,6 +9,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <stdbool.h>
 #include <string.h>
 #include <getopt.h>
@@ -697,9 +698,9 @@ void printFail(File un1, File un2, bool unOpt,
 
 /********************************/
 
-bool loadFields(int* flag, char** rname, int* pos,
-    int* mapq, char** cigar, char** rnext, int* pnext,
-    int* tlen, char** seq, char** qual, char** extra) {
+bool loadFields(uint16_t* flag, char** rname, uint32_t* pos,
+    uint8_t* mapq, char** cigar, char** rnext, uint32_t* pnext,
+    int32_t* tlen, char** seq, char** qual, char** extra) {
   int i = 2;
   char* field = strtok(NULL, TAB);
   while (field != NULL) {
@@ -720,8 +721,10 @@ bool loadFields(int* flag, char** rname, int* pos,
         (*extra)[*extraCount] = field;
         (*extraCount)++;*/
     }
-    if (++i > 11)
+    if (++i > 11) {
       *extra = strtok(NULL, "\n");
+      break;
+    }
     field = strtok(NULL, TAB);
   }
   return i > 11;
@@ -819,7 +822,8 @@ void loadChrom(char* line, int* chromLen, Chrom*** chrom,
   c->len = getInt(len);
 
   // save to list
-  *chrom = (Chrom**) memrealloc(*chrom, (*chromLen+1) * sizeof(Chrom*));
+  *chrom = (Chrom**) memrealloc(*chrom,
+    (*chromLen + 1) * sizeof(Chrom*));
   (*chrom)[*chromLen] = c;
   (*chromLen)++;
 }
@@ -863,12 +867,12 @@ int printPaired(File out, bool gzOut, int chromLen,
     Chrom** chrom, Read* r) {
   // ensure start < end
   int start, end;
-  if (r->posR1 > r->posR2) {
-    start = r->posR2;
-    end = r->posR1;
+  if (r->pos[0] > r->pos[1]) {
+    start = r->pos[1];
+    end = r->pos[0];
   } else {
-    start = r->posR1;
-    end = r->posR2;
+    start = r->pos[0];
+    end = r->pos[1];
   }
   return printBED(out, gzOut, chromLen, chrom, r->chrom,
     start, end, r->name);
@@ -878,8 +882,8 @@ int printPaired(File out, bool gzOut, int chromLen,
  * Control printing for an unpaired alignment.
  */
 void printSingle(File out, bool gzOut, int chromLen,
-    Chrom** chrom, char* qname, int flag, char* rname,
-    int pos, int length, bool extendOpt, int extend) {
+    Chrom** chrom, char* qname, uint16_t flag, char* rname,
+    uint32_t pos, int length, bool extendOpt, int extend) {
   if (extendOpt) {
     if (flag & 0x10)
       printBED(out, gzOut, chromLen, chrom, rname,
@@ -913,13 +917,13 @@ int printAvgExt(File out, bool gzOut, int chromLen,
     Read* r = unpaired[i];
     if (! avgLen)
       printBED(out, gzOut, chromLen, chrom, r->chrom,
-        r->posR1, r->posR2, r->name);
+        r->pos[0], r->pos[1], r->name);
     else if (r->strand)
       printBED(out, gzOut, chromLen, chrom, r->chrom,
-        r->posR1, r->posR1 + avgLen, r->name);
+        r->pos[0], r->pos[0] + avgLen, r->name);
     else
       printBED(out, gzOut, chromLen, chrom, r->chrom,
-        r->posR2 - avgLen, r->posR2, r->name);
+        r->pos[1] - avgLen, r->pos[1], r->name);
     printed++;
 
     // free memory
@@ -935,7 +939,7 @@ int printAvgExt(File out, bool gzOut, int chromLen,
  *   to average length" option).
  */
 void saveSingle(int* readLen, Read*** unpaired, char* qname,
-    int flag, char* rname, int pos, int length) {
+    uint16_t flag, char* rname, uint32_t pos, int length) {
   // create new Read
   Read* r = (Read*) memalloc(sizeof(Read));
   r->name = (char*) memalloc(1 + strlen(qname));
@@ -943,8 +947,8 @@ void saveSingle(int* readLen, Read*** unpaired, char* qname,
   r->chrom = (char*) memalloc(1 + strlen(rname));
   strcpy(r->chrom, rname);
   r->strand = flag & 0x10 ? false : true;
-  r->posR1 = pos;
-  r->posR2 = pos + length;
+  r->pos[0] = pos;
+  r->pos[1] = pos + length;
 
   // save to list
   *unpaired = (Read**) memrealloc(*unpaired,
@@ -953,8 +957,8 @@ void saveSingle(int* readLen, Read*** unpaired, char* qname,
   (*readLen)++;
 }
 
-Read* savePaired(Read* dummy, char* qname, int flag,
-    char* rname, int pos) {
+Read* savePaired(Read* dummy, char* qname, uint16_t flag,
+    char* rname, uint32_t pos) {
   // determine if read has been analyzed
   Read* r, *prev = dummy;
   for (r = dummy->next; r != NULL; r = r->next) {
@@ -966,13 +970,13 @@ Read* savePaired(Read* dummy, char* qname, int flag,
   // if analyzed, save pos and return match
   if (r != NULL) {
     if (flag & 0x40) {
-      if (r->posR1 != -1)
+      if (r->pos[0] != -1)
         exit(error(r->name, ERRREP));
-      r->posR1 = pos;
+      r->pos[0] = pos;
     } else {
-      if (r->posR2 != -1)
+      if (r->pos[1] != -1)
         exit(error(r->name, ERRREP));
-      r->posR2 = pos;
+      r->pos[1] = pos;
     }
     return prev;
   }
@@ -983,14 +987,15 @@ Read* savePaired(Read* dummy, char* qname, int flag,
   strcpy(r->name, qname);
   r->chrom = (char*) memalloc(1 + strlen(rname));
   strcpy(r->chrom, rname);
+  r->paired = false;
 
   // save position
   if (flag & 0x40) {
-    r->posR1 = pos;
-    r->posR2 = -1;
+    r->pos[0] = pos;
+    r->pos[1] = -1;
   } else {
-    r->posR1 = -1;
-    r->posR2 = pos;
+    r->pos[0] = -1;
+    r->pos[1] = pos;
   }
 
   // insert r into linked list
@@ -1001,21 +1006,22 @@ Read* savePaired(Read* dummy, char* qname, int flag,
 
 void parseAlign(File out, bool gzOut, int chromLen,
     Chrom** chrom, Read* dummy, int* readLen,
-    Read*** unpaired, char* qname, int flag, char* rname,
-    int pos, int length, double* totalLen, int* paired,
+    Read*** unpaired, char* qname, uint16_t flag, char* rname,
+    uint32_t pos, int length, double* totalLen, int* paired,
     int* single, int* pairedPr, int* singlePr,
     bool singleOpt, bool extendOpt, int extend,
     bool avgExtOpt) {
 
-  if (flag & 0x2) {
+  if ((flag & 0x3) == 0x3) {
     // paired alignment: save information
     (*paired)++;
-    Read* prev = savePaired(dummy, qname, flag,
-      rname, flag & 0x10 ? pos + length : pos);
+    Read* prev = savePaired(dummy, qname, flag, rname,
+      flag & 0x10 ? pos + length : pos);
     if (prev != NULL) {
       Read* r = prev->next;
       (*pairedPr)++;
       *totalLen += printPaired(out, gzOut, chromLen, chrom, r);
+      r->paired = true;
 
       // remove Read from linked list
       prev->next = r->next;
@@ -1061,11 +1067,16 @@ int readFile(File in, File out,
   Chrom** chrom = NULL;
   int readLen = 0;
   Read** unpaired = NULL;
-  Read* dummy = (Read*) memalloc(sizeof(Read));
-  dummy->next = NULL;
+  Read* dummy = (Read*) memalloc(sizeof(Read)); // head of linked list
+  dummy->next = NULL;                           //   for paired alns
 
-  int flag, pos, mapq, pnext, tlen;  // SAM fields to save
-  char* qname, *rname, *cigar, *rnext, *seq, *qual, *extra; // ditto
+  // SAM fields to save
+  char* qname, *rname, *cigar, *rnext, *seq, *qual, *extra;
+  uint16_t flag;
+  uint32_t pos, pnext;
+  int32_t tlen;
+  uint8_t mapq;
+
   int count = 0;
   while (getLine(line, MAX_SIZE, in, gz1) != NULL) {
 
@@ -1090,18 +1101,23 @@ exit(0);
         &rnext, &pnext, &tlen, &seq, &qual, &extra))
       exit(error(line, ERRSAM));
 
-    // skip unmapped, 0xF00 bits
     count++;
     if (flag & 0x4) {
+      // skip unmapped
       (*unmapped)++;
       continue;
     }
+    if (! strcmp(qname, "*") || ! strcmp(rname, "*")
+        || pos < 0)
+      // insufficient alignment info
+      exit(error(line, ERRSAM));
     if (flag & 0xF00) {
+      // skip supplementary/secondary alignments
       (*supp)++;
       continue;
     }
-    // check for alignment to ignored chromosome
     if (xcount) {
+      // check for alignment to ignored chromosome
       int i;
       for (i = 0; i < xcount; i++)
         if (! strcmp(xchrList[i], rname))
@@ -1147,10 +1163,10 @@ exit(0);
     free(r);
     r = tmp;
   }
+  free(dummy);
 
   // free memory
   free(line);
-  free(dummy);
   for (int i = 0; i < chromLen; i++) {
     free(chrom[i]->name);
     free(chrom[i]);

@@ -123,13 +123,13 @@ typedef union file {
 
 typedef struct chrom {
   char* name;
-  int len;
+  uint32_t len;
 } Chrom;
 
 typedef struct read {
-  int posR1;
-  int posR2;
+  uint32_t pos[2];
   bool strand;
+  bool paired;
   char* name;
   char* chrom;
   struct read* next;
