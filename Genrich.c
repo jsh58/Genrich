@@ -35,13 +35,15 @@ void usage(void) {
   fprintf(stderr, "Required arguments:\n");
   fprintf(stderr, "  -%c  <file>       Input SAM file\n", INFILE);
   fprintf(stderr, "  -%c  <file>       Output BED file\n", OUTFILE);
+  fprintf(stderr, "Filtering options:\n");
+  fprintf(stderr, "  -%c  <arg>        Comma-separated list of chromosomes to ignore\n", XCHROM);
+  fprintf(stderr, "  -%c  <int>        Minimum MAPQ to keep an alignment (def. 0)\n", MINMAPQ);
   fprintf(stderr, "Options for unpaired alignments:\n");
   fprintf(stderr, "  -%c               Print unpaired alignments (def. false)\n", SINGLEOPT);
   fprintf(stderr, "  -%c  <int>        Print unpaired alignments, with fragment length\n", EXTENDOPT);
   fprintf(stderr, "                     increased to specified value\n");
   fprintf(stderr, "  -%c               Print unpaired alignments, with fragment length\n", AVGEXTOPT);
   fprintf(stderr, "                     increased to average value of paired alignments\n");
-  fprintf(stderr, "  -%c  <arg>        Comma-separated list of chromosomes to ignore\n", XCHROM);
 /*  fprintf(stderr, "  -%c               Option to check for dovetailing (with 3' overhangs)\n", DOVEOPT);
   fprintf(stderr, "  -%c  <int>        Minimum overlap of dovetailed alignments (def. %d)\n", DOVEOVER, DEFDOVE);
   fprintf(stderr, "  -%c               Option to produce shortest stitched read\n", MAXOPT);
@@ -1056,9 +1058,10 @@ int readFile(File in, File out,
     float mismatch, bool maxLen,
     double* totalLen, int* unmapped, int* paired, int* single,
     int* orphan, int* pairedPr, int* singlePr,
-    int* supp, int* skipped, int xcount, char** xchrList,
+    int* supp, int* skipped, int* lowMapQ,
+    int minMapQ,
+    int xcount, char** xchrList,
     bool singleOpt, bool extendOpt, int extend, bool avgExtOpt,
-    int offset,
     bool gz1, bool gz2, bool gzOut, bool fjoin,
     char** match, char** mism, int threads) {
 
@@ -1127,6 +1130,11 @@ exit(0);
         continue;
       }
     }
+    if (mapq < minMapQ) {
+      // skip low MAPQ alignments
+      (*lowMapQ)++;
+      continue;
+    }
 
     // save alignment information
     int length = calcDist(qname, seq, cigar); // distance to 3' end
@@ -1136,7 +1144,7 @@ exit(0);
       paired, single, pairedPr, singlePr,
       singleOpt, extendOpt, extend, avgExtOpt);
     // NOTE: the following SAM fields are ignored:
-    //   mapq, rnext, pnext, tlen, qual, extra (optional fields)
+    //   rnext, pnext, tlen, qual, extra (optional fields)
 
     //printf("%s %d %d %s\n", qname, pos, offset, flag & 0x10 ? "rev" : "fwd");
     //for (int i = 0; i < extraCount; i++)
@@ -1421,12 +1429,12 @@ bool openRead(char* inFile, File* in) {
  */
 void runProgram(char* outFile, char* inFile,
     bool singleOpt, bool extendOpt, int extend, bool avgExtOpt,
+    int minMapQ,
     bool inter, char* unFile,
     char* logFile, int overlap, bool dovetail,
     char* doveFile, int doveOverlap, char* alnFile,
     int alnOpt, int gzOut, bool fjoin,
     float mismatch, bool maxLen,
-    int offset,
     int xcount, char** xchrList,
     bool verbose, int threads) {
 
@@ -1465,7 +1473,8 @@ void runProgram(char* outFile, char* inFile,
       fprintf(stderr, "Processing file: %s\n", filename);
     double totalLen = 0.0;  // total length of paired reads
     int unmapped = 0, paired = 0, single = 0, orphan = 0,
-      pairedPr = 0, singlePr = 0, supp = 0, skipped = 0;  // counting variables
+      pairedPr = 0, singlePr = 0, supp = 0, skipped = 0,
+      lowMapQ = 0;  // counting variables
     int count = readFile(in, out,
       un1, un2, unFile != NULL,
       log, logFile != NULL,
@@ -1473,10 +1482,10 @@ void runProgram(char* outFile, char* inFile,
       dovetail && doveFile != NULL, aln, alnOpt,
       mismatch, maxLen,
       &totalLen, &unmapped, &paired, &single, &orphan,
-      &pairedPr, &singlePr, &supp, &skipped,
+      &pairedPr, &singlePr, &supp, &skipped, &lowMapQ, minMapQ,
       xcount, xchrList,
       singleOpt, extendOpt, extend, avgExtOpt,
-      offset, gz1, gz2, gzOut, fjoin,
+      gz1, gz2, gzOut, fjoin,
       match, mism, threads);
     tCount += count;
 
@@ -1494,6 +1503,8 @@ void runProgram(char* outFile, char* inFile,
           fprintf(stderr, ",%s", xchrList[i]);
         fprintf(stderr, ")\n");
       }
+      if (lowMapQ)
+        fprintf(stderr, "    MAPQ < %-2d:          %10d\n", minMapQ, lowMapQ);
       fprintf(stderr, "    Paired alignments:  %10d\n", paired);
       if (orphan)
         fprintf(stderr, "      orphan alignments:%10d\n", orphan);
@@ -1578,9 +1589,9 @@ void getArgs(int argc, char** argv) {
     *unFile = NULL, *logFile = NULL, *doveFile = NULL,
     *alnFile = NULL;
   char* xchrom = NULL;
-  int extend = 0,
+  int extend = 0, minMapQ = 0,
     overlap = DEFOVER, doveOverlap = DEFDOVE, gzOut = 0,
-    offset = OFFSET, threads = DEFTHR;
+    threads = DEFTHR;
   float mismatch = DEFMISM;
   bool singleOpt = false, extendOpt = false, avgExtOpt = false;
   bool dovetail = false, maxLen = true,
@@ -1597,9 +1608,12 @@ void getArgs(int argc, char** argv) {
       case EXTENDOPT: extend = getInt(optarg); extendOpt = true; break;
       case AVGEXTOPT: avgExtOpt = true; break;
       case XCHROM: xchrom = optarg; break;
+      case MINMAPQ: minMapQ = getInt(optarg); break;
+
       case VERBOSE: verbose = true; break;
       case VERSOPT: printVersion(); break;
       case HELP: usage(); break;
+
       case MAXOPT: maxLen = false; break;
       case DOVEOPT: dovetail = true; break;
       case GZOPT: gzOut = 1; break;
@@ -1612,7 +1626,6 @@ void getArgs(int argc, char** argv) {
       case OVERLAP: overlap = getInt(optarg); break;
       case DOVEOVER: doveOverlap = getInt(optarg); break;
       case MISMATCH: mismatch = getFloat(optarg); break;
-      case QUALITY: offset = getInt(optarg); break;
       case THREADS: threads = getInt(optarg); break;
       default: exit(-1);
     }
@@ -1657,10 +1670,11 @@ void getArgs(int argc, char** argv) {
 
   // send arguments to runProgram()
   runProgram(outFile, inFile, singleOpt, extendOpt, extend, avgExtOpt,
+    minMapQ,
     inter, unFile,
     logFile, overlap, dovetail, doveFile, doveOverlap,
     alnFile, alnOpt, gzOut, fjoin,
-    mismatch, maxLen, offset,
+    mismatch, maxLen,
     xcount, xchrList,
     verbose, threads);
 }

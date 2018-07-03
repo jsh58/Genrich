@@ -37,7 +37,7 @@ enum sam { NIL, QNAME, FLAG, RNAME, POS, MAPQ, CIGAR, RNEXT,
 
 
 // command-line options
-#define OPTIONS     "hi:o:ya:xc:f:l:m:p:de:C:sj:bzgq:n:vV"
+#define OPTIONS     "hi:o:ya:xc:q:f:l:m:p:de:C:sj:bzgn:vV"
 #define HELP        'h'
 #define INFILE      'i'
 #define OUTFILE     'o'
@@ -45,6 +45,8 @@ enum sam { NIL, QNAME, FLAG, RNAME, POS, MAPQ, CIGAR, RNEXT,
 #define EXTENDOPT   'a'
 #define AVGEXTOPT   'x'
 #define XCHROM      'c'
+#define MINMAPQ     'q'
+
 #define UNFILE      'f'
 #define LOGFILE     'l'
 #define OVERLAP     'm'
@@ -57,7 +59,6 @@ enum sam { NIL, QNAME, FLAG, RNAME, POS, MAPQ, CIGAR, RNEXT,
 #define DIFFOPT     'b'
 #define GZOPT       'z'
 #define FJOINOPT    'g'
-#define QUALITY     'q'
 #define THREADS     'n'
 #define VERBOSE     'v'
 #define VERSOPT     'V'
