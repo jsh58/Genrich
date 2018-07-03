@@ -9,7 +9,7 @@
 #define VERSION     "0.0"
 
 // constants
-#define MAX_SIZE    1024    // maximum length of input lines (incl. seq/qual)
+#define MAX_SIZE    65520   // maximum length of input lines (incl. seq/qual)
 #define NOTMATCH    1.5f    // stitch failure
 #define COM         ", "    // separator for input file names
 #define CSV         ",\t"   // separator for quality score profile
@@ -37,15 +37,17 @@ enum sam { NIL, QNAME, FLAG, RNAME, POS, MAPQ, CIGAR, RNEXT,
 
 
 // command-line options
-#define OPTIONS     "hi:o:ya:xc:q:f:l:m:p:de:C:sj:bzgn:vV"
+#define OPTIONS     "hi:o:sa:xc:q:zyf:l:m:p:de:C:j:gn:vV"
 #define HELP        'h'
 #define INFILE      'i'
 #define OUTFILE     'o'
-#define SINGLEOPT   'y'
+#define SINGLEOPT   's'
 #define EXTENDOPT   'a'
 #define AVGEXTOPT   'x'
 #define XCHROM      'c'
 #define MINMAPQ     'q'
+#define GZOPT       'z'
+#define UNGZOPT     'y'
 
 #define UNFILE      'f'
 #define LOGFILE     'l'
@@ -54,10 +56,7 @@ enum sam { NIL, QNAME, FLAG, RNAME, POS, MAPQ, CIGAR, RNEXT,
 #define DOVEOPT     'd'
 #define DOVEOVER    'e'
 #define DOVEFILE    'C'
-#define MAXOPT      's'
 #define ALNFILE     'j'
-#define DIFFOPT     'b'
-#define GZOPT       'z'
 #define FJOINOPT    'g'
 #define THREADS     'n'
 #define VERBOSE     'v'
@@ -82,7 +81,7 @@ enum omp_locks { OUT, UN, LOG, DOVE, ALN, OMP_LOCKS };
 enum errCode { ERRFILE, ERROPEN, ERRCLOSE, ERROPENW, ERRUNK,
   ERRMEM, ERRSEQ, ERRQUAL, ERRHEAD, ERRINT, ERRFLOAT, ERRPARAM,
   ERROVER, ERRMISM, ERRINFO, ERRSAM, ERRREP, ERRCHROM, ERREXTEND,
-  ERROFFSET, ERRUNGET, ERRGZIP,
+  ERRBAM, ERROFFSET, ERRUNGET, ERRGZIP,
   ERRTHREAD, ERRNAME, ERRRANGE, ERRDEFQ, ERRCIGAR, DEFERR
 };
 const char* errMsg[] = { "Need input/output files",
@@ -104,6 +103,7 @@ const char* errMsg[] = { "Need input/output files",
   ": read has repeated information in SAM",
   ": cannot find reference sequence name in SAM header",
   "Extension length must be >= 0",
+  "Cannot parse BAM file",
 
   ": quality score outside of set range",
   "Failure in ungetc() call",
@@ -125,6 +125,7 @@ typedef union file {
 typedef struct chrom {
   char* name;
   uint32_t len;
+  bool skip;
 } Chrom;
 
 typedef struct read {
