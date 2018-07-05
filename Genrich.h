@@ -9,7 +9,7 @@
 #define VERSION     "0.0"
 
 // constants
-#define MAX_SIZE    65520   // maximum length of input lines (incl. seq/qual)
+#define MAX_SIZE    65520   // maximum length of input SAM/BAM alignments
 #define NOTMATCH    1.5f    // stitch failure
 #define COM         ", "    // separator for input file names
 #define CSV         ",\t"   // separator for quality score profile
@@ -99,7 +99,7 @@ const char* errMsg[] = { "Need input/output files",
   "Overlap must be greater than 0",
   ": mismatch between sequence length and CIGAR",
   ": no sequence information (SEQ or CIGAR)",
-  ": poorly formatted SAM record",
+  ": poorly formatted SAM/BAM record",
   ": read has repeated information in SAM",
   ": cannot find reference sequence name in SAM header",
   "Extension length must be >= 0",

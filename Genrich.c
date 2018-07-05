@@ -33,7 +33,7 @@ void usage(void) {
   fprintf(stderr, "Usage: ./Genrich  -%c <file>  -%c <file>", INFILE, OUTFILE);
   fprintf(stderr, "  [optional arguments]\n");
   fprintf(stderr, "Required arguments:\n");
-  fprintf(stderr, "  -%c  <file>       Input SAM file\n", INFILE);
+  fprintf(stderr, "  -%c  <file>       Input SAM/BAM file\n", INFILE);
   fprintf(stderr, "  -%c  <file>       Output BED file\n", OUTFILE);
   fprintf(stderr, "Filtering options:\n");
   fprintf(stderr, "  -%c  <arg>        Comma-separated list of chromosomes to ignore\n", XCHROM);
@@ -1115,8 +1115,6 @@ exit(0);
     qname = strtok(line, TAB);
     if (qname == NULL)
       exit(error(line, ERRSAM));
-    //int flag, pos, mapq, pnext, tlen;
-    //char* rname, *cigar, *rnext, *seq, *qual;
     if (! loadFields(&flag, &rname, &pos, &mapq, &cigar,
         &rnext, &pnext, &tlen, &seq, &qual, &extra))
       exit(error(line, ERRSAM));
@@ -1138,6 +1136,8 @@ exit(0);
     }
     if (xcount) {
       // check for alignment to ignored chromosome
+      //   (note: cannot rely on Chrom** chrom, b/c
+      //    SAM may be missing its header)
       int i;
       for (i = 0; i < xcount; i++)
         if (! strcmp(xchrList[i], rname))
@@ -1496,8 +1496,9 @@ int32_t loadInt32(char** block) {
   return ans;
 }
 
+
 void loadBAMfields(char** block, int32_t* refID, int32_t* pos,
-    uint8_t* mapq, uint16_t* flag, int32_t* l_seq,
+    uint8_t* mapq, uint16_t* n_cigar_op, uint16_t* flag, int32_t* l_seq,
     int32_t* next_refID, int32_t* next_pos, int32_t* tlen,
     char** read_name, uint32_t** cigar, uint8_t** seq,
     char** qual, char** extra) {
@@ -1507,7 +1508,7 @@ void loadBAMfields(char** block, int32_t* refID, int32_t* pos,
   int8_t l_read_name = bin_mq_nl & 0xFF;
   *mapq = (bin_mq_nl >> 8) & 0xFF;
   uint32_t flag_nc = loadInt32(block);
-  int16_t n_cigar_op = flag_nc & 0xFFFF;
+  *n_cigar_op = flag_nc & 0xFFFF;
   *flag = (flag_nc >> 16) & 0xFFFF;
   *l_seq = loadInt32(block);
   *next_refID = loadInt32(block);
@@ -1516,7 +1517,7 @@ void loadBAMfields(char** block, int32_t* refID, int32_t* pos,
   *read_name = *block;
   (*block) += l_read_name;
   *cigar = (uint32_t*) *block;
-  (*block) += n_cigar_op * sizeof(uint32_t);
+  (*block) += *n_cigar_op * sizeof(uint32_t);
   *seq = (uint8_t*) *block;
   (*block) += (*l_seq + 1)/2 * sizeof(uint8_t);
   *qual = *block;
@@ -1524,68 +1525,142 @@ void loadBAMfields(char** block, int32_t* refID, int32_t* pos,
   *extra = *block;
 }
 
-int parseBAMalignments(gzFile in, File out, bool gzOut,
+int calcDistBAM(int32_t l_seq, uint16_t n_cigar_op,
+    uint32_t* cigar) {
+  int length = l_seq;
+  for (int i = 0; i < n_cigar_op; i++) {
+    uint8_t op = cigar[i] & 0xF;
+    uint32_t op_len = cigar[i] >> 4;
+    if (op == 1 || op == 4)  // 'I' or 'S'
+      length -= op_len;
+    else if (op == 2)        // 'D'
+      length += op_len;
+  }
+  return length;
+}
+
+int parseBAM(gzFile in, File out, bool gzOut,
     int chromLen, Chrom** chrom,
     double* totalLen, int* unmapped, int* paired, int* single,
     int* orphan, int* pairedPr, int* singlePr, int* supp,
-    int* skipped, int* lowMapQ, int minMapQ) {
-  int count = 0;
+    int* skipped, int* lowMapQ, int minMapQ,
+    bool singleOpt, bool extendOpt, int extend, bool avgExtOpt) {
 
+  int readLen = 0;
+  Read** unpaired = NULL;
+  Read* dummy = (Read*) memalloc(sizeof(Read)); // head of linked list
+  dummy->next = NULL;                           //   for paired alns
+
+  // BAM fields to save
   int32_t refID, pos, l_seq, next_refID, next_pos, tlen;
-  uint16_t flag;
+  uint16_t n_cigar_op, flag;
   uint8_t mapq;
   uint32_t* cigar;
   uint8_t* seq;
   char* read_name, *qual, *extra;
 
-  char* block = memalloc(MAX_SIZE);
+  char* line = memalloc(MAX_SIZE);
+  int count = 0;
   int32_t block_size;
   while ((block_size = readInt32(in, false)) != EOF) {
     // copy alignment record
+    char* block = line;
     for (int i = 0; i < block_size; i++) {
       int m = gzgetc(in);
       if (m == -1)
         exit(error("", ERRBAM));
       block[i] = m;
     }
+
     count++;
-    loadBAMfields(&block, &refID, &pos, &mapq, &flag,
-      &l_seq, &next_refID, &next_pos, &tlen, &read_name,
-      &cigar, &seq, &qual, &extra);
-printf("%s: %s, %d\n", read_name, refID > -1 && refID < chromLen ?
+    loadBAMfields(&block, &refID, &pos, &mapq, &n_cigar_op,
+      &flag, &l_seq, &next_refID, &next_pos, &tlen,
+      &read_name, &cigar, &seq, &qual, &extra);
+/*printf("%s: %s, %d\n", read_name, refID > -1 && refID < chromLen ?
     chrom[refID]->name : "null", pos);
 for(int i = 0; i < l_seq; i++)
   putchar(qual[i]+33);
 putchar('\n');
 while(!getchar()) ;
 continue;
+*/
 
-/*    int16_t n_cigar_op = flag_nc & 0xFFFF;
-    int16_t flag = (flag_nc >> 16) & 0xFFFF;
     if (flag & 0x4) {
-      if (gzseek(in, block_size - 4 * sizeof(int32_t),
-          SEEK_CUR) == -1)
-        exit(error("", ERRBAM));
+      // skip unmapped
+      (*unmapped)++;
+      continue;
+    }
+    if (! strcmp(read_name, "*") || refID == -1
+        || refID >= chromLen || pos < 0)
+      // insufficient alignment info
+      exit(error(read_name, ERRSAM));
+    if (flag & 0xF00) {
+      // skip supplementary/secondary alignments
+      (*supp)++;
+      continue;
+    }
+    if (chrom[refID]->skip) {
+      // alignment to skipped chromosome
+      (*skipped)++;
+      continue;
+    }
+    if (mapq < minMapQ) {
+      // skip low MAPQ alignments
+      (*lowMapQ)++;
       continue;
     }
 
-    l_seq = readInt32(in, true);
-    next_refID = readInt32(in, true);
-    next_pos = readInt32(in, true);
-    tlen = readInt32(in, true);
+    // save alignment information
+    int length = calcDistBAM(l_seq, n_cigar_op, cigar); // distance to 3' end
 
-    count++;
-*/
+    parseAlign(out, gzOut, chromLen, chrom, dummy,
+      &readLen, &unpaired,
+      read_name, flag, chrom[refID]->name, pos, length, totalLen,
+      paired, single, pairedPr, singlePr,
+      singleOpt, extendOpt, extend, avgExtOpt);
+    // NOTE: the following SAM fields are ignored:
+    //   rnext, pnext, tlen, qual, extra (optional fields)
+
   }
+
+  // process single alignments w/ avgExtOpt
+  if (avgExtOpt)
+    *singlePr += printAvgExt(out, gzOut, chromLen, chrom,
+      readLen, unpaired, *totalLen, *pairedPr);
+
+  // free Reads; check for orphan paired alignments
+  Read* r = dummy->next;
+  Read* tmp;
+  while (r != NULL) {
+    fprintf(stderr, "Warning! Read %s missing its pair -- not printed\n",
+      r->name);
+    (*orphan)++;
+    tmp = r->next;
+    free(r->chrom);
+    free(r->name);
+    free(r);
+    r = tmp;
+  }
+  free(dummy);
+
+  // free memory
+  free(line);
+  for (int i = 0; i < chromLen; i++) {
+    free(chrom[i]->name);
+    free(chrom[i]);
+  }
+  free(chrom);
+  free(unpaired);
 
   return count;
 }
 
 int readBAM(gzFile in, File out, bool gzOut,
-    int xcount, char** xchrList,
     double* totalLen, int* unmapped, int* paired, int* single,
     int* orphan, int* pairedPr, int* singlePr, int* supp,
-    int* skipped, int* lowMapQ, int minMapQ) {
+    int* skipped, int* lowMapQ, int minMapQ,
+    int xcount, char** xchrList,
+    bool singleOpt, bool extendOpt, int extend, bool avgExtOpt) {
   // skip header
   int32_t l_text = readInt32(in, true);
   if (gzseek(in, l_text, SEEK_CUR) == -1)
@@ -1610,6 +1685,8 @@ int readBAM(gzFile in, File out, bool gzOut,
         exit(error("", ERRBAM));
       name[j] = m;
     }
+    if (name[len-1] != '\0')
+      exit(error("", ERRBAM));
     saveChrom(name, readInt32(in, true), &chromLen, &chrom,
       xcount, xchrList);
   }
@@ -1619,10 +1696,11 @@ int readBAM(gzFile in, File out, bool gzOut,
     chrom[i]->skip ? "X" : "");
 exit(0);*/
 
-  return parseBAMalignments(in, out, gzOut,
+  return parseBAM(in, out, gzOut,
     chromLen, chrom,
     totalLen, unmapped, paired, single, orphan,
-    pairedPr, singlePr, supp, skipped, lowMapQ, minMapQ);
+    pairedPr, singlePr, supp, skipped, lowMapQ, minMapQ,
+    singleOpt, extendOpt, extend, avgExtOpt);
 }
 
 /* void runProgram()
@@ -1681,9 +1759,11 @@ printf("gz %s, bam %s\n", gz ? "true" : "false", bam ? "true" : "false");
       lowMapQ = 0;  // counting variables
     int count;
     if (bam)
-      count = readBAM(in.gzf, out, gzOut, xcount, xchrList,
+      count = readBAM(in.gzf, out, gzOut,
         &totalLen, &unmapped, &paired, &single, &orphan,
-        &pairedPr, &singlePr, &supp, &skipped, &lowMapQ, minMapQ);
+        &pairedPr, &singlePr, &supp, &skipped, &lowMapQ, minMapQ,
+        xcount, xchrList,
+        singleOpt, extendOpt, extend, avgExtOpt);
     else
       count = readFile(in, out,
         un1, un2, unFile != NULL,
