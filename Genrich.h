@@ -81,7 +81,8 @@ enum omp_locks { OUT, UN, LOG, DOVE, ALN, OMP_LOCKS };
 enum errCode { ERRFILE, ERROPEN, ERRCLOSE, ERROPENW, ERRUNK,
   ERRMEM, ERRSEQ, ERRQUAL, ERRHEAD, ERRINT, ERRFLOAT, ERRPARAM,
   ERROVER, ERRMISM, ERRINFO, ERRSAM, ERRREP, ERRCHROM, ERREXTEND,
-  ERRBAM, ERROFFSET, ERRUNGET, ERRGZIP,
+  ERRBAM,
+ERROFFSET, ERRUNGET, ERRGZIP,
   ERRTHREAD, ERRNAME, ERRRANGE, ERRDEFQ, ERRCIGAR, DEFERR
 };
 const char* errMsg[] = { "Need input/output files",
@@ -126,6 +127,7 @@ typedef struct chrom {
   char* name;
   uint32_t len;
   bool skip;
+  float* pileup;
 } Chrom;
 
 typedef struct read {
@@ -133,6 +135,6 @@ typedef struct read {
   bool strand;
   bool paired;
   char* name;
-  char* chrom;
+  Chrom* chrom;
   struct read* next;
 } Read;
