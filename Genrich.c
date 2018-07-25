@@ -155,18 +155,140 @@ void printPileup(File out, bool gzOut, Chrom** chrom,
     }
 
     int start = 0;
-    int end = start + 1;
-    while (start < chr->len) {
-      float val = chr->pileup[start];
-      while (end < chr->len && chr->pileup[end] == val)
-        end++;
-      printInterval(out, gzOut, chr, start, end, val);
-      start = end;
-      end = start + 1;
+    for (int i = 0; i < chr->pileupLen; i++) {
+      printInterval(out, gzOut, chr, start,
+        chr->pileup[i]->end, chr->pileup[i]->cov);
+      start = chr->pileup[i]->end;
     }
   }
 }
 
+void savePileup(Chrom* chrom, int start, int end) {
+  // find overlapping interval(s)
+  int idx1 = -1, idx2 = -1;
+  for (int i = 0; i < chrom->pileupLen; i++) {
+    if (idx1 == -1 && start < chrom->pileup[i]->end)
+      idx1 = i;
+    if (idx2 == -1 && end <= chrom->pileup[i]->end)
+      idx2 = i;
+  }
+  if (idx1 == -1 && idx2 == -1)
+    exit(error("something went wrong", DEFERR));
+
+  Pileup* second = chrom->pileup[idx2];
+  if (end != chrom->pileup[idx2]->end) {
+    second = (Pileup*) memalloc(sizeof(Pileup));
+    second->end = end;
+    second->cov = chrom->pileup[idx2]->cov;
+  } else
+    idx2 = -1;
+
+  Pileup* first = chrom->pileup[idx1-1];
+  if ((idx1 == 0 && start != 0)
+      || (idx1 != 0 && start != chrom->pileup[idx1-1]->end)) {
+    first = (Pileup*) memalloc(sizeof(Pileup));
+    first->end = start;
+    first->cov = chrom->pileup[idx1]->cov;
+  } else
+    idx1 = -1;
+
+/*
+int begin = 0;
+for (int i = 0; i < chrom->pileupLen; i++) {
+  printf("%s\t%d\t%d\t%.5f\t%s\t%s\n", chrom->name, begin,
+    chrom->pileup[i]->end,
+    chrom->pileup[i]->cov,
+    i == idx1 ? "first" : "",
+    i == idx2 ? "second" : "");
+  begin = chrom->pileup[i]->end;
+}
+printf("%s, %d-%d\n\n", chrom->name, start, end);
+*/
+
+  // update chrom->pileup (if new nodes created)
+  if (idx1 != -1 || idx2 != -1) {
+//printf("pileupLen: %d", chrom->pileupLen);
+    int newNode = 1;
+    if (idx1 != -1 && idx2 != -1) {
+      newNode++;
+      idx2++;
+    }
+    chrom->pileup = (Pileup**) memrealloc(chrom->pileup,
+      (chrom->pileupLen + newNode) * sizeof(Pileup*));
+//printf(" -> %d\n", chrom->pileupLen + newNode);
+
+//printf("new idxs: %d, %d\n\n", idx1, idx2);
+    int idx = chrom->pileupLen + newNode - 1;
+    int i = chrom->pileupLen - 1;
+/*begin = 0;
+for (int i = 0; i < chrom->pileupLen; i++) {
+  printf("%s\t%d\t%d\t%.5f\n", chrom->name, begin, chrom->pileup[i]->end,
+    chrom->pileup[i]->cov);
+  begin = chrom->pileup[i]->end;
+}*/
+    if (idx2 != -1) {
+      for ( ; idx > idx2; i--, idx--)
+        chrom->pileup[idx] = chrom->pileup[i];
+      chrom->pileup[idx] = second;
+      chrom->pileup[idx]->cov++;
+      idx--;
+    } else
+      for ( ; chrom->pileup[i] != second; i--, idx--)
+        chrom->pileup[idx] = chrom->pileup[i];
+/*begin = 0;
+for (int i = 0; i < chrom->pileupLen+newNode; i++) {
+  printf("%s\t%d\t%d\t%.5f\n", chrom->name, begin, chrom->pileup[i]->end,
+    chrom->pileup[i]->cov);
+  begin = chrom->pileup[i]->end;
+}
+exit(0);
+*/
+    if (idx1 != -1) {
+      for ( ; idx > idx1; i--, idx--) {
+        chrom->pileup[idx] = chrom->pileup[i];
+        chrom->pileup[idx]->cov++;
+      }
+      chrom->pileup[idx] = first;
+      //idx--;
+    } else
+      for ( ; chrom->pileup[i] != first; i--, idx--)
+        chrom->pileup[i]->cov++;
+
+    //for ( ; idx > -1; i--, idx--)
+    //  chrom->pileup[idx] = chrom->pileup[i];
+    // no need to copy remaining nodes (I think)
+
+    chrom->pileupLen += newNode;
+  } else {
+
+    bool add = false;
+    for (int i = 0; i < chrom->pileupLen; i++) {
+      if (add)
+        chrom->pileup[i]->cov++;
+      if (chrom->pileup[i] == first)
+        add = true;
+      else if (chrom->pileup[i] == second)
+        break;
+    }
+  }
+
+/*
+begin = 0;
+bool stop = false;
+for (int i = 0; i < chrom->pileupLen; i++) {
+  if (begin >= chrom->pileup[i]->end)
+    stop = true;
+  printf("%s\t%d\t%d\t%.5f\n", chrom->name, begin, chrom->pileup[i]->end,
+    chrom->pileup[i]->cov);
+  begin = chrom->pileup[i]->end;
+}
+if (stop)
+  while(!getchar()) ;
+*/
+//exit(0);
+
+
+}
 
 /* int printBED()
  * Print BED interval. Return fragment length.
@@ -197,12 +319,17 @@ int printBED(File out, bool gzOut, Chrom* chrom,
 
   // save pileup values
   if (chrom->pileup == NULL) {
-    chrom->pileup = (float*) memalloc(chrom->len * sizeof(float));
-    for (int i = 0; i < chrom->len; i++)
-      chrom->pileup[i] = 0.0;
-  }
-  for (int i = start; i < end; i++)
-    chrom->pileup[i]++;
+    chrom->pileup = (Pileup**) memalloc(3 * sizeof(Pileup*));
+    for (int i = 0; i < 3; i++) {
+      chrom->pileup[i] = (Pileup*) memalloc(sizeof(Pileup));
+      chrom->pileup[i]->end = (i == 0 ? start :
+        (i == 1 ? end : chrom->len));
+      chrom->pileup[i]->cov = (i == 1 ? 1 : 0);
+    }
+    chrom->pileupLen = 3;
+  } else
+    savePileup(chrom, start, end);
+
 
   return end - start;
 }
