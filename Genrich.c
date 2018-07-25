@@ -124,11 +124,53 @@ char* getLine(char* line, int size, File in, bool gz) {
     return fgets(line, size, in.f);
 }
 
-
 /*** BED printing ***/
+
+/* void printInterval()
+ * Print BED interval, with pileup as the value.
+ */
+void printInterval(File out, bool gzOut, Chrom* chrom,
+    int start, int end, float val) {
+  if (gzOut)
+    gzprintf(out.gzf, "%s\t%d\t%d\t%.5f\n", chrom->name,
+      start, end, val);
+  else
+    fprintf(out.f, "%s\t%d\t%d\t%.5f\n", chrom->name,
+      start, end, val);
+}
+
+/* void printPileup()
+ * Controls printing of pileup values for each Chrom.
+ */
+void printPileup(File out, bool gzOut, Chrom** chrom,
+    int chromLen) {
+
+  for (int i = 0; i < chromLen; i++) {
+    Chrom* chr = chrom[i];
+    if (chr->skip)
+      continue;
+    if (chr->pileup == NULL) {
+      printInterval(out, gzOut, chr, 0, chr->len, 0);
+      continue;
+    }
+
+    int start = 0;
+    int end = start + 1;
+    while (start < chr->len) {
+      float val = chr->pileup[start];
+      while (end < chr->len && chr->pileup[end] == val)
+        end++;
+      printInterval(out, gzOut, chr, start, end, val);
+      start = end;
+      end = start + 1;
+    }
+  }
+}
+
 
 /* int printBED()
  * Print BED interval. Return fragment length.
+ *   EDIT: just saves pileup value.
  */
 int printBED(File out, bool gzOut, Chrom* chrom,
     int start, int end, char* qname) {
@@ -145,13 +187,22 @@ int printBED(File out, bool gzOut, Chrom* chrom,
   }
 
   // print BED record
-  if (gzOut)
+/*  if (gzOut)
     gzprintf(out.gzf, "%s\t%d\t%d\t%s\n", chrom->name,
       start, end, qname);
   else
     fprintf(out.f, "%s\t%d\t%d\t%s\n", chrom->name,
       start, end, qname);
+*/
 
+  // save pileup values
+  if (chrom->pileup == NULL) {
+    chrom->pileup = (float*) memalloc(chrom->len * sizeof(float));
+    for (int i = 0; i < chrom->len; i++)
+      chrom->pileup[i] = 0.0;
+  }
+  for (int i = start; i < end; i++)
+    chrom->pileup[i]++;
 
   return end - start;
 }
@@ -176,9 +227,9 @@ int printPaired(File out, bool gzOut, Chrom* chrom,
 /* void printSingle()
  * Control printing for an unpaired alignment.
  */
-void printSingle(File out, bool gzOut,
-    Chrom* chrom, char* qname, uint16_t flag,
-    uint32_t pos, int length, bool extendOpt, int extend) {
+void printSingle(File out, bool gzOut, Chrom* chrom,
+    char* qname, uint16_t flag, uint32_t pos, int length,
+    bool extendOpt, int extend) {
   if (extendOpt) {
     if (flag & 0x10)
       printBED(out, gzOut, chrom, pos + length - extend,
@@ -194,9 +245,8 @@ void printSingle(File out, bool gzOut,
  *   "extend to average length" option.
  *   Return number printed.
  */
-int printAvgExt(File out, bool gzOut,
-    int readLen, Read** unpaired,
-    float totalLen, int pairedPr) {
+int printAvgExt(File out, bool gzOut, int readLen,
+    Read** unpaired, float totalLen, int pairedPr) {
   // determine average fragment length
   int avgLen = 0;
   if (! pairedPr) {
@@ -336,8 +386,8 @@ Read* savePaired(Read* dummy, char* qname, uint16_t flag,
  *   alignment until extension length can be calculated from
  *   paired alignments.
  */
-void parseAlign(File out, bool gzOut, 
-    Read* dummy, int* readLen, Read*** unpaired, char* qname,
+void parseAlign(File out, bool gzOut, Read* dummy,
+    int* readLen, Read*** unpaired, char* qname,
     uint16_t flag, Chrom* chrom, uint32_t pos, int length,
     double* totalLen, int* paired, int* single, int* pairedPr,
     int* singlePr, bool singleOpt, bool extendOpt, int extend,
@@ -604,6 +654,9 @@ int readSAM(File in, bool gz, File out, bool gzOut,
   if (avgExtOpt)
     *singlePr += printAvgExt(out, gzOut,
       readLen, unpaired, *totalLen, *pairedPr);
+
+  // print pileup
+  printPileup(out, gzOut, chrom, n_ref);
 
   // free Reads; check for orphan paired alignments
   Read* r = dummy->next;
@@ -882,8 +935,11 @@ int parseBAM(gzFile in, File out, bool gzOut, int n_ref,
 
   // process single alignments w/ avgExtOpt
   if (avgExtOpt)
-    *singlePr += printAvgExt(out, gzOut,
-      readLen, unpaired, *totalLen, *pairedPr);
+    *singlePr += printAvgExt(out, gzOut, readLen, unpaired,
+      *totalLen, *pairedPr);
+
+  // print pileup
+  printPileup(out, gzOut, chrom, n_ref);
 
   // free Reads; check for orphan paired alignments
   Read* r = dummy->next;
@@ -927,7 +983,7 @@ int readBAM(gzFile in, File out, bool gzOut, double* totalLen,
     exit(error("", ERRBAM));
 
   // save chromosome lengths
-  int32_t n_ref = readInt32(in, true);  // number of ref sequences
+  int32_t n_ref = readInt32(in, true); // number of ref sequences
   int chromLen = 0;
   Chrom** chrom = NULL;
   for (int i = 0; i < n_ref; i++) {
