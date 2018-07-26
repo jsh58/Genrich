@@ -155,10 +155,16 @@ void printPileup(File out, bool gzOut, Chrom** chrom,
     }
 
     int start = 0;
-    for (int i = 0; i < chr->pileupLen; i++) {
+    int i = 0;
+    while (i < chr->pileupLen) {
+      float val = chr->pileup[i]->cov;
+      int j = 1;
+      while (i + j < chr->pileupLen && chr->pileup[i + j]->cov == val)
+        j++;
       printInterval(out, gzOut, chr, start,
-        chr->pileup[i]->end, chr->pileup[i]->cov);
-      start = chr->pileup[i]->end;
+        chr->pileup[i + j - 1]->end, chr->pileup[i]->cov);
+      start = chr->pileup[i + j - 1]->end;
+      i += j;
     }
   }
 }
@@ -194,20 +200,40 @@ void initPileup(Chrom* chrom, int start, int end) {
   }
 }
 
+/* int findStart()
+ * Find the interval in chrom->pileup that matches
+ *   start coordinate.
+ */
+int findStart(Chrom* chrom, int start) {
+  int guess = (start / (float) chrom->len) * chrom->pileupLen;
+  if (start >= chrom->pileup[guess]->end) {
+    for (int i = guess + 1; i < chrom->pileupLen; i++)
+      if (start < chrom->pileup[i]->end)
+        return i;
+    return chrom->pileupLen - 1;
+  } else if (guess > 0 && start < chrom->pileup[guess-1]->end) {
+    for (int i = guess - 2; i > -1; i--)
+      if (start >= chrom->pileup[i]->end)
+        return i + 1;
+    return 0;
+  } else
+    return guess;
+}
+
 /* void savePileup()
  * Increment coverage values over the given interval
  *   [start, end). Expand the Pileup** if necessary.
  */
 void savePileup(Chrom* chrom, int start, int end) {
   // find overlapping interval(s) in chrom->pileup
-  int idx1 = -1, idx2 = -1;
-  for (int i = 0; i < chrom->pileupLen; i++) {
-    if (idx1 == -1 && start < chrom->pileup[i]->end)
-      idx1 = i;
-    if (idx2 == -1 && end <= chrom->pileup[i]->end)
+  int idx1 = findStart(chrom, start);
+  int idx2 = -1;
+  for (int i = idx1; i < chrom->pileupLen; i++)
+    if (end <= chrom->pileup[i]->end) {
       idx2 = i;
-  }
-  if (idx1 == -1 && idx2 == -1)
+      break;
+    }
+  if (idx2 == -1)
     exit(error("something went wrong", DEFERR));
 
   // create new pileup nodes if necessary
@@ -385,6 +411,7 @@ void saveChrom(char* name, int len, int* n_ref,
   c->len = len;
   c->skip = skip;
   c->pileup = NULL;
+  c->pileupLen = 0;
 
   // save to list
   *chrom = (Chrom**) memrealloc(*chrom,
@@ -763,6 +790,9 @@ int readSAM(File in, bool gz, File out, bool gzOut,
   // free memory
   free(line);
   for (int i = 0; i < n_ref; i++) {
+    for (int j = 0; j < chrom[i]->pileupLen; j++)
+      free(chrom[i]->pileup[j]);
+    free(chrom[i]->pileup);
     free(chrom[i]->name);
     free(chrom[i]);
   }
@@ -1047,6 +1077,9 @@ int parseBAM(gzFile in, File out, bool gzOut, int n_ref,
   // free memory
   free(line);
   for (int i = 0; i < n_ref; i++) {
+    for (int j = 0; j < chrom[i]->pileupLen; j++)
+      free(chrom[i]->pileup[j]);
+    free(chrom[i]->pileup);
     free(chrom[i]->name);
     free(chrom[i]);
   }
