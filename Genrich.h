@@ -123,17 +123,11 @@ typedef union file {
   gzFile gzf;
 } File;
 
-typedef struct pileup {
-  int end;
-  float cov;
-} Pileup;
-
 typedef struct chrom {
   char* name;
   uint32_t len;
   bool skip;
-  Pileup** pileup;
-  int pileupLen;
+  float* pileup;
 } Chrom;
 
 typedef struct read {
