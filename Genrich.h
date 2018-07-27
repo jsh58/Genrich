@@ -37,24 +37,24 @@ enum sam { NIL, QNAME, FLAG, RNAME, POS, MAPQ, CIGAR, RNEXT,
 
 
 // command-line options
-#define OPTIONS     "hi:o:sa:xc:q:zyf:l:m:p:de:C:j:gn:vV"
+#define OPTIONS     "ht:c:o:ya:xe:q:zf:l:m:p:dE:C:j:gn:vV"
 #define HELP        'h'
-#define INFILE      'i'
+#define INFILE      't'
+#define CTRLFILE    'c'
 #define OUTFILE     'o'
-#define SINGLEOPT   's'
+#define SINGLEOPT   'y'
 #define EXTENDOPT   'a'
 #define AVGEXTOPT   'x'
-#define XCHROM      'c'
+#define XCHROM      'e'
 #define MINMAPQ     'q'
 #define GZOPT       'z'
-#define UNGZOPT     'y'
 
 #define UNFILE      'f'
 #define LOGFILE     'l'
 #define OVERLAP     'm'
 #define MISMATCH    'p'
 #define DOVEOPT     'd'
-#define DOVEOVER    'e'
+#define DOVEOVER    'E'
 #define DOVEFILE    'C'
 #define ALNFILE     'j'
 #define FJOINOPT    'g'
@@ -123,11 +123,20 @@ typedef union file {
   gzFile gzf;
 } File;
 
+typedef struct pileup {
+  int* end;
+  float* cov;
+} Pileup;
+
 typedef struct chrom {
   char* name;
   uint32_t len;
   bool skip;
-  float* pileup;
+  float* diff;
+  Pileup* treat;
+  int treatLen; // length of pileup arrays
+  Pileup* ctrl;
+  int ctrlLen;  // length of pileup arrays
 } Chrom;
 
 typedef struct read {
