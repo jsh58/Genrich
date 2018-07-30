@@ -13,6 +13,8 @@
 #include <stdbool.h>
 #include <string.h>
 #include <getopt.h>
+#include <math.h>
+#include <float.h>
 #include <zlib.h>
 #include <omp.h>
 #include "Genrich.h"
@@ -126,23 +128,75 @@ char* getLine(char* line, int size, File in, bool gz) {
     return fgets(line, size, in.f);
 }
 
+/*** Save SAM/BAM header info ***/
+
+/* int saveChrom()
+ * If chromosome (reference sequence) has not been
+ *   saved yet, save it to the array. Return the index.
+ */
+int saveChrom(char* name, int len, int* chromLen,
+    Chrom*** chrom, int xcount, char** xchrList) {
+  // determine if chrom has been saved already
+  for (int i = 0; i < *chromLen; i++)
+    if (!strcmp((*chrom)[i]->name, name))
+      return i;
+
+  // determine if chrom is on skipped list
+  bool skip = false;
+  for (int i = 0; i < xcount; i++)
+    if (!strcmp(xchrList[i], name)) {
+      skip = true;
+      break;
+    }
+
+  // create Chrom*
+  Chrom* c = (Chrom*) memalloc(sizeof(Chrom));
+  c->name = (char*) memalloc(1 + strlen(name));
+  strcpy(c->name, name);
+  c->len = len;
+  c->skip = skip;
+  c->diff = NULL;
+  c->treat = NULL;
+  c->ctrl = NULL;
+
+  // save to list
+  *chrom = (Chrom**) memrealloc(*chrom,
+    (*chromLen + 1) * sizeof(Chrom*));
+  (*chrom)[*chromLen] = c;
+  (*chromLen)++;
+  return *chromLen - 1;
+}
+
+
 /*** BED printing ***/
 
 /* void printInterval()
- * Print BED interval, with pileup as the value.
+ * Print BED interval, with pileups and p-value for each.
  */
 void printInterval(File out, bool gzOut, Chrom* chrom,
-    int start, int end, float treatVal, float ctrlVal) {
+    int start, int end, float treatVal, float ctrlVal,
+    float pval) {
   if (gzOut)
-    gzprintf(out.gzf, "%s\t%d\t%d\t%.5f\t%.5f\n",
-      chrom->name, start, end, treatVal, ctrlVal);
+    gzprintf(out.gzf, "%s\t%d\t%d\t%.5f\t%.5f\t%.5f\n",
+      chrom->name, start, end, treatVal, ctrlVal, pval);
   else
-    fprintf(out.f, "%s\t%d\t%d\t%.5f\t%.5f\n",
-      chrom->name, start, end, treatVal, ctrlVal);
+    fprintf(out.f, "%s\t%d\t%d\t%.5f\t%.5f\t%.5f\n",
+      chrom->name, start, end, treatVal, ctrlVal, pval);
+}
+
+/* float calcPval()
+ * Calculate -log10(p) using an exponential distribution
+ *   with parameter beta ('ctrl') and observation 'treat'.
+ */
+float calcPval(float treat, float ctrl) {
+  if (ctrl == 0.0f)
+    return FLT_MAX;
+  return treat / ctrl * M_LOG10E;
 }
 
 /* void printPileup()
  * Controls printing of pileup values for each Chrom.
+ *   Calculate p-values for each.
  */
 void printPileup(File out, bool gzOut, Chrom** chrom,
     int chromLen) {
@@ -153,15 +207,15 @@ void printPileup(File out, bool gzOut, Chrom** chrom,
       continue;
 
     if (chr->treat == NULL) {
-      // no treatment coverage -- shortcut printing
+      // no treatment coverage (set -log(p) to 0)
       if (chr->ctrl == NULL)
-        printInterval(out, gzOut, chr, 0, chr->len, 0, 0);
+        printInterval(out, gzOut, chr, 0, chr->len, 0, 0, 0);
       else {
         int start = 0;
         for (int j = 0; j < chr->ctrlLen; j++) {
           printInterval(out, gzOut, chr,
             start, chr->ctrl->end[j],
-            0, chr->ctrl->cov[j]);
+            0, chr->ctrl->cov[j], 0);
           start = chr->ctrl->end[j];
         }
       }
@@ -175,13 +229,15 @@ void printPileup(File out, bool gzOut, Chrom** chrom,
       while (chr->ctrl->end[k] < chr->treat->end[j]) {
         printInterval(out, gzOut, chr,
           start, chr->ctrl->end[k],
-          chr->treat->cov[j], chr->ctrl->cov[k]);
+          chr->treat->cov[j], chr->ctrl->cov[k],
+          calcPval(chr->treat->cov[j], chr->ctrl->cov[k]));
         start = chr->ctrl->end[k];
         k++;
       }
       printInterval(out, gzOut, chr,
         start, chr->treat->end[j],
-        chr->treat->cov[j], chr->ctrl->cov[k]);
+        chr->treat->cov[j], chr->ctrl->cov[k],
+        calcPval(chr->treat->cov[j], chr->ctrl->cov[k]));
       if (chr->ctrl->end[k] == chr->treat->end[j])
         k++;
       start = chr->treat->end[j];
@@ -189,20 +245,21 @@ void printPileup(File out, bool gzOut, Chrom** chrom,
   }
 }
 
+
+/*** Save treatment/control pileup values ***/
+
 /* float calcLambda()
  * Calculate a background lambda value: sum of fragment
  *   lengths divided by total genome length.
  */
 float calcLambda(Chrom** chrom, int chromLen,
     unsigned long fragLen) {
-  unsigned long genomeLen = 0;
+  unsigned long genomeLen = 0; // total genome length
   for (int i = 0; i < chromLen; i++)
     if (!chrom[i]->skip)
       genomeLen += chrom[i]->len;
   if (! genomeLen)
     exit(error("", ERRGEN));
-//printf("genomeLen is %ld; fragLen is %ld; lambda = %.9f\n",
-//  genomeLen, fragLen, fragLen / (double) genomeLen);
   return fragLen / (double) genomeLen;
 }
 
@@ -210,7 +267,8 @@ float calcLambda(Chrom** chrom, int chromLen,
  * When no control is available, save the control
  *   pileup as the background lambda value.
  */
-void savePileupNoCtrl(Chrom** chrom, int chromLen, long fragLen) {
+void savePileupNoCtrl(Chrom** chrom, int chromLen,
+    unsigned long fragLen) {
   float lambda = calcLambda(chrom, chromLen, fragLen);
   for (int i = 0; i < chromLen; i++) {
     Chrom* chr = chrom[i];
@@ -227,15 +285,15 @@ void savePileupNoCtrl(Chrom** chrom, int chromLen, long fragLen) {
 }
 
 /* unsigned long savePileup()
- * Save pileup values for each Chrom from diff arrays
- *   and background lambda value.
+ * Save pileup values for each Chrom from 'diff' arrays
+ *   (and background lambda value for control sample).
  *   Return total length of all fragments (weighted).
  */
 unsigned long savePileup(Chrom** chrom, int chromLen,
     unsigned long fragLen, bool ctrl) {
 
   // calculate background lambda value
-  float lambda = 0.0;
+  float lambda = 0.0f;
   if (ctrl)
     lambda = calcLambda(chrom, chromLen, fragLen);
 
@@ -292,46 +350,8 @@ unsigned long savePileup(Chrom** chrom, int chromLen,
   return fragLen;
 }
 
-/*** Save SAM/BAM header info ***/
 
-/* int saveChrom()
- * If chromosome (reference sequence) has not been
- *   saved yet, save it to the array. Return the index.
- */
-int saveChrom(char* name, int len, int* chromLen,
-    Chrom*** chrom, int xcount, char** xchrList) {
-  // determine if chrom has been saved already
-  for (int i = 0; i < *chromLen; i++)
-    if (!strcmp((*chrom)[i]->name, name))
-      return i;
-
-  // determine if chrom is on skipped list
-  bool skip = false;
-  for (int i = 0; i < xcount; i++)
-    if (!strcmp(xchrList[i], name)) {
-      skip = true;
-      break;
-    }
-
-  // create Chrom*
-  Chrom* c = (Chrom*) memalloc(sizeof(Chrom));
-  c->name = (char*) memalloc(1 + strlen(name));
-  strcpy(c->name, name);
-  c->len = len;
-  c->skip = skip;
-  c->diff = NULL;
-  c->treat = NULL;
-  c->ctrl = NULL;
-
-  // save to list
-  *chrom = (Chrom**) memrealloc(*chrom,
-    (*chromLen + 1) * sizeof(Chrom*));
-  (*chrom)[*chromLen] = c;
-  (*chromLen)++;
-  return *chromLen - 1;
-}
-
-/*** Alignment parsing / conversion to intervals ***/
+/*** Convert alignments to intervals/pileups ***/
 
 /* int saveInterval()
  * Save BED interval for a read/fragment.
@@ -355,7 +375,7 @@ int saveInterval(Chrom* chrom, int start, int end,
   if (chrom->diff == NULL) {
     chrom->diff = (float*) memalloc(chrom->len * sizeof(float));
     for (int i = 0; i < chrom->len; i++)
-      chrom->diff[i] = 0.0;
+      chrom->diff[i] = 0.0f;
   }
   chrom->diff[start] += 1;
   chrom->diff[end] -= 1;
@@ -363,9 +383,10 @@ int saveInterval(Chrom* chrom, int start, int end,
   return end - start;
 }
 
-
 /* void saveSingle()
- * Control printing for an unpaired alignment.
+ * Control processing of singleton alignments
+ *   (either keeping them as is, or extending
+ *   to a given length).
  */
 void saveSingle(Chrom* chrom, char* qname, uint16_t flag,
     uint32_t pos, int length, bool extendOpt, int extend) {
@@ -380,7 +401,8 @@ void saveSingle(Chrom* chrom, char* qname, uint16_t flag,
 
 /* int saveAvgExt()
  * Save complete intervals for unpaired alignments
- *   with "extend to average length" option.
+ *   with "extend to average length" option, after
+ *   calculating average length from paired alns.
  *   Return number printed.
  */
 int saveAvgExt(int readLen, Read** unpaired,
@@ -415,7 +437,8 @@ int saveAvgExt(int readLen, Read** unpaired,
 
 /* void saveAvgExtList()
  * Save info for an unpaired alignment to list
- *   (for "extend to average length" option).
+ *   (for "extend to average length" option), for
+ *   later processing by saveAvgExt().
  */
 void saveAvgExtList(int* readLen, int* readMem,
     Read*** unpaired, char* qname, uint16_t flag,
@@ -514,9 +537,8 @@ Read* savePaired(Read* dummy, char* qname, uint16_t flag,
  *   alignment until extension length can be calculated from
  *   paired alignments.
  */
-void parseAlign(File out, bool gzOut,
-    int* readLen, int* readMem, Read*** unpaired, Read* dummy,
-    char* qname,
+void parseAlign(int* readLen, int* readMem, Read*** unpaired,
+    Read* dummy, char* qname,
     uint16_t flag, Chrom* chrom, uint32_t pos, int length,
     unsigned long* totalLen, int* paired, int* single, int* pairedPr,
     int* singlePr, bool singleOpt, bool extendOpt, int extend,
@@ -543,11 +565,13 @@ void parseAlign(File out, bool gzOut,
     // unpaired alignment
     (*single)++;
     if (singleOpt) {
-      if (avgExtOpt)
+      if (avgExtOpt) {
         // for average-extension option, save alignment
+        //   for later processing by saveAvgExt()
         saveAvgExtList(readLen, readMem, unpaired, qname,
           flag, chrom, pos, length);
-      else {
+      } else {
+        // for other options, save singleton interval
         saveSingle(chrom, qname, flag, pos, length,
           extendOpt, extend);
         (*singlePr)++;
@@ -761,7 +785,7 @@ int readSAM(File in, bool gz, File out, bool gzOut, char* line,
 
     // save alignment information
     int length = calcDist(qname, seq, cigar); // distance to 3' end
-    parseAlign(out, gzOut, readLen, readMem, &unpaired, dummy,
+    parseAlign(readLen, readMem, &unpaired, dummy,
       qname, flag, ref, pos, length, totalLen,
       paired, single, pairedPr, singlePr,
       singleOpt, extendOpt, extend, avgExtOpt);
@@ -1016,7 +1040,7 @@ int parseBAM(gzFile in, File out, bool gzOut, char* line,
 
     // save alignment information
     int length = calcDistBAM(l_seq, n_cigar_op, cigar); // distance to 3' end
-    parseAlign(out, gzOut, readLen, readMem, &unpaired, dummy,
+    parseAlign(readLen, readMem, &unpaired, dummy,
       read_name, flag, ref, pos,
       length, totalLen, paired, single, pairedPr, singlePr,
       singleOpt, extendOpt, extend, avgExtOpt);
@@ -1421,11 +1445,11 @@ void runProgram(char* outFile, char* inFile, char* ctrlFile,
       for (int j = 0; j < chromLen; j++)
         if (chrom[j]->diff != NULL)
           for (int k = 0; k < chrom[j]->len; k++)
-            chrom[j]->diff[k] = 0.0;
+            chrom[j]->diff[k] = 0.0f;
 
   }
 
-  // save pileup values
+  // print pileup values
   printPileup(out, gzOut, chrom, chromLen);
 
   // free memory
