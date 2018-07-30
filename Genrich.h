@@ -8,6 +8,9 @@
 */
 #define VERSION     "0.0"
 
+// macros
+#define MAX(a, b) ((a) > (b) ? (a) : (b))
+
 // constants
 #define MAX_SIZE    65520   // maximum length of input SAM/BAM alignments
 #define NOTMATCH    1.5f    // stitch failure
@@ -81,7 +84,7 @@ enum omp_locks { OUT, UN, LOG, DOVE, ALN, OMP_LOCKS };
 enum errCode { ERRFILE, ERROPEN, ERRCLOSE, ERROPENW, ERRUNK,
   ERRMEM, ERRSEQ, ERRQUAL, ERRHEAD, ERRINT, ERRFLOAT, ERRPARAM,
   ERROVER, ERRMISM, ERRINFO, ERRSAM, ERRREP, ERRCHROM, ERREXTEND,
-  ERRBAM,
+  ERRBAM, ERRGEN,
 ERROFFSET, ERRUNGET, ERRGZIP,
   ERRTHREAD, ERRNAME, ERRRANGE, ERRDEFQ, ERRCIGAR, DEFERR
 };
@@ -105,6 +108,7 @@ const char* errMsg[] = { "Need input/output files",
   ": cannot find reference sequence name in SAM header",
   "Extension length must be >= 0",
   "Cannot parse BAM file",
+  "No analyzable genome (length=0)",
 
   ": quality score outside of set range",
   "Failure in ungetc() call",
