@@ -84,7 +84,7 @@ enum omp_locks { OUT, UN, LOG, DOVE, ALN, OMP_LOCKS };
 enum errCode { ERRFILE, ERROPEN, ERRCLOSE, ERROPENW, ERRUNK,
   ERRMEM, ERRSEQ, ERRQUAL, ERRHEAD, ERRINT, ERRFLOAT, ERRPARAM,
   ERROVER, ERRMISM, ERRINFO, ERRSAM, ERRREP, ERRCHROM, ERREXTEND,
-  ERRBAM, ERRGEN,
+  ERRBAM, ERRGEN, ERRCHRLEN, ERRCTRL,
 ERROFFSET, ERRUNGET, ERRGZIP,
   ERRTHREAD, ERRNAME, ERRRANGE, ERRDEFQ, ERRCIGAR, DEFERR
 };
@@ -109,6 +109,8 @@ const char* errMsg[] = { "Need input/output files",
   "Extension length must be >= 0",
   "Cannot parse BAM file",
   "No analyzable genome (length=0)",
+  ": reference sequence has different lengths in BAM/SAM files",
+  ": reference sequence missing from control sample(s)",
 
   ": quality score outside of set range",
   "Failure in ungetc() call",
@@ -141,6 +143,8 @@ typedef struct chrom {
   int treatLen; // length of pileup arrays
   Pileup* ctrl;
   int ctrlLen;  // length of pileup arrays
+  Pileup* pval;
+  int pvalLen;  // length of pileup arrays
 } Chrom;
 
 typedef struct read {
