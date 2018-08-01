@@ -10,6 +10,7 @@
 
 // macros
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
+#define MIN(a, b) ((a) < (b) ? (a) : (b))
 
 // constants
 #define MAX_SIZE    65520   // maximum length of input SAM/BAM alignments
@@ -20,11 +21,9 @@
 #define TAB         "\t"
 
 // default parameter values
-#define DEFOVER     20      // min. overlap
-#define DEFDOVE     50      // min. overlap for dovetailed alignments
-#define DEFMISM     0.1f    // mismatch fraction
 #define OFFSET      33      // fastq quality offset (Sanger = 33)
 #define MAXQUAL     40      // maximum quality score (0-based)
+#define DEFQVAL     0.05    // default q-value
 #define DEFTHR      1       // number of threads
 
 // fastq parts
@@ -38,9 +37,8 @@ enum fastq { HEAD, SEQ2, PLUS, QUAL2, FASTQ };  // lines of a fastq read
 enum sam { NIL, QNAME, FLAG, RNAME, POS, MAPQ, CIGAR, RNEXT,
   PNEXT, TLEN, SEQ, QUAL };
 
-
 // command-line options
-#define OPTIONS     "ht:c:o:ya:xe:q:zf:l:m:p:dE:C:j:gn:vV"
+#define OPTIONS     "ht:c:o:ya:xe:m:zp:q:f:l:dC:j:gn:vV"
 #define HELP        'h'
 #define INFILE      't'
 #define CTRLFILE    'c'
@@ -49,15 +47,14 @@ enum sam { NIL, QNAME, FLAG, RNAME, POS, MAPQ, CIGAR, RNEXT,
 #define EXTENDOPT   'a'
 #define AVGEXTOPT   'x'
 #define XCHROM      'e'
-#define MINMAPQ     'q'
+#define MINMAPQ     'm'
 #define GZOPT       'z'
+#define PVALUE      'p'
+#define QVALUE      'q'
 
 #define UNFILE      'f'
 #define LOGFILE     'l'
-#define OVERLAP     'm'
-#define MISMATCH    'p'
 #define DOVEOPT     'd'
-#define DOVEOVER    'E'
 #define DOVEFILE    'C'
 #define ALNFILE     'j'
 #define FJOINOPT    'g'
@@ -83,7 +80,7 @@ enum omp_locks { OUT, UN, LOG, DOVE, ALN, OMP_LOCKS };
 // error messages
 enum errCode { ERRFILE, ERROPEN, ERRCLOSE, ERROPENW, ERRUNK,
   ERRMEM, ERRSEQ, ERRQUAL, ERRHEAD, ERRINT, ERRFLOAT, ERRPARAM,
-  ERROVER, ERRMISM, ERRINFO, ERRSAM, ERRREP, ERRCHROM, ERREXTEND,
+  ERRMISM, ERRINFO, ERRSAM, ERRREP, ERRCHROM, ERREXTEND,
   ERRBAM, ERRGEN, ERRCHRLEN, ERRCTRL,
 ERROFFSET, ERRUNGET, ERRGZIP,
   ERRTHREAD, ERRNAME, ERRRANGE, ERRDEFQ, ERRCIGAR, DEFERR
@@ -100,7 +97,6 @@ const char* errMsg[] = { "Need input/output files",
   ": cannot convert to int",
   ": cannot convert to float",
   ": unknown command-line argument",
-  "Overlap must be greater than 0",
   ": mismatch between sequence length and CIGAR",
   ": no sequence information (SEQ or CIGAR)",
   ": poorly formatted SAM/BAM record",
@@ -130,7 +126,7 @@ typedef union file {
 } File;
 
 typedef struct pileup {
-  int* end;
+  unsigned int* end;
   float* cov;
 } Pileup;
 
@@ -140,11 +136,12 @@ typedef struct chrom {
   bool skip;
   float* diff;
   Pileup* treat;
-  int treatLen; // length of pileup arrays
+  int treatLen; // length of pileup arrays for treatment sample(s)
   Pileup* ctrl;
-  int ctrlLen;  // length of pileup arrays
+  int ctrlLen;  // length of pileup arrays for control sample(s)
   Pileup* pval;
-  int pvalLen;  // length of pileup arrays
+  Pileup* qval;
+  int pvalLen;  // length of pileup arrays for p- and q-values
 } Chrom;
 
 typedef struct read {

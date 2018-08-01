@@ -48,6 +48,9 @@ void usage(void) {
   fprintf(stderr, "                     increased to specified value\n");
   fprintf(stderr, "  -%c               Print unpaired alignments, with fragment length\n", AVGEXTOPT);
   fprintf(stderr, "                     increased to average value of paired alignments\n");
+  fprintf(stderr, "Options for peak calling:\n");
+  fprintf(stderr, "  -%c  <float>      Maximum q-value (FDR-adjusted p-value; def. %.2f)\n", QVALUE, DEFQVAL);
+  fprintf(stderr, "  -%c  <float>      Maximum p-value (mutually exclusive with -%c)\n", PVALUE, QVALUE);
   fprintf(stderr, "I/O options:\n");
   fprintf(stderr, "  -%c               Option to gzip output(s)\n", GZOPT);
 /*  fprintf(stderr, "  -%c               Option to check for dovetailing (with 3' overhangs)\n", DOVEOPT);
@@ -164,6 +167,7 @@ int saveChrom(char* name, int len, int* chromLen,
   c->ctrl = NULL;
   c->ctrlLen = 0;
   c->pval = NULL;
+  c->qval = NULL;
   c->pvalLen = 0;
 
   // save to list
@@ -178,39 +182,66 @@ int saveChrom(char* name, int len, int* chromLen,
 /*** BED printing ***/
 
 /* void printInterval()
- * Print BED interval, with pileups and p-value for each.
+ * Print BED interval, with pileups (treatment and control),
+ *   p- and q-values, and significance ('*') for each.
  */
-void printInterval(File out, bool gzOut, Chrom* chrom,
+void printInterval(File out, bool gzOut, char* name,
     int start, int end, float treatVal, float ctrlVal,
-    float pval) {
-  if (gzOut)
-    gzprintf(out.gzf, "%s\t%d\t%d\t%.5f\t%.5f\t%.5f\n",
-      chrom->name, start, end, treatVal, ctrlVal, pval);
-  else
-    fprintf(out.f, "%s\t%d\t%d\t%.5f\t%.5f\t%.5f\n",
-      chrom->name, start, end, treatVal, ctrlVal, pval);
+    float pval, float qval, bool sig) {
+  if (gzOut) {
+    gzprintf(out.gzf, "%s\t%d\t%d\t%.5f\t%.5f\t%.5f",
+      name, start, end, treatVal, ctrlVal, pval);
+    if (qval != -1.0f)
+      gzprintf(out.gzf, "\t%.5f", qval);
+    gzprintf(out.gzf, "\t%s\n", sig ? "*" : "");
+  } else {
+    fprintf(out.f, "%s\t%d\t%d\t%.5f\t%.5f\t%.5f",
+      name, start, end, treatVal, ctrlVal, pval);
+    if (qval != -1.0f)
+      fprintf(out.f, "\t%.5f", qval);
+    fprintf(out.f, "\t%s\n", sig ? "*" : "");
+  }
 }
 
 /* void printPileup()
- * Controls printing of pileup values for each Chrom.
- *   Calculate p-values for each.
+ * Controls printing of pileup values and p- and q-values
+ *   for each Chrom.
  */
 void printPileup(File out, bool gzOut, Chrom** chrom,
-    int chromLen) {
+    int chromLen, float pqvalue, bool qvalOpt) {
 
+  // print header
+  if (gzOut) {
+    gzprintf(out.gzf, "chr\tstart\tend\ttreatment\tcontrol\t-log(p)");
+    if (qvalOpt)
+      gzprintf(out.gzf, "\t-log(q)");
+    gzprintf(out.gzf, "\tsignif\n");
+  } else {
+    fprintf(out.f, "chr\tstart\tend\ttreatment\tcontrol\t-log(p)");
+    if (qvalOpt)
+      fprintf(out.f, "\t-log(q)");
+    fprintf(out.f, "\tsignif\n");
+  }
+
+  // loop through chroms
   for (int i = 0; i < chromLen; i++) {
     Chrom* chr = chrom[i];
     if (chr->skip)
       continue;
 
-    // print output from treatment and control
+    // print output, with intervals defined by chr->pval
     int start = 0;
     int j = 0, k = 0;
     for (int m = 0; m < chr->pvalLen; m++) {
-      printInterval(out, gzOut, chr,
+      bool sig = false;
+      if ( (qvalOpt && chr->qval->cov[m] > pqvalue)
+          || (! qvalOpt && chr->pval->cov[m] > pqvalue) )
+        sig = true;
+      printInterval(out, gzOut, chr->name,
         start, chr->pval->end[m],
         chr->treat->cov[j], chr->ctrl->cov[k],
-        chr->pval->cov[m]);
+        chr->pval->cov[m],
+        qvalOpt ? chr->qval->cov[m] : -1.0f, sig);
       if (chr->ctrl->end[k] < chr->treat->end[j])
         k++;
       else {
@@ -223,6 +254,105 @@ void printPileup(File out, bool gzOut, Chrom** chrom,
   }
 }
 
+/*** Quicksort ***/
+// adapted from https://www.geeksforgeeks.org/quick-sort/
+
+/* void swapFloat(): Swap two float values (pileup->cov)
+ * void swapInt():   Swap two int values (pileup->end)
+ * int partition():  Place last elt into correct spot
+ * void quickSort(): Control quickSort process recursively
+ */
+void swapFloat(float* a, float* b) {
+  float t = *a;
+  *a = *b;
+  *b = t;
+}
+void swapInt(unsigned int* a, unsigned int* b) {
+  unsigned int t = *a;
+  *a = *b;
+  *b = t;
+}
+int partition(Pileup* p, int low, int high) {
+  float pivot = p->cov[high];  // pivot value: last elt
+  int idx = low - 1;
+
+  for (int j = low; j < high; j++) {
+    if (p->cov[j] < pivot) {
+      idx++;
+      swapFloat(&p->cov[idx], &p->cov[j]);
+      swapInt(&p->end[idx], &p->end[j]);  // swap int values too
+    }
+  }
+  idx++;
+  swapFloat(&p->cov[idx], &p->cov[high]);
+  swapInt(&p->end[idx], &p->end[high]);
+  return idx;
+}
+void quickSort(Pileup* p, int low, int high) {
+  if (low < high) {
+    int idx = partition(p, low, high);
+    quickSort(p, low, idx - 1);
+    quickSort(p, idx + 1, high);
+  }
+}
+
+/*** Calculate q-values ***/
+
+/* float lookup()
+ * Return the pre-computed q-value for a given p-value,
+ *   using parallel arrays (p->cov and qval).
+ */
+float lookup(Pileup* p, int low, int high, float* qval,
+    float pval) {
+  if (low == high)
+    return qval[low];
+  int idx = (low + high) / 2;
+  if (p->cov[idx] == pval)
+    return qval[idx];
+  if (p->cov[idx] > pval)
+    return lookup(p, low, idx - 1, qval, pval);
+  return lookup(p, idx + 1, high, qval, pval);
+}
+
+/* void saveQval()
+ * Calculate and save q-values, given the pre-compiled
+ *   list of p-values (Pileup* p).
+ */
+void saveQval(Chrom** chrom, int chromLen,
+    unsigned long genomeLen, Pileup* p, int pLen) {
+
+  // sort pileup by p-values
+  quickSort(p, 0, pLen - 1);
+
+  // calculate q-values for each p-value: -log(q) = -log(p*N/k)
+  unsigned int k = 1;  // 1 + number of bases with higher -log(p)
+  float logN = -1 * log10f(genomeLen);
+  float* qval = (float*) memalloc((pLen + 1) * sizeof(float));
+  qval[pLen] = FLT_MAX;
+  for (int i = pLen - 1; i > -1; i--) {
+    // ensure monotonicity
+    qval[i] = MAX( MIN( p->cov[i] + logN + log10f(k),
+      qval[i + 1]), 0.0f);
+    k += p->end[i];
+  }
+
+  // save pileups of q-values for each chrom
+  for (int i = 0; i < chromLen; i++) {
+    Chrom* chr = chrom[i];
+    if (chr->skip)
+      continue;
+    for (int j = 0; j < chr->pvalLen; j++)
+      chr->qval->cov[j] = lookup(p, 0, pLen, qval,
+        chr->pval->cov[j]);
+  }
+
+  // free memory
+  free(qval);
+  free(p->end);
+  free(p->cov);
+  free(p);
+}
+
 /*** Calculate p-values ***/
 
 /* void saveConst()
@@ -230,11 +360,39 @@ void printPileup(File out, bool gzOut, Chrom** chrom,
  */
 void saveConst(Pileup** p, int* size, int len, float val) {
   (*p) = (Pileup*) memalloc(sizeof(Pileup));
-  (*p)->end = (int*) memalloc(sizeof(int));
+  (*p)->end = (unsigned int*) memalloc(sizeof(unsigned int));
   (*p)->end[0] = len;
   (*p)->cov = (float*) memalloc(sizeof(float));
   (*p)->cov[0] = val;
   *size = 1;
+}
+
+/* void recordPval()
+ * Save length of given p-value into Pileup arrays.
+ */
+void recordPval(Pileup* p, int* pLen, int* pMem,
+    float pval, int length) {
+  // look for p-value in array
+  for (int i = 0; i < *pLen; i++)
+    if (p->cov[i] == pval) {
+      // if found, just add length
+      p->end[i] += length;
+      return;
+    }
+
+  // realloc memory if necessary
+  if (*pLen + 1 > *pMem) {
+    *pMem += 10000;
+    p->end = (unsigned int*) memrealloc(p->end,
+      *pMem * sizeof(unsigned int));
+    p->cov = (float*) memrealloc(p->cov,
+      *pMem * sizeof(float));
+  }
+
+  // save values to arrays
+  p->end[*pLen] = length;
+  p->cov[*pLen] = pval;
+  (*pLen)++;
 }
 
 /* int countIntervals()
@@ -267,10 +425,25 @@ float calcPval(float treatVal, float ctrlVal) {
   return treatVal / ctrlVal * M_LOG10E;
 }
 
-/* void savePval()
+/* Pileup* savePval()
  * Create and save p-values as pileups for each chrom.
+ *   Return a pileup of all p-values to be used in
+ *   q-value calculations.
  */
-void savePval(Chrom** chrom, int chromLen) {
+Pileup* savePval(Chrom** chrom, int chromLen,
+    bool qvalOpt, int* pLen) {
+
+  // create pileup for conversion of p-values to q-values
+  Pileup* p = NULL;
+  int pMem = 0;
+  if (qvalOpt) {
+    p = (Pileup*) memalloc(sizeof(Pileup));
+    p->end = (unsigned int*) memalloc(10000 * sizeof(unsigned int));
+    p->cov = (float*) memalloc(10000 * sizeof(float));
+    pMem = 10000;
+  }
+
+  // create pileups for each chrom
   for (int i = 0; i < chromLen; i++) {
     Chrom* chr = chrom[i];
     if (chr->skip)
@@ -285,13 +458,20 @@ void savePval(Chrom** chrom, int chromLen) {
     // create 'pileup' arrays for p-values
     int num = countIntervals(chr);
     chr->pval = (Pileup*) memalloc(sizeof(Pileup));
-    chr->pval->end = (int*) memalloc(num * sizeof(int));
+    chr->pval->end = (unsigned int*) memalloc(num * sizeof(unsigned int));
     chr->pval->cov = (float*) memalloc(num * sizeof(float));
+    if (qvalOpt) {
+      // create pileups arrays for q-values (to be populated later)
+      chr->qval = (Pileup*) memalloc(sizeof(Pileup));
+      chr->qval->end = (unsigned int*) memalloc(num * sizeof(unsigned int));
+      chr->qval->cov = (float*) memalloc(num * sizeof(float));
+    }
     chr->pvalLen = num;
 
     // save p-values to arrays
+    int start = 0;
     int j = 0, k = 0;
-    for (int m = 0; m < num; m++)
+    for (int m = 0; m < num; m++) {
       if (chr->ctrl->end[k] < chr->treat->end[j]) {
         chr->pval->end[m] = chr->ctrl->end[k];
         chr->pval->cov[m] = calcPval(chr->treat->cov[j],
@@ -305,8 +485,15 @@ void savePval(Chrom** chrom, int chromLen) {
           k++;
         j++;
       }
+      if (qvalOpt) {
+        recordPval(p, pLen, &pMem, chr->pval->cov[m],
+          chr->pval->end[m] - start);
+        start = chr->pval->end[m];
+      }
+    }
 
   }
+  return p;
 }
 
 /*** Save treatment/control pileup values ***/
@@ -379,7 +566,7 @@ unsigned long savePileup(Chrom** chrom, int chromLen,
 
     // create pileup arrays
     *p = (Pileup*) memalloc(sizeof(Pileup));
-    (*p)->end = (int*) memalloc(num * sizeof(int));
+    (*p)->end = (unsigned int*) memalloc(num * sizeof(unsigned int));
     (*p)->cov = (float*) memalloc(num * sizeof(float));
     *size = num;
 
@@ -772,9 +959,9 @@ void loadChrom(char* line, int* chromLen, Chrom*** chrom,
  */
 int readSAM(File in, bool gz, File out, bool gzOut, char* line,
     File un1, File un2, bool unOpt, File log,
-    bool logOpt, int overlap, bool dovetail, int doveOverlap,
+    bool logOpt, bool dovetail,
     File dove, bool doveOpt, File aln, int alnOpt,
-    float mismatch, bool maxLen,
+    bool maxLen,
     unsigned long* totalLen, int* unmapped, int* paired, int* single,
     int* pairedPr, int* singlePr,
     int* supp, int* skipped, int* lowMapQ,
@@ -1415,11 +1602,12 @@ void runProgram(char* outFile, char* inFile, char* ctrlFile,
     bool singleOpt, bool extendOpt, int extend, bool avgExtOpt,
     int minMapQ,
     bool inter, char* unFile,
-    char* logFile, int overlap, bool dovetail,
-    char* doveFile, int doveOverlap, char* alnFile,
+    char* logFile, bool dovetail,
+    char* doveFile, char* alnFile,
     int alnOpt, bool gzOut, bool fjoin,
-    float mismatch, bool maxLen,
+    bool maxLen,
     int xcount, char** xchrList,
+    float pqvalue, bool qvalOpt,
     bool verbose, int threads) {
 
   // open output files
@@ -1475,9 +1663,9 @@ void runProgram(char* outFile, char* inFile, char* ctrlFile,
         count = readSAM(in, gz, out, gzOut, line,
           un1, un2, unFile != NULL,
           log, logFile != NULL,
-          overlap, dovetail, doveOverlap, dove,
+          dovetail, dove,
           dovetail && doveFile != NULL, aln, alnOpt,
-          mismatch, maxLen,
+          maxLen,
           &totalLen, &unmapped, &paired, &single,
           &pairedPr, &singlePr, &supp, &skipped, &lowMapQ, minMapQ,
           xcount, xchrList, &chromLen, &chrom,
@@ -1510,11 +1698,20 @@ void runProgram(char* outFile, char* inFile, char* ctrlFile,
             chrom[j]->diff[k] = 0.0f;
   }
 
-  // print output
+  // compute p- and q-values
   if (verbose)
     fprintf(stderr, "Total genome length: %ldbp\n", genomeLen);
-  savePval(chrom, chromLen);
-  printPileup(out, gzOut, chrom, chromLen);
+  int pLen = 0;
+  Pileup* p = savePval(chrom, chromLen, qvalOpt, &pLen);
+  if (qvalOpt)
+    // convert p-values to q-values
+    saveQval(chrom, chromLen, genomeLen, p, pLen);
+
+  // print output
+  if (verbose)
+    fprintf(stderr, "Significance threshold: -log(%c) > %.3f\n",
+      qvalOpt ? 'q' : 'p', pqvalue);
+  printPileup(out, gzOut, chrom, chromLen, pqvalue, qvalOpt);
 
   // free memory
   if (xcount) {
@@ -1524,20 +1721,23 @@ void runProgram(char* outFile, char* inFile, char* ctrlFile,
   }
   for (int i = 0; i < chromLen; i++) {
     Chrom* chr = chrom[i];
-    free(chr->pval->end);
-    free(chr->pval->cov);
-    free(chr->pval);
-    //if (chr->ctrl != NULL) {
+    if (! chr->skip) {
+      if (qvalOpt) {
+        free(chr->qval->end);
+        free(chr->qval->cov);
+        free(chr->qval);
+      }
+      free(chr->pval->end);
+      free(chr->pval->cov);
+      free(chr->pval);
       free(chr->ctrl->end);
       free(chr->ctrl->cov);
       free(chr->ctrl);
-    //}
-    //if (chr->treat != NULL) {
       free(chr->treat->end);
       free(chr->treat->cov);
       free(chr->treat);
-    //}
-    free(chr->diff);
+      free(chr->diff);
+    }
     free(chr->name);
     free(chr);
   }
@@ -1584,11 +1784,10 @@ void getArgs(int argc, char** argv) {
     *alnFile = NULL;
   char* xchrom = NULL;
   int extend = 0, minMapQ = 0,
-    overlap = DEFOVER, doveOverlap = DEFDOVE,
     threads = DEFTHR;
-  float mismatch = DEFMISM;
-  bool singleOpt = false, extendOpt = false, avgExtOpt = false;
-  bool gzOut = false;
+  float pqvalue = DEFQVAL;
+  bool singleOpt = false, extendOpt = false, avgExtOpt = false,
+    gzOut = false, qvalOpt = true;
   bool dovetail = false, maxLen = true,
     fjoin = false,
     verbose = false;
@@ -1606,6 +1805,8 @@ void getArgs(int argc, char** argv) {
       case XCHROM: xchrom = optarg; break;
       case MINMAPQ: minMapQ = getInt(optarg); break;
       case GZOPT: gzOut = true; break;
+      case QVALUE: pqvalue = getFloat(optarg); break;
+      case PVALUE: pqvalue = getFloat(optarg); qvalOpt = false; break;
 
       case VERBOSE: verbose = true; break;
       case VERSOPT: printVersion(); break;
@@ -1617,9 +1818,6 @@ void getArgs(int argc, char** argv) {
       case LOGFILE: logFile = optarg; break;
       case DOVEFILE: doveFile = optarg; break;
       case ALNFILE: alnFile = optarg; break;
-      case OVERLAP: overlap = getInt(optarg); break;
-      case DOVEOVER: doveOverlap = getInt(optarg); break;
-      case MISMATCH: mismatch = getFloat(optarg); break;
       case THREADS: threads = getInt(optarg); break;
       default: exit(-1);
     }
@@ -1647,11 +1845,10 @@ void getArgs(int argc, char** argv) {
   if (xchrom != NULL)
     xcount = saveXChrom(xchrom, &xchrList);
 
+  // adjust significance level to -log scale
+  pqvalue = -1 * log10f(pqvalue);
+
   bool inter = false;  // interleaved input
-  if (overlap <= 0 || doveOverlap <= 0)
-    exit(error("", ERROVER));
-  if (mismatch < 0.0f || mismatch >= 1.0f)
-    exit(error("", ERRMISM));
   if (threads < 1)
     exit(error("", ERRTHREAD));
 
@@ -1666,10 +1863,11 @@ void getArgs(int argc, char** argv) {
   runProgram(outFile, inFile, ctrlFile,
     singleOpt, extendOpt, extend, avgExtOpt, minMapQ,
     inter, unFile,
-    logFile, overlap, dovetail, doveFile, doveOverlap,
+    logFile, dovetail, doveFile,
     alnFile, alnOpt, gzOut, fjoin,
-    mismatch, maxLen,
+    maxLen,
     xcount, xchrList,
+    pqvalue, qvalOpt,
     verbose, threads);
 }
 
