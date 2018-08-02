@@ -52,9 +52,9 @@ void usage(void) {
   fprintf(stderr, "Options for peak calling:\n");
   fprintf(stderr, "  -%c  <float>      Maximum q-value (FDR-adjusted p-value; def. %.2f)\n", QVALUE, DEFQVAL);
   fprintf(stderr, "  -%c  <float>      Maximum p-value (mutually exclusive with -%c)\n", PVALUE, QVALUE);
-  fprintf(stderr, "  -%c  <int>        Minimum length of a peak, in bp (def. %d)\n", MAXGAP, DEFMAXGAP);
-  fprintf(stderr, "  -%c  <int>        Maximum distance between significant sites to\n", MINLEN);
-  fprintf(stderr, "                     cluster them together, in bp (def. %d)\n", DEFMINLEN);
+  fprintf(stderr, "  -%c  <int>        Minimum length of a peak, in bp (def. %d)\n", MINLEN, DEFMINLEN);
+  fprintf(stderr, "  -%c  <int>        Maximum distance between significant sites to\n", MAXGAP);
+  fprintf(stderr, "                     cluster them together, in bp (def. %d)\n", DEFMAXGAP);
   fprintf(stderr, "I/O options:\n");
   fprintf(stderr, "  -%c               Option to gzip-compress output(s)\n", GZOPT);
 /*
@@ -63,6 +63,8 @@ void usage(void) {
 */
   exit(-1);
 }
+
+/*** Utilites ***/
 
 /* int error()
  * Prints an error message.
@@ -124,83 +126,13 @@ char* getLine(char* line, int size, File in, bool gz) {
     return fgets(line, size, in.f);
 }
 
-/*** Save SAM/BAM header info ***/
-
-/* int saveChrom()
- * If chromosome (reference sequence) has not been
- *   saved yet, save it to the array. Return the index.
- */
-int saveChrom(char* name, int len, int* chromLen,
-    Chrom*** chrom, int xcount, char** xchrList) {
-  // determine if chrom has been saved already
-  for (int i = 0; i < *chromLen; i++)
-    if (!strcmp((*chrom)[i]->name, name)) {
-      if ((*chrom)[i]->len != len)
-        exit(error((*chrom)[i]->name, ERRCHRLEN));
-      return i;
-    }
-
-  // determine if chrom is on skipped list
-  bool skip = false;
-  for (int i = 0; i < xcount; i++)
-    if (!strcmp(xchrList[i], name)) {
-      skip = true;
-      break;
-    }
-
-  // create Chrom*
-  Chrom* c = (Chrom*) memalloc(sizeof(Chrom));
-  c->name = (char*) memalloc(1 + strlen(name));
-  strcpy(c->name, name);
-  c->len = len;
-  c->skip = skip;
-  c->diff = NULL;
-  c->treat = NULL;
-  c->treatLen = 0;
-  c->ctrl = NULL;
-  c->ctrlLen = 0;
-  c->pval = NULL;
-  c->qval = NULL;
-  c->pvalLen = 0;
-
-  // save to list
-  *chrom = (Chrom**) memrealloc(*chrom,
-    (*chromLen + 1) * sizeof(Chrom*));
-  (*chrom)[*chromLen] = c;
-  (*chromLen)++;
-  return *chromLen - 1;
-}
-
 
 /*** BED printing ***/
-
-/* void printInterval()
- * Print BED interval, with pileups (treatment and control),
- *   p- and q-values, and significance ('*') for each.
- */
-void printInterval(File out, bool gzOut, char* name,
-    int start, int end, float treatVal, float ctrlVal,
-    float pval, float qval, bool sig) {
-  if (gzOut) {
-    gzprintf(out.gzf, "%s\t%d\t%d\t%.5f\t%.5f\t%.5f",
-      name, start, end, treatVal, ctrlVal, pval);
-    if (qval != -1.0f)
-      gzprintf(out.gzf, "\t%.5f", qval);
-    gzprintf(out.gzf, "\t%s\n", sig ? "*" : "");
-  } else {
-    fprintf(out.f, "%s\t%d\t%d\t%.5f\t%.5f\t%.5f",
-      name, start, end, treatVal, ctrlVal, pval);
-    if (qval != -1.0f)
-      fprintf(out.f, "\t%.5f", qval);
-    fprintf(out.f, "\t%s\n", sig ? "*" : "");
-  }
-}
-
 /* void printPileup()
  * Controls printing of pileup values and p- and q-values
  *   for each Chrom.
- */
-void printPileup(File out, bool gzOut, Chrom** chrom,
+ *
+void printPileup(File log, bool gzOut, Chrom** chrom,
     int chromLen, float pqvalue, bool qvalOpt) {
 
   // loop through chroms
@@ -217,7 +149,7 @@ void printPileup(File out, bool gzOut, Chrom** chrom,
       if ( (qvalOpt && chr->qval->cov[m] > pqvalue)
           || (! qvalOpt && chr->pval->cov[m] > pqvalue) )
         sig = true;  // interval reaches significance
-      printInterval(out, gzOut, chr->name,
+      printInterval(log, gzOut, chr->name,
         start, chr->pval->end[m],
         chr->treat->cov[j], chr->ctrl->cov[k],
         chr->pval->cov[m],
@@ -233,6 +165,7 @@ void printPileup(File out, bool gzOut, Chrom** chrom,
     }
   }
 }
+*/
 
 /*** Quicksort ***/
 // adapted from https://www.geeksforgeeks.org/quick-sort/
@@ -477,6 +410,152 @@ Pileup* savePval(Chrom** chrom, int chromLen,
 }
 
 /*** Call peaks ***/
+
+/* void printInterval()
+ * Print bedgraph(ish) interval, with values of:
+ *   pileups (treatment and control),
+ *   p- and q-values, and significance ('*') for each.
+ */
+void printInterval(File out, bool gzOut, char* name,
+    int start, int end, float treatVal, float ctrlVal,
+    float pval, float qval, bool sig) {
+  if (gzOut) {
+    gzprintf(out.gzf, "%s\t%d\t%d\t%.5f\t%.5f\t%.5f",
+      name, start, end, treatVal, ctrlVal, pval);
+    if (qval != -1.0f)
+      gzprintf(out.gzf, "\t%.5f", qval);
+    gzprintf(out.gzf, "\t%s\n", sig ? "*" : "");
+  } else {
+    fprintf(out.f, "%s\t%d\t%d\t%.5f\t%.5f\t%.5f",
+      name, start, end, treatVal, ctrlVal, pval);
+    if (qval != -1.0f)
+      fprintf(out.f, "\t%.5f", qval);
+    fprintf(out.f, "%s\n", sig ? "\t*" : "");
+  }
+}
+
+void printPeak(File out, bool gzOut, char* name, int start,
+    int end, int count, float val) {
+  if (gzOut)
+    gzprintf(out.gzf, "%s\t%d\t%d\tpeak_%d\t%d\t.\n",
+      name, start, end, count,
+      MIN((int) (val * 10.0f + 0.5), 1000));
+  else
+    fprintf(out.f, "%s\t%d\t%d\tpeak_%d\t%d\t.\n",
+      name, start, end, count,
+      MIN((int) (val * 10.0f + 0.5), 1000));
+}
+
+/* int callPeaks()
+ * Call peaks. Produce output on the fly.
+ *   Return number of peaks.
+ */
+int callPeaks(File out, File log, bool logOpt, bool gzOut,
+    Chrom** chrom, int chromLen, float pqvalue,
+    bool qvalOpt, int minLen, int maxGap) {
+
+  // loop through chroms
+  int count = 0;      // count of peaks
+  for (int i = 0; i < chromLen; i++) {
+    Chrom* chr = chrom[i];
+    if (chr->skip)
+      continue;
+
+    // loop through intervals (defined by chr->pval)
+    int start = 0;                    // start of interval
+    int peakStart = -1, peakEnd = -1; // ends of potential peak
+    float peakVal = -1.0f;            // most significant peak value
+    int j = 0, k = 0;   // indexes into chr->treat, chr->ctrl
+    for (int m = 0; m < chr->pvalLen; m++) {
+
+      bool sig = false;
+      float val = qvalOpt ? chr->qval->cov[m] : chr->pval->cov[m];
+      if ( val > pqvalue ) {
+
+        // interval reaches significance
+        sig = true;
+        if (peakStart == -1)
+          peakStart = start;  // start new potential peak
+        peakEnd = chr->pval->end[m];  // end of potential peak
+        peakVal = MAX(peakVal, val);
+
+      } else {
+
+        // interval does not reach significance
+        if (peakStart != -1
+            && chr->pval->end[m] - peakEnd > maxGap) {
+          // determine if prior peak meets length threshold
+          if (peakEnd - peakStart >= minLen) {
+            printPeak(out, gzOut, chr->name, peakStart,
+              peakEnd, count, peakVal);
+            count++;
+          }
+          peakStart = -1; // reset peak start
+          peakVal = -1.0f;
+        }
+      }
+
+      if (logOpt)
+        // print all stats for interval
+        printInterval(log, gzOut, chr->name,
+          start, chr->pval->end[m],
+          chr->treat->cov[j], chr->ctrl->cov[k],
+          chr->pval->cov[m],
+          qvalOpt ? chr->qval->cov[m] : -1.0f, sig);
+
+      // update chr->treat and chr->ctrl indexes
+      if (chr->ctrl->end[k] < chr->treat->end[j])
+        k++;
+      else {
+        if (chr->ctrl->end[k] == chr->treat->end[j])
+          k++;
+        j++;
+      }
+
+      start = chr->pval->end[m];
+    }
+
+    // determine if last peak meets length threshold
+    if (peakStart != -1 && peakEnd - peakStart >= minLen) {
+      printPeak(out, gzOut, chr->name, peakStart,
+        peakEnd, count, peakVal);
+      count++;
+    }
+
+  }
+  return count;
+}
+
+/* void findPeaks()
+ * Control process of finding peaks:
+ *   calculating p- and q-values, calling peaks,
+ *   and printing output.
+ */
+void findPeaks(File out, File log, bool logOpt, bool gzOut,
+    unsigned long genomeLen, Chrom** chrom, int chromLen,
+    float pqvalue, bool qvalOpt, int minLen, int maxGap,
+    bool verbose) {
+
+  if (verbose)
+    fprintf(stderr, "Total genome length: %ldbp\n", genomeLen);
+
+  // compute p- and q-values
+  int pLen = 0;
+  Pileup* p = savePval(chrom, chromLen, qvalOpt, &pLen);
+  if (qvalOpt)
+    // convert p-values to q-values
+    saveQval(chrom, chromLen, genomeLen, p, pLen);
+
+  // identify peaks
+  if (verbose)
+    fprintf(stderr, "Significance threshold: -log(%c) > %.3f\n",
+      qvalOpt ? 'q' : 'p', pqvalue);
+  int count = callPeaks(out, log, logOpt, gzOut, chrom,
+    chromLen, pqvalue, qvalOpt, minLen, maxGap);
+  if (verbose)
+    fprintf(stderr, "Peaks identified: %d\n", count);
+
+}
 
 /*** Save treatment/control pileup values ***/
 
@@ -815,6 +894,52 @@ void parseAlign(int* readLen, int* readMem, Read*** unpaired,
   }
 }
 
+/*** Save SAM/BAM header info ***/
+
+/* int saveChrom()
+ * If chromosome (reference sequence) has not been
+ *   saved yet, save it to the array. Return the index.
+ */
+int saveChrom(char* name, int len, int* chromLen,
+    Chrom*** chrom, int xcount, char** xchrList) {
+  // determine if chrom has been saved already
+  for (int i = 0; i < *chromLen; i++)
+    if (!strcmp((*chrom)[i]->name, name)) {
+      if ((*chrom)[i]->len != len)
+        exit(error((*chrom)[i]->name, ERRCHRLEN));
+      return i;
+    }
+
+  // determine if chrom is on skipped list
+  bool skip = false;
+  for (int i = 0; i < xcount; i++)
+    if (!strcmp(xchrList[i], name)) {
+      skip = true;
+      break;
+    }
+
+  // create Chrom*
+  Chrom* c = (Chrom*) memalloc(sizeof(Chrom));
+  c->name = (char*) memalloc(1 + strlen(name));
+  strcpy(c->name, name);
+  c->len = len;
+  c->skip = skip;
+  c->diff = NULL;
+  c->treat = NULL;
+  c->treatLen = 0;
+  c->ctrl = NULL;
+  c->ctrlLen = 0;
+  c->pval = NULL;
+  c->qval = NULL;
+  c->pvalLen = 0;
+
+  // save to list
+  *chrom = (Chrom**) memrealloc(*chrom,
+    (*chromLen + 1) * sizeof(Chrom*));
+  (*chrom)[*chromLen] = c;
+  (*chromLen)++;
+  return *chromLen - 1;
+}
 
 /*** SAM parsing ***/
 
@@ -1545,10 +1670,6 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
     char** xchrList, float pqvalue, bool qvalOpt,
     int minLen, int maxGap, bool verbose, int threads) {
 
-  // open output files
-  File out, log;  // output files
-  openFiles(outFile, &out, logFile, &log, gzOut, qvalOpt);
-
   // initialize variables
   char* line = (char*) memalloc(MAX_SIZE);
   int chromLen = 0;       // number of reference sequences
@@ -1562,6 +1683,8 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
   for (int i = 0; i < 2; i++) {
     char* file = (i ? ctrlFile : inFile);
     if (file == NULL) {
+      if (verbose)
+        fprintf(stderr, "No control file provided\n");
       savePileupNoCtrl(chrom, chromLen, fragLen, &genomeLen);
       break;
     }
@@ -1576,7 +1699,8 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
 
       // process files
       if (verbose)
-        fprintf(stderr, "Processing file: %s\n", filename);
+        fprintf(stderr, "Processing %s file: %s\n",
+          i ? "control" : "treatment", filename);
       unsigned long totalLen = 0;   // total length of paired reads
       int unmapped = 0, paired = 0, single = 0, orphan = 0,
         pairedPr = 0, singlePr = 0, supp = 0, skipped = 0,
@@ -1622,21 +1746,15 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
             chrom[j]->diff[k] = 0.0f;
   }
 
-  // compute p- and q-values
-  if (verbose)
-    fprintf(stderr, "Total genome length: %ldbp\n", genomeLen);
-  int pLen = 0;
-  Pileup* p = savePval(chrom, chromLen, qvalOpt, &pLen);
-  if (qvalOpt)
-    // convert p-values to q-values
-    saveQval(chrom, chromLen, genomeLen, p, pLen);
+  // open output files
+  File out, log;
+  openFiles(outFile, &out, logFile, &log, gzOut, qvalOpt);
 
-  // print output
-  if (verbose)
-    fprintf(stderr, "Significance threshold: -log(%c) > %.3f\n",
-      qvalOpt ? 'q' : 'p', pqvalue);
-  if (logFile != NULL)
-    printPileup(log, gzOut, chrom, chromLen, pqvalue, qvalOpt);
+  // find peaks
+  findPeaks(out, log, logFile != NULL, gzOut, genomeLen,
+    chrom, chromLen, pqvalue, qvalOpt, minLen, maxGap,
+    verbose);
+
 
   // free memory
   if (xcount) {
