@@ -14,50 +14,37 @@
 
 // constants
 #define MAX_SIZE    65520   // maximum length of input SAM/BAM alignments
-#define NOTMATCH    1.5f    // stitch failure
-#define COM         ", "    // separator for input file names
-#define CSV         ",\t"   // separator for quality score profile
-#define NA          "NA"    // n/a (for output log file)
-#define TAB         "\t"
+#define TAB         "\t"    // separator for SAM fields
+#define COM         ", "    // separator for input file names / ref. names
 
 // default parameter values
-#define OFFSET      33      // fastq quality offset (Sanger = 33)
-#define MAXQUAL     40      // maximum quality score (0-based)
 #define DEFQVAL     0.05    // default q-value
+#define DEFMINLEN   100     // minimum length of a peak
+#define DEFMAXGAP   100     // maximum gap between significant sites
 #define DEFTHR      1       // number of threads
-
-// fastq parts
-enum fastq { HEAD, SEQ2, PLUS, QUAL2, FASTQ };  // lines of a fastq read
-#define BEGIN       '@'     // beginning of header line
-#define PLUSCHAR    '+'     // beginning of 3rd line
-#define EXTRA       2       // save 2 extra strings for 2nd read:
-                            //   revComp(seq) and rev(qual)
 
 // SAM fields
 enum sam { NIL, QNAME, FLAG, RNAME, POS, MAPQ, CIGAR, RNEXT,
   PNEXT, TLEN, SEQ, QUAL };
 
 // command-line options
-#define OPTIONS     "ht:c:o:ya:xe:m:zp:q:f:l:dC:j:gn:vV"
+#define OPTIONS     "ht:c:o:b:zya:xe:m:p:q:g:l:n:vV"
 #define HELP        'h'
 #define INFILE      't'
 #define CTRLFILE    'c'
 #define OUTFILE     'o'
+#define LOGFILE     'b'
+#define GZOPT       'z'
 #define SINGLEOPT   'y'
 #define EXTENDOPT   'a'
 #define AVGEXTOPT   'x'
 #define XCHROM      'e'
 #define MINMAPQ     'm'
-#define GZOPT       'z'
 #define PVALUE      'p'
 #define QVALUE      'q'
+#define MAXGAP      'g'
+#define MINLEN      'l'
 
-#define UNFILE      'f'
-#define LOGFILE     'l'
-#define DOVEOPT     'd'
-#define DOVEFILE    'C'
-#define ALNFILE     'j'
-#define FJOINOPT    'g'
 #define THREADS     'n'
 #define VERBOSE     'v'
 #define VERSOPT     'V'
@@ -70,26 +57,23 @@ static struct option long_options[] = {
 };
 
 // extensions for output files
-#define ONEEXT      "_1.fastq"
-#define TWOEXT      "_2.fastq"
 #define GZEXT       ".gz"   // for gzip compression
 
 // OMP locks
 enum omp_locks { OUT, UN, LOG, DOVE, ALN, OMP_LOCKS };
 
 // error messages
-enum errCode { ERRFILE, ERROPEN, ERRCLOSE, ERROPENW, ERRUNK,
-  ERRMEM, ERRSEQ, ERRQUAL, ERRHEAD, ERRINT, ERRFLOAT, ERRPARAM,
+enum errCode { ERRFILE, ERROPEN, ERROPENW, ERRCLOSE, ERRMEM,
+  ERRSEQ, ERRQUAL, ERRHEAD, ERRINT, ERRFLOAT, ERRPARAM,
   ERRMISM, ERRINFO, ERRSAM, ERRREP, ERRCHROM, ERREXTEND,
-  ERRBAM, ERRGEN, ERRCHRLEN, ERRCTRL,
+  ERRBAM, ERRGEN, ERRCHRLEN, ERRCTRL, ERRPOS,
 ERROFFSET, ERRUNGET, ERRGZIP,
   ERRTHREAD, ERRNAME, ERRRANGE, ERRDEFQ, ERRCIGAR, DEFERR
 };
 const char* errMsg[] = { "Need input/output files",
   ": cannot open file for reading",
-  "Cannot close file",
   ": cannot open file for writing",
-  ": unknown nucleotide",
+  ": cannot close file",
   "Cannot allocate memory",
   "Cannot load sequence",
   "Sequence/quality scores do not match",
@@ -107,6 +91,7 @@ const char* errMsg[] = { "Need input/output files",
   "No analyzable genome (length=0)",
   ": reference sequence has different lengths in BAM/SAM files",
   ": reference sequence missing from control sample(s)",
+  ": read aligned beyond reference end",
 
   ": quality score outside of set range",
   "Failure in ungetc() call",

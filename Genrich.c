@@ -36,35 +36,28 @@ void usage(void) {
   fprintf(stderr, "  [optional arguments]\n");
   fprintf(stderr, "Required arguments:\n");
   fprintf(stderr, "  -%c  <file>       Input SAM/BAM file(s) for treatment sample(s)\n", INFILE);
-  fprintf(stderr, "  -%c  <file>       Output BED file\n", OUTFILE);
+  fprintf(stderr, "  -%c  <file>       Output peak file\n", OUTFILE);
   fprintf(stderr, "Optional arguments:\n");
   fprintf(stderr, "  -%c  <file>       Input SAM/BAM file(s) for control sample(s)\n", CTRLFILE);
+  fprintf(stderr, "  -%c  <file>       Output bedgraph file for pileups and p/q values\n", LOGFILE);
   fprintf(stderr, "Filtering options:\n");
   fprintf(stderr, "  -%c  <arg>        Comma-separated list of chromosomes to ignore\n", XCHROM);
   fprintf(stderr, "  -%c  <int>        Minimum MAPQ to keep an alignment (def. 0)\n", MINMAPQ);
   fprintf(stderr, "Options for unpaired alignments:\n");
-  fprintf(stderr, "  -%c               Print unpaired alignments (def. false)\n", SINGLEOPT);
-  fprintf(stderr, "  -%c  <int>        Print unpaired alignments, with fragment length\n", EXTENDOPT);
+  fprintf(stderr, "  -%c               Keep unpaired alignments (def. false)\n", SINGLEOPT);
+  fprintf(stderr, "  -%c  <int>        Keep unpaired alignments, with fragment length\n", EXTENDOPT);
   fprintf(stderr, "                     increased to specified value\n");
-  fprintf(stderr, "  -%c               Print unpaired alignments, with fragment length\n", AVGEXTOPT);
+  fprintf(stderr, "  -%c               Keep unpaired alignments, with fragment length\n", AVGEXTOPT);
   fprintf(stderr, "                     increased to average value of paired alignments\n");
   fprintf(stderr, "Options for peak calling:\n");
   fprintf(stderr, "  -%c  <float>      Maximum q-value (FDR-adjusted p-value; def. %.2f)\n", QVALUE, DEFQVAL);
   fprintf(stderr, "  -%c  <float>      Maximum p-value (mutually exclusive with -%c)\n", PVALUE, QVALUE);
+  fprintf(stderr, "  -%c  <int>        Minimum length of a peak, in bp (def. %d)\n", MAXGAP, DEFMAXGAP);
+  fprintf(stderr, "  -%c  <int>        Maximum distance between significant sites to\n", MINLEN);
+  fprintf(stderr, "                     cluster them together, in bp (def. %d)\n", DEFMINLEN);
   fprintf(stderr, "I/O options:\n");
-  fprintf(stderr, "  -%c               Option to gzip output(s)\n", GZOPT);
-/*  fprintf(stderr, "  -%c               Option to check for dovetailing (with 3' overhangs)\n", DOVEOPT);
-  fprintf(stderr, "  -%c  <int>        Minimum overlap of dovetailed alignments (def. %d)\n", DOVEOVER, DEFDOVE);
-  fprintf(stderr, "  -%c  <file>       Log file for stitching results of each read pair\n", LOGFILE);
-  fprintf(stderr, "  -%c  <file>       FASTQ files for reads that failed stitching\n", UNFILE);
-  fprintf(stderr, "                     (output as <file>%s and <file>%s)\n", ONEEXT, TWOEXT);
-  fprintf(stderr, "  -%c  <file>       Log file for dovetailed reads (adapter sequences)\n", DOVEFILE);
-  fprintf(stderr, "  -%c  <file>       Log file for formatted alignments of merged reads\n", ALNFILE);
-  fprintf(stderr, "  -%c               Option to produce interleaved FASTQ output(s)\n", INTEROPT);
-  fprintf(stderr, "  -%c  <file>       Use given error profile for merged qual scores\n", QUALFILE);
-  fprintf(stderr, "  -%c               Use 'fastq-join' method for merged qual scores\n", FJOINOPT);
-  fprintf(stderr, "  -%c  <int>        FASTQ quality offset (def. %d)\n", QUALITY, OFFSET);
-  fprintf(stderr, "  -%c  <int>        Maximum input quality score (0-based; def. %d)\n", SETQUAL, MAXQUAL);
+  fprintf(stderr, "  -%c               Option to gzip-compress output(s)\n", GZOPT);
+/*
   fprintf(stderr, "  -%c  <int>        Number of threads to use (def. %d)\n", THREADS, DEFTHR);
   fprintf(stderr, "  -%c               Option to print status updates/counts to stderr\n", VERBOSE);
 */
@@ -210,19 +203,6 @@ void printInterval(File out, bool gzOut, char* name,
 void printPileup(File out, bool gzOut, Chrom** chrom,
     int chromLen, float pqvalue, bool qvalOpt) {
 
-  // print header
-  if (gzOut) {
-    gzprintf(out.gzf, "chr\tstart\tend\ttreatment\tcontrol\t-log(p)");
-    if (qvalOpt)
-      gzprintf(out.gzf, "\t-log(q)");
-    gzprintf(out.gzf, "\tsignif\n");
-  } else {
-    fprintf(out.f, "chr\tstart\tend\ttreatment\tcontrol\t-log(p)");
-    if (qvalOpt)
-      fprintf(out.f, "\t-log(q)");
-    fprintf(out.f, "\tsignif\n");
-  }
-
   // loop through chroms
   for (int i = 0; i < chromLen; i++) {
     Chrom* chr = chrom[i];
@@ -236,7 +216,7 @@ void printPileup(File out, bool gzOut, Chrom** chrom,
       bool sig = false;
       if ( (qvalOpt && chr->qval->cov[m] > pqvalue)
           || (! qvalOpt && chr->pval->cov[m] > pqvalue) )
-        sig = true;
+        sig = true;  // interval reaches significance
       printInterval(out, gzOut, chr->name,
         start, chr->pval->end[m],
         chr->treat->cov[j], chr->ctrl->cov[k],
@@ -496,6 +476,8 @@ Pileup* savePval(Chrom** chrom, int chromLen,
   return p;
 }
 
+/*** Call peaks ***/
+
 /*** Save treatment/control pileup values ***/
 
 /* float calcLambda()
@@ -613,6 +595,11 @@ int saveInterval(Chrom* chrom, int start, int end,
       qname, chrom->name);
     start = 0;
   }
+  if (start >= chrom->len) {
+    char* msg = (char*) memalloc(MAX_SIZE);
+    sprintf(msg, "Read %s, ref. %s", qname, chrom->name);
+    exit(error(msg, ERRPOS));
+  }
   if (end > chrom->len) {
     fprintf(stderr, "Warning! Read %s prevented from extending past %d on %s\n",
       qname, chrom->len, chrom->name);
@@ -621,7 +608,7 @@ int saveInterval(Chrom* chrom, int start, int end,
 
   // save ends of fragment to 'diff' array
   if (chrom->diff == NULL) {
-    chrom->diff = (float*) memalloc(chrom->len * sizeof(float));
+    chrom->diff = (float*) memalloc((chrom->len + 1) * sizeof(float));
     for (int i = 0; i < chrom->len; i++)
       chrom->diff[i] = 0.0f;
   }
@@ -957,19 +944,13 @@ void loadChrom(char* line, int* chromLen, Chrom*** chrom,
 /* int readSAM()
  * Parse the alignments in a SAM file.
  */
-int readSAM(File in, bool gz, File out, bool gzOut, char* line,
-    File un1, File un2, bool unOpt, File log,
-    bool logOpt, bool dovetail,
-    File dove, bool doveOpt, File aln, int alnOpt,
-    bool maxLen,
-    unsigned long* totalLen, int* unmapped, int* paired, int* single,
-    int* pairedPr, int* singlePr,
-    int* supp, int* skipped, int* lowMapQ,
-    int minMapQ,
+int readSAM(File in, bool gz, char* line,
+    unsigned long* totalLen, int* unmapped, int* paired,
+    int* single, int* pairedPr, int* singlePr, int* supp,
+    int* skipped, int* lowMapQ, int minMapQ,
     int xcount, char** xchrList, int* chromLen, Chrom*** chrom,
     int* readLen, int* readMem, Read** unpaired, Read* dummy,
-    bool singleOpt, bool extendOpt, int extend, bool avgExtOpt,
-    int threads) {
+    bool singleOpt, bool extendOpt, int extend, bool avgExtOpt) {
 
   // SAM fields to save
   char* qname, *rname, *cigar, *rnext, *seq, *qual, *extra;
@@ -1217,14 +1198,14 @@ int calcDistBAM(int32_t l_seq, uint16_t n_cigar_op,
 /* int parseBAM()
  * Parse the alignments in a BAM file.
  */
-int parseBAM(gzFile in, File out, bool gzOut, char* line,
-    int chromLen, Chrom** chrom, int n_ref, int idx[],
-    int* readLen, int* readMem, Read** unpaired, Read* dummy,
+int parseBAM(gzFile in, char* line, int chromLen,
+    Chrom** chrom, int n_ref, int idx[], int* readLen,
+    int* readMem, Read** unpaired, Read* dummy,
     unsigned long* totalLen, int* unmapped,
     int* paired, int* single, int* pairedPr,
     int* singlePr, int* supp, int* skipped, int* lowMapQ,
-    int minMapQ, bool singleOpt, bool extendOpt, int extend,
-    bool avgExtOpt) {
+    int minMapQ, bool singleOpt, bool extendOpt,
+    int extend, bool avgExtOpt) {
 
   // BAM fields to save
   int32_t refID, pos, l_seq, next_refID, next_pos, tlen;
@@ -1308,14 +1289,13 @@ int parseBAM(gzFile in, File out, bool gzOut, char* line,
  * Parse the header from a BAM file, then
  *   call parseBAM().
  */
-int readBAM(gzFile in, File out, bool gzOut, char* line,
-    unsigned long* totalLen,
-    int* unmapped, int* paired, int* single,
-    int* pairedPr, int* singlePr, int* supp, int* skipped,
-    int* lowMapQ, int minMapQ, int xcount, char** xchrList,
-    int* chromLen, Chrom*** chrom,
-    int* readLen, int* readMem, Read** unpaired, Read* dummy,
-    bool singleOpt, bool extendOpt, int extend, bool avgExtOpt) {
+int readBAM(gzFile in, char* line, unsigned long* totalLen,
+    int* unmapped, int* paired, int* single, int* pairedPr,
+    int* singlePr, int* supp, int* skipped, int* lowMapQ,
+    int minMapQ, int xcount, char** xchrList, int* chromLen,
+    Chrom*** chrom, int* readLen, int* readMem,
+    Read** unpaired, Read* dummy, bool singleOpt,
+    bool extendOpt, int extend, bool avgExtOpt) {
   // skip header
   int32_t l_text = readInt32(in, true);
   if (gzseek(in, l_text, SEEK_CUR) == -1)
@@ -1340,7 +1320,7 @@ int readBAM(gzFile in, File out, bool gzOut, char* line,
       chromLen, chrom, xcount, xchrList);
   }
 
-  return parseBAM(in, out, gzOut, line, *chromLen, *chrom,
+  return parseBAM(in, line, *chromLen, *chrom,
     n_ref, idx, readLen, readMem, unpaired, dummy,
     totalLen, unmapped, paired, single, pairedPr,
     singlePr, supp, skipped, lowMapQ, minMapQ, singleOpt,
@@ -1384,70 +1364,30 @@ void openWrite(char* outFile, File* out, bool gz) {
  * Opens output files for the program,
  *   adjusting file names/extensions as needed.
  */
-void openFiles(char* outFile, File* out, File* out2,
-    char* unFile, File* un1, File* un2,
-    char* logFile, File* log,
-    char* doveFile, File* dove, bool dovetail,
-    char* alnFile, File* aln,
-    bool gz) {
+void openFiles(char* outFile, File* out,
+    char* logFile, File* log, bool gz, bool qvalOpt) {
 
-/*  if (adaptOpt) {
-    if (interOpt)
-      openWrite(outFile, out, gz);
-    else if (! strcmp(outFile, "-"))
-      exit(error("stdout + \"_1.fastq\"", ERROPENW));
-    else if (! strcmp(outFile, "/dev/null")) {
-      openWrite(outFile, out, gz);
-      openWrite(outFile, out2, gz);
+  // open peak file
+  openWrite(outFile, out, gz);
+
+  // open bedgraph file
+  if (logFile != NULL) {
+    openWrite(logFile, log, gz);
+
+    // print header
+    if (gz) {
+      gzprintf(log->gzf, "chr\tstart\tend\ttreatment\tcontrol\t-log(p)");
+      if (qvalOpt)
+        gzprintf(log->gzf, "\t-log(q)");
+      gzprintf(log->gzf, "\tsignif\n");
     } else {
-      // add "_1.fastq" and "_2.fastq" extensions
-      int add = strlen(ONEEXT) > strlen(TWOEXT) ?
-        strlen(ONEEXT) + 1 : strlen(TWOEXT) + 1;
-      char* outFile2 = memalloc(strlen(outFile) + add);
-      strcpy(outFile2, outFile);
-      strcat(outFile2, ONEEXT);
-      openWrite(outFile2, out, gz);
-      strcpy(outFile2, outFile);
-      strcat(outFile2, TWOEXT);
-      openWrite(outFile2, out2, gz);
-      free(outFile2);
+      fprintf(log->f, "chr\tstart\tend\ttreatment\tcontrol\t-log(p)");
+      if (qvalOpt)
+        fprintf(log->f, "\t-log(q)");
+      fprintf(log->f, "\tsignif\n");
     }
-
-  } else {*/
-    openWrite(outFile, out, gz);
-
-    // open optional files
-/*    if (unFile != NULL) {
-      if (interOpt)
-        openWrite(unFile, un1, gz);
-      else if (! strcmp(unFile, "-"))
-        exit(error("stdout + \"_1.fastq\"", ERROPENW));
-      else {
-        // add "_1.fastq" and "_2.fastq" extensions
-        int add = strlen(ONEEXT) > strlen(TWOEXT) ?
-          strlen(ONEEXT) + 1 : strlen(TWOEXT) + 1;
-        char* unFile2 = memalloc(strlen(unFile) + add);
-        strcpy(unFile2, unFile);
-        strcat(unFile2, ONEEXT);
-        openWrite(unFile2, un1, gz);
-        strcpy(unFile2, unFile);
-        strcat(unFile2, TWOEXT);
-        openWrite(unFile2, un2, gz);
-        free(unFile2);
-      }
-    }*/
-    if (logFile != NULL) {
-      openWrite(logFile, log, false);
-      fprintf(log->f, "Read\tOverlapLen\tStitchedLen\tMismatch\n");
-    }
-    if (alnFile != NULL)
-      openWrite(alnFile, aln, false);
-//  }
-
-  if (dovetail && doveFile != NULL) {
-    openWrite(doveFile, dove, false);
-    fprintf(dove->f, "Read\tAdapter_R1\tAdapter_R2\n");
   }
+
 }
 
 /* bool checkBAM()
@@ -1516,7 +1456,7 @@ bool openRead(char* inFile, File* in) {
   // open file
   if (gzip) {
     if (fclose(dummy))
-      exit(error("", ERRCLOSE));
+      exit(error("<dummy>", ERRCLOSE));
     in->gzf = gzopen(inFile, "r");
     if (in->gzf == NULL)
       exit(error(inFile, ERROPEN));
@@ -1597,25 +1537,17 @@ int checkOrphans(Read* dummy) {
 /* void runProgram()
  * Controls the opening/closing of files,
  *   and analysis by readSAM() or readBAM().
+ *   Passes results to findPeaks().
  */
-void runProgram(char* outFile, char* inFile, char* ctrlFile,
-    bool singleOpt, bool extendOpt, int extend, bool avgExtOpt,
-    int minMapQ,
-    bool inter, char* unFile,
-    char* logFile, bool dovetail,
-    char* doveFile, char* alnFile,
-    int alnOpt, bool gzOut, bool fjoin,
-    bool maxLen,
-    int xcount, char** xchrList,
-    float pqvalue, bool qvalOpt,
-    bool verbose, int threads) {
+void runProgram(char* inFile, char* ctrlFile, char* outFile,
+    char* logFile, bool gzOut, bool singleOpt, bool extendOpt,
+    int extend, bool avgExtOpt, int minMapQ, int xcount,
+    char** xchrList, float pqvalue, bool qvalOpt,
+    int minLen, int maxGap, bool verbose, int threads) {
 
   // open output files
-  File out, out2, un1, un2, log, dove, aln; // output files
-  openFiles(outFile, &out, &out2,
-    unFile, &un1, &un2, logFile, &log,
-    doveFile, &dove, dovetail, alnFile, &aln,
-    gzOut);
+  File out, log;  // output files
+  openFiles(outFile, &out, logFile, &log, gzOut, qvalOpt);
 
   // initialize variables
   char* line = (char*) memalloc(MAX_SIZE);
@@ -1645,7 +1577,7 @@ void runProgram(char* outFile, char* inFile, char* ctrlFile,
       // process files
       if (verbose)
         fprintf(stderr, "Processing file: %s\n", filename);
-      unsigned long totalLen = 0;  // total length of paired reads
+      unsigned long totalLen = 0;   // total length of paired reads
       int unmapped = 0, paired = 0, single = 0, orphan = 0,
         pairedPr = 0, singlePr = 0, supp = 0, skipped = 0,
         lowMapQ = 0;  // counting variables
@@ -1653,25 +1585,17 @@ void runProgram(char* outFile, char* inFile, char* ctrlFile,
       int readLen = 0, readMem = 0; //   average-extension option
       int count;
       if (bam)
-        count = readBAM(in.gzf, out, gzOut, line,
-          &totalLen, &unmapped, &paired, &single,
-          &pairedPr, &singlePr, &supp, &skipped, &lowMapQ, minMapQ,
-          xcount, xchrList, &chromLen, &chrom,
-          &readLen, &readMem, unpaired, dummy,
-          singleOpt, extendOpt, extend, avgExtOpt);
+        count = readBAM(in.gzf, line, &totalLen, &unmapped,
+          &paired, &single, &pairedPr, &singlePr, &supp,
+          &skipped, &lowMapQ, minMapQ, xcount, xchrList,
+          &chromLen, &chrom, &readLen, &readMem, unpaired,
+          dummy, singleOpt, extendOpt, extend, avgExtOpt);
       else
-        count = readSAM(in, gz, out, gzOut, line,
-          un1, un2, unFile != NULL,
-          log, logFile != NULL,
-          dovetail, dove,
-          dovetail && doveFile != NULL, aln, alnOpt,
-          maxLen,
-          &totalLen, &unmapped, &paired, &single,
-          &pairedPr, &singlePr, &supp, &skipped, &lowMapQ, minMapQ,
-          xcount, xchrList, &chromLen, &chrom,
-          &readLen, &readMem, unpaired, dummy,
-          singleOpt, extendOpt, extend, avgExtOpt,
-          threads);
+        count = readSAM(in, gz, line, &totalLen, &unmapped,
+          &paired, &single, &pairedPr, &singlePr, &supp,
+          &skipped, &lowMapQ, minMapQ, xcount, xchrList,
+          &chromLen, &chrom, &readLen, &readMem, unpaired,
+          dummy, singleOpt, extendOpt, extend, avgExtOpt);
 
       // log counts
       orphan = checkOrphans(dummy);  // orphan paired alignments
@@ -1682,7 +1606,7 @@ void runProgram(char* outFile, char* inFile, char* ctrlFile,
 
       // close input files
       if ( (gz && gzclose(in.gzf) != Z_OK) || (! gz && fclose(in.f)) )
-        exit(error("", ERRCLOSE));
+        exit(error(filename, ERRCLOSE));
 
       filename = strtok_r(NULL, COM, &end);
     }
@@ -1694,7 +1618,7 @@ void runProgram(char* outFile, char* inFile, char* ctrlFile,
     if (! i)
       for (int j = 0; j < chromLen; j++)
         if (chrom[j]->diff != NULL)
-          for (int k = 0; k < chrom[j]->len; k++)
+          for (int k = 0; k < chrom[j]->len + 1; k++)
             chrom[j]->diff[k] = 0.0f;
   }
 
@@ -1711,7 +1635,8 @@ void runProgram(char* outFile, char* inFile, char* ctrlFile,
   if (verbose)
     fprintf(stderr, "Significance threshold: -log(%c) > %.3f\n",
       qvalOpt ? 'q' : 'p', pqvalue);
-  printPileup(out, gzOut, chrom, chromLen, pqvalue, qvalOpt);
+  if (logFile != NULL)
+    printPileup(log, gzOut, chrom, chromLen, pqvalue, qvalOpt);
 
   // free memory
   if (xcount) {
@@ -1746,14 +1671,12 @@ void runProgram(char* outFile, char* inFile, char* ctrlFile,
   free(line);
 
   // close files
-  if ( ( gzOut && ( gzclose(out.gzf) != Z_OK ||
-      (unFile != NULL && gzclose(un1.gzf) != Z_OK ) ) ) ||
-      ( ! gzOut && ( fclose(out.f) ||
-      (unFile != NULL && fclose(un1.f) ) ) ) ||
-      (logFile != NULL && fclose(log.f)) ||
-      (dovetail && doveFile != NULL && fclose(dove.f)) ||
-      (alnFile != NULL && fclose(aln.f)) )
-    exit(error("", ERRCLOSE));
+  if ( ( gzOut && gzclose(out.gzf) != Z_OK ) ||
+      ( ! gzOut && fclose(out.f) ) )
+    exit(error(outFile, ERRCLOSE));
+  if (logFile != NULL && ( ( gzOut && gzclose(log.gzf) != Z_OK )
+      || ( ! gzOut && fclose(log.f) ) ) )
+    exit(error(logFile, ERRCLOSE));
 }
 
 /* int saveXChrom()
@@ -1779,18 +1702,15 @@ int saveXChrom(char* xchrom, char*** xchrList) {
 void getArgs(int argc, char** argv) {
 
   // default parameters/filenames
-  char* outFile = NULL, *inFile = NULL, *ctrlFile = NULL,
-    *unFile = NULL, *logFile = NULL, *doveFile = NULL,
-    *alnFile = NULL;
+  char* outFile = NULL, *inFile = NULL,
+    *ctrlFile = NULL, *logFile = NULL;
   char* xchrom = NULL;
-  int extend = 0, minMapQ = 0,
-    threads = DEFTHR;
+  int extend = 0, minMapQ = 0, minLen = DEFMINLEN,
+    maxGap = DEFMAXGAP, threads = DEFTHR;
   float pqvalue = DEFQVAL;
   bool singleOpt = false, extendOpt = false, avgExtOpt = false,
     gzOut = false, qvalOpt = true;
-  bool dovetail = false, maxLen = true,
-    fjoin = false,
-    verbose = false;
+  bool verbose = false;
 
   // parse argv
   int c;
@@ -1799,25 +1719,22 @@ void getArgs(int argc, char** argv) {
       case INFILE: inFile = optarg; break;
       case CTRLFILE: ctrlFile = optarg; break;
       case OUTFILE: outFile = optarg; break;
+      case LOGFILE: logFile = optarg; break;
+      case GZOPT: gzOut = true; break;
       case SINGLEOPT: singleOpt = true; break;
       case EXTENDOPT: extend = getInt(optarg); extendOpt = true; break;
       case AVGEXTOPT: avgExtOpt = true; break;
       case XCHROM: xchrom = optarg; break;
       case MINMAPQ: minMapQ = getInt(optarg); break;
-      case GZOPT: gzOut = true; break;
       case QVALUE: pqvalue = getFloat(optarg); break;
       case PVALUE: pqvalue = getFloat(optarg); qvalOpt = false; break;
+      case MINLEN: minLen = getInt(optarg); break;
+      case MAXGAP: maxGap = getInt(optarg); break;
 
       case VERBOSE: verbose = true; break;
       case VERSOPT: printVersion(); break;
       case HELP: usage(); break;
 
-      case DOVEOPT: dovetail = true; break;
-      case FJOINOPT: fjoin = true; break;
-      case UNFILE: unFile = optarg; break;
-      case LOGFILE: logFile = optarg; break;
-      case DOVEFILE: doveFile = optarg; break;
-      case ALNFILE: alnFile = optarg; break;
       case THREADS: threads = getInt(optarg); break;
       default: exit(-1);
     }
@@ -1838,6 +1755,8 @@ void getArgs(int argc, char** argv) {
     if (extend <= 0)
       exit(error("", ERREXTEND));
   }
+  if (threads < 1)
+    exit(error("", ERRTHREAD));
 
   // save list of chromosomes to ignore
   int xcount = 0;
@@ -1848,26 +1767,10 @@ void getArgs(int argc, char** argv) {
   // adjust significance level to -log scale
   pqvalue = -1 * log10f(pqvalue);
 
-  bool inter = false;  // interleaved input
-  if (threads < 1)
-    exit(error("", ERRTHREAD));
-
-  // adjust parameters for adapter-removal mode
-  if (true) {
-    dovetail = true;
-    unFile = logFile = alnFile = NULL;
-  }
-  int alnOpt = (alnFile != NULL ? 1 : 0);
-
   // send arguments to runProgram()
-  runProgram(outFile, inFile, ctrlFile,
+  runProgram(inFile, ctrlFile, outFile, logFile, gzOut,
     singleOpt, extendOpt, extend, avgExtOpt, minMapQ,
-    inter, unFile,
-    logFile, dovetail, doveFile,
-    alnFile, alnOpt, gzOut, fjoin,
-    maxLen,
-    xcount, xchrList,
-    pqvalue, qvalOpt,
+    xcount, xchrList, pqvalue, qvalOpt, minLen, maxGap,
     verbose, threads);
 }
 
