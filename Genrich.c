@@ -126,47 +126,6 @@ char* getLine(char* line, int size, File in, bool gz) {
     return fgets(line, size, in.f);
 }
 
-
-/*** BED printing ***/
-/* void printPileup()
- * Controls printing of pileup values and p- and q-values
- *   for each Chrom.
- *
-void printPileup(File log, bool gzOut, Chrom** chrom,
-    int chromLen, float pqvalue, bool qvalOpt) {
-
-  // loop through chroms
-  for (int i = 0; i < chromLen; i++) {
-    Chrom* chr = chrom[i];
-    if (chr->skip)
-      continue;
-
-    // print output, with intervals defined by chr->pval
-    int start = 0;
-    int j = 0, k = 0;
-    for (int m = 0; m < chr->pvalLen; m++) {
-      bool sig = false;
-      if ( (qvalOpt && chr->qval->cov[m] > pqvalue)
-          || (! qvalOpt && chr->pval->cov[m] > pqvalue) )
-        sig = true;  // interval reaches significance
-      printInterval(log, gzOut, chr->name,
-        start, chr->pval->end[m],
-        chr->treat->cov[j], chr->ctrl->cov[k],
-        chr->pval->cov[m],
-        qvalOpt ? chr->qval->cov[m] : -1.0f, sig);
-      if (chr->ctrl->end[k] < chr->treat->end[j])
-        k++;
-      else {
-        if (chr->ctrl->end[k] == chr->treat->end[j])
-          k++;
-        j++;
-      }
-      start = chr->pval->end[m];
-    }
-  }
-}
-*/
-
 /*** Quicksort ***/
 // adapted from https://www.geeksforgeeks.org/quick-sort/
 
@@ -424,7 +383,7 @@ void printInterval(File out, bool gzOut, char* name,
       name, start, end, treatVal, ctrlVal, pval);
     if (qval != -1.0f)
       gzprintf(out.gzf, "\t%.5f", qval);
-    gzprintf(out.gzf, "\t%s\n", sig ? "*" : "");
+    gzprintf(out.gzf, "%s\n", sig ? "\t*" : "");
   } else {
     fprintf(out.f, "%s\t%d\t%d\t%.5f\t%.5f\t%.5f",
       name, start, end, treatVal, ctrlVal, pval);
@@ -434,6 +393,9 @@ void printInterval(File out, bool gzOut, char* name,
   }
 }
 
+/* void printPeak()
+ * Print BED interval for a peak.
+ */
 void printPeak(File out, bool gzOut, char* name, int start,
     int end, int count, float val) {
   if (gzOut)
@@ -536,8 +498,14 @@ void findPeaks(File out, File log, bool logOpt, bool gzOut,
     float pqvalue, bool qvalOpt, int minLen, int maxGap,
     bool verbose) {
 
-  if (verbose)
-    fprintf(stderr, "Total genome length: %ldbp\n", genomeLen);
+  if (verbose) {
+    fprintf(stderr, "Peak-calling parameters:\n");
+    fprintf(stderr, "  Genome length: %ldbp\n", genomeLen);
+    fprintf(stderr, "  Significance threshold: -log(%c) > %.3f\n",
+      qvalOpt ? 'q' : 'p', pqvalue);
+    fprintf(stderr, "  Max. gap between sites: %dbp\n", maxGap);
+    fprintf(stderr, "  Min. peak length: %dbp\n", minLen);
+  }
 
   // compute p- and q-values
   int pLen = 0;
@@ -547,9 +515,6 @@ void findPeaks(File out, File log, bool logOpt, bool gzOut,
     saveQval(chrom, chromLen, genomeLen, p, pLen);
 
   // identify peaks
-  if (verbose)
-    fprintf(stderr, "Significance threshold: -log(%c) > %.3f\n",
-      qvalOpt ? 'q' : 'p', pqvalue);
   int count = callPeaks(out, log, logOpt, gzOut, chrom,
     chromLen, pqvalue, qvalOpt, minLen, maxGap);
   if (verbose)
@@ -564,13 +529,14 @@ void findPeaks(File out, File log, bool logOpt, bool gzOut,
  *   lengths divided by total genome length.
  */
 float calcLambda(Chrom** chrom, int chromLen,
-    unsigned long fragLen, unsigned long* genomeLen) {
+    double fragLen, unsigned long* genomeLen) {
   for (int i = 0; i < chromLen; i++)
     if (!chrom[i]->skip)
       *genomeLen += chrom[i]->len;
   if (! *genomeLen)
     exit(error("", ERRGEN));
-  return fragLen / (double) *genomeLen;
+//printf("fraglen = %f; genomeLen = %ld\n", fragLen, *genomeLen);
+  return fragLen / *genomeLen;
 }
 
 /* void savePileupNoCtrl()
@@ -578,8 +544,9 @@ float calcLambda(Chrom** chrom, int chromLen,
  *   pileup as the background lambda value.
  */
 void savePileupNoCtrl(Chrom** chrom, int chromLen,
-    unsigned long fragLen, unsigned long* genomeLen) {
-  float lambda = calcLambda(chrom, chromLen, fragLen, genomeLen);
+    double fragLen, unsigned long* genomeLen) {
+  float lambda = calcLambda(chrom, chromLen, fragLen,
+    genomeLen);
   for (int i = 0; i < chromLen; i++) {
     Chrom* chr = chrom[i];
     if (chr->skip)
@@ -588,22 +555,138 @@ void savePileupNoCtrl(Chrom** chrom, int chromLen,
   }
 }
 
-/* unsigned long savePileup()
+/* void savePileupCtrl()
+ * Save pileup values for control sample(s) from
+ *   'diff' arrays and background lambda value.
+ */
+void savePileupCtrl(Chrom** chrom, int chromLen,
+    double fragLen, unsigned long* genomeLen) {
+
+  // calculate background lambda value
+  float lambda = calcLambda(chrom, chromLen, fragLen,
+    genomeLen);
+
+  // create pileup for each chrom
+  for (int i = 0; i < chromLen; i++) {
+    Chrom* chr = chrom[i];
+    if (chr->skip)
+      continue;
+
+    // if no read coverage, save constant pileup of 0
+    if (chr->diff == NULL) {
+      saveConst(&chr->ctrl, &chr->ctrlLen, chr->len, 0.0f);
+      continue;
+    }
+
+    // determine number of pileup intervals
+    int num = 1;
+    for (int j = 1; j < chr->len; j++)
+      if (chr->diff[j] != 0.0f)
+        num++;
+
+    // create pileup arrays
+    chr->ctrl = (Pileup*) memalloc(sizeof(Pileup));
+    chr->ctrl->end = (unsigned int*) memalloc(num * sizeof(unsigned int));
+    chr->ctrl->cov = (float*) memalloc(num * sizeof(float));
+    chr->ctrlLen = num;
+
+    // save pileup values
+    int pos = 0;              // position in pileup arrays
+    float val = chr->diff[0]; // pileup value
+    int j;
+    for (j = 1; j < chr->len; j++)
+      if (chr->diff[j] != 0.0f) {
+        chr->ctrl->end[pos] = j;
+        chr->ctrl->cov[pos] = MAX(val, lambda);
+
+        // update pileup value
+        val += chr->diff[j];
+        pos++;
+      }
+
+    // save final interval
+    chr->ctrl->end[pos] = j;
+    chr->ctrl->cov[pos] = MAX(val, lambda);
+  }
+
+}
+
+/* double savePileupTreat()
+ * Save pileup values for treatment sample(s) from
+ *   'diff' arrays.
+ *   Return total length of all fragments (weighted).
+ */
+double savePileupTreat(Chrom ** chrom, int chromLen) {
+
+  // create pileup for each chrom
+  double fragLen = 0.0;  // weighted fragment length
+  for (int i = 0; i < chromLen; i++) {
+    Chrom* chr = chrom[i];
+    if (chr->skip)
+      continue;
+
+    // if no read coverage, save constant pileup of 0
+    if (chr->diff == NULL) {
+      saveConst(&chr->treat, &chr->treatLen, chr->len, 0.0f);
+      continue;
+    }
+
+    // determine number of pileup intervals
+    int num = 1;
+    for (int j = 1; j < chr->len; j++)
+      if (chr->diff[j] != 0.0f)
+        num++;
+
+    // create pileup arrays
+    chr->treat = (Pileup*) memalloc(sizeof(Pileup));
+    chr->treat->end = (unsigned int*) memalloc(num * sizeof(unsigned int));
+    chr->treat->cov = (float*) memalloc(num * sizeof(float));
+    chr->treatLen = num;
+
+    // save pileup values
+    int pos = 0;              // position in pileup arrays
+    float val = chr->diff[0]; // pileup value
+    int start = 0;            // beginning coordinate of interval
+    int j;
+    for (j = 1; j < chr->len; j++)
+      if (chr->diff[j] != 0.0f) {
+        chr->treat->end[pos] = j;
+        chr->treat->cov[pos] = val;
+
+        // keep track of fragment length (weighted by val)
+        fragLen += (j - start) * val;
+        start = j;
+
+        // update pileup value
+        val += chr->diff[j];
+        pos++;
+      }
+
+    // save final interval
+    chr->treat->end[pos] = j;
+    chr->treat->cov[pos] = val;
+    fragLen += (j - start) * val;
+  }
+
+  return fragLen;
+}
+
+/* void savePileup()
  * Save pileup values for each Chrom from 'diff' arrays
  *   (and background lambda value for control sample).
  *   Return total length of all fragments (weighted).
- */
-unsigned long savePileup(Chrom** chrom, int chromLen,
-    unsigned long fragLen, unsigned long* genomeLen,
+ *
+void savePileup(Chrom** chrom, int chromLen,
+    double* fragLen, unsigned long* genomeLen,
     bool ctrl) {
 
   // calculate background lambda value
   float lambda = 0.0f;
   if (ctrl)
-    lambda = calcLambda(chrom, chromLen, fragLen, genomeLen);
+    lambda = calcLambda(chrom, chromLen, *fragLen, genomeLen);
 
   // create pileup for each chrom
-  fragLen = 0;
+  *fragLen = 0.0;  // weighted fragment length
   for (int i = 0; i < chromLen; i++) {
     Chrom* chr = chrom[i];
     if (chr->skip)
@@ -642,7 +725,7 @@ unsigned long savePileup(Chrom** chrom, int chromLen,
         (*p)->cov[pos] = MAX(val, lambda);
 
         // keep track of fragment length
-        fragLen += (j - start) * val;
+        *fragLen += (j - start) * val;
         start = j;
 
         // update pileup value
@@ -653,14 +736,13 @@ unsigned long savePileup(Chrom** chrom, int chromLen,
     // save final interval
     (*p)->end[pos] = j;
     (*p)->cov[pos] = MAX(val, lambda);
-    fragLen += (j - start) * val;
+    *fragLen += (j - start) * val;
   }
 
-  return fragLen;
 }
+*/
 
-
-/*** Convert alignments to intervals/pileups ***/
+/*** Convert alignments to intervals ***/
 
 /* int saveInterval()
  * Save BED interval for a read/fragment.
@@ -1676,11 +1758,13 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
   Chrom** chrom = NULL;   // array of reference sequences
   Read* dummy = (Read*) memalloc(sizeof(Read)); // head of linked list
   dummy->next = NULL;                           //   for paired alns
-  unsigned long fragLen = 0;   // total length of treatment fragments
-  unsigned long genomeLen = 0; // total length of genome
+  double fragLen = 0.0;   // total weighted length of treatment fragments
+  unsigned long genomeLen = 0;  // total length of genome
 
   // loop through input files (treatment and control)
   for (int i = 0; i < 2; i++) {
+
+    // get treat/ctrl file name(s)
     char* file = (i ? ctrlFile : inFile);
     if (file == NULL) {
       if (verbose)
@@ -1692,7 +1776,7 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
     char* end;
     char* filename = strtok_r(file, COM, &end);
     while (filename) {
-      // open input files
+      // open input file
       File in;
       bool gz = openRead(filename, &in);
       bool bam = checkBAM(in, gz);
@@ -1701,10 +1785,10 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
       if (verbose)
         fprintf(stderr, "Processing %s file: %s\n",
           i ? "control" : "treatment", filename);
-      unsigned long totalLen = 0;   // total length of paired reads
       int unmapped = 0, paired = 0, single = 0, orphan = 0,
         pairedPr = 0, singlePr = 0, supp = 0, skipped = 0,
         lowMapQ = 0;  // counting variables
+      unsigned long totalLen = 0;   // total length of paired reads
       Read** unpaired = NULL;       // for unpaired alns with
       int readLen = 0, readMem = 0; //   average-extension option
       int count;
@@ -1736,14 +1820,16 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
     }
 
     // save pileup values
-    fragLen = savePileup(chrom, chromLen, fragLen, &genomeLen, i);
-
-    // reset 'diff' array for each Chrom
-    if (! i)
+    if (i)
+      savePileupCtrl(chrom, chromLen, fragLen, &genomeLen);
+    else {
+      fragLen = savePileupTreat(chrom, chromLen);
+      // reset 'diff' array for each Chrom
       for (int j = 0; j < chromLen; j++)
         if (chrom[j]->diff != NULL)
           for (int k = 0; k < chrom[j]->len + 1; k++)
             chrom[j]->diff[k] = 0.0f;
+    }
   }
 
   // open output files
@@ -1754,7 +1840,6 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
   findPeaks(out, log, logFile != NULL, gzOut, genomeLen,
     chrom, chromLen, pqvalue, qvalOpt, minLen, maxGap,
     verbose);
-
 
   // free memory
   if (xcount) {
