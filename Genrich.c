@@ -372,8 +372,8 @@ Pileup* savePval(Chrom** chrom, int chromLen,
 
 /* void printInterval()
  * Print bedgraph(ish) interval, with values of:
- *   pileups (treatment and control),
- *   p- and q-values, and significance ('*') for each.
+ *   pileups (treatment and control), -log(p),
+ *   -log(q), and significance ('*') for each.
  */
 void printInterval(File out, bool gzOut, char* name,
     int start, int end, float treatVal, float ctrlVal,
@@ -397,15 +397,18 @@ void printInterval(File out, bool gzOut, char* name,
  * Print BED interval for a peak.
  */
 void printPeak(File out, bool gzOut, char* name, int start,
-    int end, int count, float val) {
+    int end, int count, float val, float fe,
+    float pval, float qval, int pos) {
   if (gzOut)
-    gzprintf(out.gzf, "%s\t%d\t%d\tpeak_%d\t%d\t.\n",
+    gzprintf(out.gzf, "%s\t%d\t%d\tpeak_%d\t%d\t.\t%f\t%f\t%f\t%d\n",
       name, start, end, count,
-      MIN((int) (val * 10.0f + 0.5), 1000));
+      MIN((int) (val * 10.0f + 0.5), 1000),
+      fe, pval, qval, pos);
   else
-    fprintf(out.f, "%s\t%d\t%d\tpeak_%d\t%d\t.\n",
+    fprintf(out.f, "%s\t%d\t%d\tpeak_%d\t%d\t.\t%f\t%f\t%f\t%d\n",
       name, start, end, count,
-      MIN((int) (val * 10.0f + 0.5), 1000));
+      MIN((int) (val * 10.0f + 0.5), 1000),
+      fe, pval, qval, pos);
 }
 
 /* int callPeaks()
@@ -423,10 +426,16 @@ int callPeaks(File out, File log, bool logOpt, bool gzOut,
     if (chr->skip)
       continue;
 
-    // loop through intervals (defined by chr->pval)
-    int start = 0;                    // start of interval
+    // reset peak variables
     int peakStart = -1, peakEnd = -1; // ends of potential peak
-    float peakVal = -1.0f;            // most significant peak value
+    float summitVal = -1.0f;          // summit p/q value
+    int summitPos = 0;                // distance from peakStart to summit
+    int summitLen = 0;                // length of summit interval
+    float summitPval = -1.0f, summitQval = -1.0f; // summit p- and q-values
+    float summitFE = -1.0f;           // summit fold enrichment
+
+    // loop through intervals (defined by chr->pval)
+    int start = 0;      // start of interval
     int j = 0, k = 0;   // indexes into chr->treat, chr->ctrl
     for (int m = 0; m < chr->pvalLen; m++) {
 
@@ -439,7 +448,26 @@ int callPeaks(File out, File log, bool logOpt, bool gzOut,
         if (peakStart == -1)
           peakStart = start;  // start new potential peak
         peakEnd = chr->pval->end[m];  // end of potential peak
-        peakVal = MAX(peakVal, val);
+
+        // check if interval is summit for this peak
+        if (val > summitVal) {
+          summitVal = val;
+          summitFE = chr->ctrl->cov[k] ?
+            chr->treat->cov[j] / chr->ctrl->cov[k] : FLT_MAX;
+          summitPval = chr->pval->cov[m];
+          summitQval = qvalOpt ? chr->qval->cov[m] : -1.0f;
+          summitPos = (peakEnd + (m ? chr->pval->end[m-1] : 0) ) / 2
+            - peakStart;  // midpoint of interval
+          summitLen = peakEnd - (m ? chr->pval->end[m-1] : 0);
+        } else if (val == summitVal) {
+          // update summitPos only if interval is longer
+          int len = chr->pval->end[m] - (m ? chr->pval->end[m-1] : 0);
+          if (len > summitLen) {
+            summitPos = (peakEnd + (m ? chr->pval->end[m-1] : 0) ) / 2
+              - peakStart;  // midpoint of interval
+            summitLen = len;
+          }
+        }
 
       } else {
 
@@ -449,11 +477,13 @@ int callPeaks(File out, File log, bool logOpt, bool gzOut,
           // determine if prior peak meets length threshold
           if (peakEnd - peakStart >= minLen) {
             printPeak(out, gzOut, chr->name, peakStart,
-              peakEnd, count, peakVal);
+              peakEnd, count, summitVal, summitFE,
+              summitPval, summitQval, summitPos);
             count++;
           }
-          peakStart = -1; // reset peak start
-          peakVal = -1.0f;
+          peakStart = -1;     // reset peak start
+          summitVal = -1.0f;  // reset peak summit value
+          summitLen = 0;      // reset peak summit length
         }
       }
 
@@ -480,11 +510,13 @@ int callPeaks(File out, File log, bool logOpt, bool gzOut,
     // determine if last peak meets length threshold
     if (peakStart != -1 && peakEnd - peakStart >= minLen) {
       printPeak(out, gzOut, chr->name, peakStart,
-        peakEnd, count, peakVal);
+        peakEnd, count, summitVal, summitFE,
+        summitPval, summitQval, summitPos);
       count++;
     }
 
   }
+
   return count;
 }
 
