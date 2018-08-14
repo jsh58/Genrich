@@ -567,7 +567,6 @@ float calcLambda(Chrom** chrom, int chromLen,
       *genomeLen += chrom[i]->len;
   if (! *genomeLen)
     exit(error("", ERRGEN));
-//printf("fraglen = %f; genomeLen = %ld\n", fragLen, *genomeLen);
   return fragLen / *genomeLen;
 }
 
@@ -710,7 +709,7 @@ double savePileupTreat(Chrom ** chrom, int chromLen) {
  *   Return fragment length.
  */
 int saveInterval(Chrom* chrom, int start, int end,
-    char* qname) {
+    char* qname, float val) {
   // check validity of positions
   if (start < 0) {
     fprintf(stderr, "Warning! Read %s prevented from extending below 0 on %s\n",
@@ -718,7 +717,7 @@ int saveInterval(Chrom* chrom, int start, int end,
     start = 0;
   }
   if (start >= chrom->len) {
-    char* msg = (char*) memalloc(MAX_SIZE);
+    char* msg = (char*) memalloc(MAX_ALNS);
     sprintf(msg, "Read %s, ref. %s", qname, chrom->name);
     exit(error(msg, ERRPOS));
   }
@@ -734,8 +733,8 @@ int saveInterval(Chrom* chrom, int start, int end,
     for (int i = 0; i < chrom->len; i++)
       chrom->diff[i] = 0.0f;
   }
-  chrom->diff[start] += 1.0f;
-  chrom->diff[end] -= 1.0f;
+  chrom->diff[start] += val;
+  chrom->diff[end] -= val;
 
   return end - start;
 }
@@ -744,7 +743,7 @@ int saveInterval(Chrom* chrom, int start, int end,
  * Control processing of singleton alignments
  *   (either keeping them as is, or extending
  *   to a given length).
- */
+ *
 void saveSingle(Chrom* chrom, char* qname, uint16_t flag,
     uint32_t pos, int length, bool extendOpt, int extend) {
   if (extendOpt) {
@@ -754,14 +753,14 @@ void saveSingle(Chrom* chrom, char* qname, uint16_t flag,
       saveInterval(chrom, pos, pos + extend, qname);
   } else
     saveInterval(chrom, pos, pos + length, qname);
-}
+}*/
 
 /* int saveAvgExt()
  * Save complete intervals for unpaired alignments
  *   with "extend to average length" option, after
  *   calculating average length from paired alns.
  *   Return number printed.
- */
+ *
 int saveAvgExt(int readLen, Read** unpaired,
     unsigned long totalLen, int pairedPr) {
   // determine average fragment length
@@ -790,13 +789,13 @@ int saveAvgExt(int readLen, Read** unpaired,
   free(unpaired);
 
   return printed;
-}
+}*/
 
 /* void saveAvgExtList()
  * Save info for an unpaired alignment to list
  *   (for "extend to average length" option), for
  *   later processing by saveAvgExt().
- */
+ *
 void saveAvgExtList(int* readLen, int* readMem,
     Read*** unpaired, char* qname, uint16_t flag,
     Chrom* chrom, uint32_t pos, int length) {
@@ -817,73 +816,85 @@ void saveAvgExtList(int* readLen, int* readMem,
   }
   (*unpaired)[*readLen] = r;
   (*readLen)++;
-}
+}*/
 
 /* int saveFragment()
  * Save full fragment for a proper pair. Return length.
- */
-int saveFragment(Chrom* chrom, Read* r) {
+ *
+int saveFragment(Chrom* chrom, Aln* a) {
   // ensure start < end
   int start, end;
-  if (r->pos[0] > r->pos[1]) {
-    start = r->pos[1];
-    end = r->pos[0];
+  if (a->pos[0] > a->pos[1]) {
+    start = a->pos[1];
+    end = a->pos[0];
   } else {
-    start = r->pos[0];
-    end = r->pos[1];
+    start = a->pos[0];
+    end = a->pos[1];
   }
   return saveInterval(chrom, start, end, r->name);
+}*/
+
+/*** Save alignment information ***/
+
+/* void updatePaired()
+ * Complete a properly paired alignment.
+ */
+void updatePaired(Aln* a, uint16_t flag, uint32_t pos,
+    int length) {
+  if (flag & 0x40)
+    a->pos[0] = flag & 0x10 ? pos + length : pos;
+  else
+    a->pos[1] = flag & 0x10 ? pos + length : pos;
+  a->full = true;
 }
 
-/* Read* savePaired()
- * Save the position for a properly paired alignment.
- *   If its pair has been analyzed, return the previous
- *   read (for easy removal from the linked list).
+/* void savePaired()
+ * Start a properly paired alignment.
  */
-Read* savePaired(Read* dummy, char* qname, uint16_t flag,
-    Chrom* chrom, uint32_t pos) {
-  // determine if read has been analyzed
-  Read* r, *prev = dummy;
-  for (r = dummy->next; r != NULL; r = r->next) {
-    if (! strcmp(qname, r->name))
-      break;
-    prev = r;
-  }
+void savePaired(Aln** aln, int* alnLen, uint16_t flag,
+    Chrom* chrom, uint32_t pos, int length, uint32_t pnext) {
 
-  // if analyzed, save pos and return match
-  if (r != NULL) {
-    if (flag & 0x40) {
-      if (r->pos[0] != -1)
-        exit(error(r->name, ERRREP));
-      r->pos[0] = pos;
-    } else {
-      if (r->pos[1] != -1)
-        exit(error(r->name, ERRREP));
-      r->pos[1] = pos;
-    }
-    return prev;
-  }
+  Aln* a = aln[*alnLen];
+  a->chrom = chrom;
+  a->full = false;
+  a->paired = true;
 
-  // create new Read
-  r = (Read*) memalloc(sizeof(Read));
-  r->name = (char*) memalloc(1 + strlen(qname));
-  strcpy(r->name, qname);
-  r->chrom = chrom;
-  r->paired = false;
-
-  // save position
+  // save positions for this aln (corrected if rev-comp),
+  //   and for its pair (pnext, uncorrected)
   if (flag & 0x40) {
-    r->pos[0] = pos;
-    r->pos[1] = -1;
+    a->pos[0] = flag & 0x10 ? pos + length : pos;
+    a->pos[1] = pnext;
   } else {
-    r->pos[0] = -1;
-    r->pos[1] = pos;
+    a->pos[0] = pnext;
+    a->pos[1] = flag & 0x10 ? pos + length : pos;
   }
 
-  // insert r into linked list
-  r->next = dummy->next;
-  dummy->next = r;
+  (*alnLen)++;
+}
+
+/* Aln* findPair()
+ * Search the array of Aln* for 
+Aln* findPair(Aln** aln, int alnLen, uint16_t flag,
+    Chrom* chrom, uint32_t pos) {
+  for (int i = 0; i < alnLen; i++)
+    if (aln[i]->paired && ! aln[i]->full && aln[i]->chrom == chrom
+        && (flag & 0x40 ? aln[i]->pos[0] == pos : aln[i]->pos[1] == pos))
+      return aln[i];
   return NULL;
+}*/
+
+/* void saveSingle()
+ * Save the information for a singleton alignment.
+ */
+void saveSingle(Aln** aln, int* alnLen, uint16_t flag,
+    Chrom* chrom, uint32_t pos, int length) {
+  Aln* a = aln[*alnLen];
+  a->chrom = chrom;
+  a->paired = false;
+  a->strand = flag & 0x10 ? false : true;
+  a->pos[0] = pos;
+  a->pos[1] = pos + length;
+  (*alnLen)++;
 }
 
 /* void parseAlign()
@@ -895,18 +906,43 @@ Read* savePaired(Read* dummy, char* qname, uint16_t flag,
  *   paired alignments.
  */
 void parseAlign(int* readLen, int* readMem, Read*** unpaired,
-    Read* dummy, char* qname,
+    Aln** aln, int* alnLen, char* qname,
     uint16_t flag, Chrom* chrom, uint32_t pos, int length,
-    unsigned long* totalLen, int* paired, int* single, int* pairedPr,
+    uint32_t pnext,
+    unsigned long* totalLen, int* paired, int* single,
+    int* secPair, int* secSingle, int* pairedPr,
     int* singlePr, bool singleOpt, bool extendOpt, int extend,
     bool avgExtOpt) {
 
+//fprintf(stderr, "read %s: chrom %s, pos %d ", qname, chrom->name, pos);
+
   if ((flag & 0x3) == 0x3) {
-    // paired alignment: save information
+    // paired alignment: save alignment information
     (*paired)++;
-    Read* prev = savePaired(dummy, qname, flag, chrom,
-      flag & 0x10 ? pos + length : pos);
-    if (prev != NULL) {
+    if (flag & 0x100)
+      (*secPair)++;
+
+    int i;
+    for (i = 0; i < *alnLen; i++)
+      if (aln[i]->paired && ! aln[i]->full && aln[i]->chrom == chrom
+          && (flag & 0x40 ? aln[i]->pos[0] == pos : aln[i]->pos[1] == pos)) {
+        updatePaired(aln[i], flag, pos, length);
+        break;
+      }
+    if (i == *alnLen)
+      savePaired(aln, alnLen, flag, chrom, pos, length, pnext);
+
+//    Aln* a = findPair(aln, *alnLen, flag, chrom, pos);
+//    if (a != NULL) {
+      // complete PE alignment
+//      updatePaired(a, flag, pos, length);
+//fprintf(stderr, "  -- found pair, alnLen is %d\n", *alnLen);
+//    } else {
+      // start PE alignment
+//      savePaired(aln, alnLen, flag, chrom, pos, length, pnext);
+//fprintf(stderr, "  -- starting new pair, alnLen is %d\n", *alnLen);
+//    }
+    /*if (prev != NULL) {
       // both alignments analyzed: print BED interval
       Read* r = prev->next;
       (*pairedPr)++;
@@ -917,22 +953,26 @@ void parseAlign(int* readLen, int* readMem, Read*** unpaired,
       prev->next = r->next;
       free(r->name);
       free(r);
-    }
+    }*/
+
   } else {
     // unpaired alignment
     (*single)++;
+    if (flag & 0x100)
+      (*secSingle)++;
     if (singleOpt) {
-      if (avgExtOpt) {
+      saveSingle(aln, alnLen, flag, chrom, pos, length);
+//      if (avgExtOpt) {
         // for average-extension option, save alignment
         //   for later processing by saveAvgExt()
-        saveAvgExtList(readLen, readMem, unpaired, qname,
-          flag, chrom, pos, length);
-      } else {
+//        saveAvgExtList(readLen, readMem, unpaired, qname,
+//          flag, chrom, pos, length);
+//      } else {
         // for other options, save singleton interval
-        saveSingle(chrom, qname, flag, pos, length,
-          extendOpt, extend);
-        (*singlePr)++;
-      }
+//        saveSingle(chrom, qname, flag, pos, length,
+//          extendOpt, extend);
+//        (*singlePr)++;
+//      }
     }
   }
 }
@@ -999,11 +1039,11 @@ bool loadFields(uint16_t* flag, char** rname, uint32_t* pos,
     switch (i) {
       case FLAG: *flag = getInt(field); break;
       case RNAME: *rname = field; break;
-      case POS: *pos = getInt(field) - 1; break;
+      case POS: *pos = getInt(field) - 1; break;  // convert to 0-based
       case MAPQ: *mapq = getInt(field); break;
       case CIGAR: *cigar = field; break;
       case RNEXT: *rnext = field; break;
-      case PNEXT: *pnext = getInt(field); break;
+      case PNEXT: *pnext = getInt(field) - 1; break;  // convert to 0-based
       case TLEN: *tlen = getInt(field); break;
       case SEQ: *seq = field; break;
       case QUAL: *qual = field; break;
@@ -1141,6 +1181,15 @@ void checkHeader(char* line, int* chromLen, Chrom*** chrom,
 
 }
 
+void saveAln(char* name, Aln** aln, int alnLen) {
+  fprintf(stderr, "read %s\n", name);
+  for (int i = 0; i < alnLen; i++)
+    fprintf(stderr, "aln %d: chrom %s, pos %d - %d  %s\n",
+      i, aln[i]->chrom->name, aln[i]->pos[0], aln[i]->pos[1],
+      aln[i]->full ? "" : "*");
+  while(!getchar()) ;
+}
+
 /* int readSAM()
  * Parse the alignments in a SAM file.
  */
@@ -1148,8 +1197,10 @@ int readSAM(File in, bool gz, char* line,
     unsigned long* totalLen, int* unmapped, int* paired,
     int* single, int* pairedPr, int* singlePr, int* supp,
     int* skipped, int* lowMapQ, int minMapQ,
-    int xcount, char** xchrList, int* chromLen, Chrom*** chrom,
-    int* readLen, int* readMem, Read** unpaired, Read* dummy,
+    int xcount, char** xchrList, int* secPair, int* secSingle,
+    int* chromLen, Chrom*** chrom,
+    int* readLen, int* readMem, Read** unpaired, Aln** aln,
+    char* readName,
     bool singleOpt, bool extendOpt, int extend, bool avgExtOpt) {
 
   // SAM fields to save
@@ -1159,6 +1210,7 @@ int readSAM(File in, bool gz, char* line,
   int32_t tlen;
   uint8_t mapq;
 
+  int alnLen = 0;     // number of alignments for this read
   int count = 0;
   while (getLine(line, MAX_SIZE, in, gz) != NULL) {
 
@@ -1211,20 +1263,29 @@ int readSAM(File in, bool gz, char* line,
       continue;
     }
 
+    // process previous set of alns
+    if (readName == '\0' || strcmp(qname, readName)) {
+      if (readName != '\0') {
+        saveAln(readName, aln, alnLen);
+      }
+      alnLen = 0;
+      strcpy(readName, qname);
+    }
+
     // save alignment information
     int length = calcDist(qname, seq, cigar); // distance to 3' end
-    parseAlign(readLen, readMem, &unpaired, dummy,
-      qname, flag, ref, pos, length, totalLen,
-      paired, single, pairedPr, singlePr,
+    parseAlign(readLen, readMem, &unpaired, aln, &alnLen,
+      qname, flag, ref, pos, length, pnext, totalLen,
+      paired, single, secPair, secSingle, pairedPr, singlePr,
       singleOpt, extendOpt, extend, avgExtOpt);
     // NOTE: the following SAM fields are ignored:
-    //   rnext, pnext, tlen, qual, extra (optional fields)
+    //   rnext, tlen, qual, extra (optional fields)
   }
 
   // process single alignments w/ avgExtOpt
-  if (avgExtOpt)
-    *singlePr += saveAvgExt(*readLen, unpaired,
-      *totalLen, *pairedPr);
+//  if (avgExtOpt)
+//    *singlePr += saveAvgExt(*readLen, unpaired,
+//      *totalLen, *pairedPr);
 
 
 /*******************************************/
@@ -1399,11 +1460,12 @@ int calcDistBAM(int32_t l_seq, uint16_t n_cigar_op,
  */
 int parseBAM(gzFile in, char* line, int chromLen,
     Chrom** chrom, int n_ref, int idx[], int* readLen,
-    int* readMem, Read** unpaired, Read* dummy,
+    int* readMem, Read** unpaired, Aln** aln, char* readName,
     unsigned long* totalLen, int* unmapped,
     int* paired, int* single, int* pairedPr,
     int* singlePr, int* supp, int* skipped, int* lowMapQ,
-    int minMapQ, bool singleOpt, bool extendOpt,
+    int minMapQ, int* secPair, int* secSingle,
+    bool singleOpt, bool extendOpt,
     int extend, bool avgExtOpt) {
 
   // BAM fields to save
@@ -1414,6 +1476,7 @@ int parseBAM(gzFile in, char* line, int chromLen,
   uint8_t* seq;
   char* read_name, *qual, *extra;
 
+  int alnLen = 0;     // number of alignments for this read
   int count = 0;
   int32_t block_size;
   while ((block_size = readInt32(in, false)) != EOF) {
@@ -1466,20 +1529,30 @@ int parseBAM(gzFile in, char* line, int chromLen,
       continue;
     }
 
+    // process previous set of alns
+    if (readName[0] == '\0' || strcmp(read_name, readName)) {
+      if (readName[0] != '\0') {
+        //saveAln();
+      }
+      alnLen = 0;
+      strcpy(readName, read_name);
+    }
+
     // save alignment information
     int length = calcDistBAM(l_seq, n_cigar_op, cigar); // distance to 3' end
-    parseAlign(readLen, readMem, &unpaired, dummy,
-      read_name, flag, ref, pos,
-      length, totalLen, paired, single, pairedPr, singlePr,
+    parseAlign(readLen, readMem, &unpaired, aln, &alnLen,
+      read_name, flag, ref, pos, length, next_pos,
+      totalLen, paired, single, secPair, secSingle,
+      pairedPr, singlePr,
       singleOpt, extendOpt, extend, avgExtOpt);
     // NOTE: the following BAM fields are ignored:
-    //   next_refID, next_pos, tlen, seq, qual, extra (optional fields)
+    //   next_refID, tlen, seq, qual, extra (optional fields)
   }
 
   // process single alignments w/ avgExtOpt
-  if (avgExtOpt)
-    *singlePr += saveAvgExt(*readLen, unpaired,
-      *totalLen, *pairedPr);
+//  if (avgExtOpt)
+//    *singlePr += saveAvgExt(*readLen, unpaired,
+//      *totalLen, *pairedPr);
 
   return count;
 }
@@ -1491,9 +1564,11 @@ int parseBAM(gzFile in, char* line, int chromLen,
 int readBAM(gzFile in, char* line, unsigned long* totalLen,
     int* unmapped, int* paired, int* single, int* pairedPr,
     int* singlePr, int* supp, int* skipped, int* lowMapQ,
-    int minMapQ, int xcount, char** xchrList, int* chromLen,
-    Chrom*** chrom, int* readLen, int* readMem,
-    Read** unpaired, Read* dummy, bool singleOpt,
+    int minMapQ, int xcount, char** xchrList, int* secPair,
+    int* secSingle, int* chromLen, Chrom*** chrom,
+    int* readLen, int* readMem,
+    Read** unpaired, Aln** aln, char* readName,
+    bool singleOpt,
     bool extendOpt, int extend, bool avgExtOpt) {
 
   // load first line from header
@@ -1546,10 +1621,10 @@ int readBAM(gzFile in, char* line, unsigned long* totalLen,
   }
 
   return parseBAM(in, line, *chromLen, *chrom,
-    n_ref, idx, readLen, readMem, unpaired, dummy,
+    n_ref, idx, readLen, readMem, unpaired, aln, readName,
     totalLen, unmapped, paired, single, pairedPr,
-    singlePr, supp, skipped, lowMapQ, minMapQ, singleOpt,
-    extendOpt, extend, avgExtOpt);
+    singlePr, supp, skipped, lowMapQ, minMapQ, secPair,
+    secSingle, singleOpt, extendOpt, extend, avgExtOpt);
 }
 
 /*** File I/O ***/
@@ -1699,10 +1774,10 @@ bool openRead(char* inFile, File* in) {
  */
 void logCounts(int count, int unmapped, int supp,
     int skipped, int xcount, char** xchrList, int minMapQ,
-    int lowMapQ, int paired, int orphan, int single,
-    int singlePr, int pairedPr, unsigned long totalLen,
-    bool singleOpt, bool extendOpt, int extend,
-    bool avgExtOpt, bool bam) {
+    int lowMapQ, int paired, int secPair, int orphan,
+    int single, int secSingle, int singlePr, int pairedPr,
+    unsigned long totalLen, bool singleOpt, bool extendOpt,
+    int extend, bool avgExtOpt, bool bam) {
   double avgLen = (double) totalLen / pairedPr;
   fprintf(stderr, "  %s records analyzed: %10d\n", bam ? "BAM" : "SAM", count);
   if (unmapped)
@@ -1719,9 +1794,13 @@ void logCounts(int count, int unmapped, int supp,
   if (lowMapQ)
     fprintf(stderr, "    MAPQ < %-2d:          %10d\n", minMapQ, lowMapQ);
   fprintf(stderr, "    Paired alignments:  %10d\n", paired);
+  if (secPair)
+    fprintf(stderr, "      secondary alns:   %10d\n", secPair);
   if (orphan)
     fprintf(stderr, "      orphan alignments:%10d\n", orphan);
   fprintf(stderr, "    Unpaired alignments:%10d\n", single);
+  if (secSingle)
+    fprintf(stderr, "      secondary alns:   %10d\n", secSingle);
   fprintf(stderr, "  Fragments analyzed:   %10d\n", singlePr + pairedPr);
   fprintf(stderr, "    Full fragments:     %10d\n", pairedPr);
   if (pairedPr)
@@ -1774,8 +1853,13 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
   char* line = (char*) memalloc(MAX_SIZE);
   int chromLen = 0;       // number of reference sequences
   Chrom** chrom = NULL;   // array of reference sequences
-  Read* dummy = (Read*) memalloc(sizeof(Read)); // head of linked list
-  dummy->next = NULL;                           //   for paired alns
+  //Read* dummy = (Read*) memalloc(sizeof(Read)); // head of linked list
+  //dummy->next = NULL;                           //   for paired alns
+  Aln** aln = (Aln**) memalloc(MAX_ALNS * sizeof(Aln*));
+  for (int i = 0; i < MAX_ALNS; i++)
+    aln[i] = (Aln*) memalloc(sizeof(Aln));
+  char* readName = memalloc(MAX_ALNS);  // name of read being analyzed
+  readName[0] = '\0';
   double fragLen = 0.0;   // total weighted length of treatment fragments
   unsigned long genomeLen = 0;  // total length of genome
 
@@ -1805,7 +1889,7 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
           i ? "control" : "treatment", filename);
       int unmapped = 0, paired = 0, single = 0, orphan = 0,
         pairedPr = 0, singlePr = 0, supp = 0, skipped = 0,
-        lowMapQ = 0;  // counting variables
+        lowMapQ = 0, secPair = 0, secSingle = 0;  // counting variables
       unsigned long totalLen = 0;   // total length of paired reads
       Read** unpaired = NULL;       // for unpaired alns with
       int readLen = 0, readMem = 0; //   average-extension option
@@ -1814,21 +1898,24 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
         count = readBAM(in.gzf, line, &totalLen, &unmapped,
           &paired, &single, &pairedPr, &singlePr, &supp,
           &skipped, &lowMapQ, minMapQ, xcount, xchrList,
-          &chromLen, &chrom, &readLen, &readMem, unpaired,
-          dummy, singleOpt, extendOpt, extend, avgExtOpt);
+          &secPair, &secSingle, &chromLen, &chrom, &readLen,
+          &readMem, unpaired, aln, readName, singleOpt,
+          extendOpt, extend, avgExtOpt);
       else
         count = readSAM(in, gz, line, &totalLen, &unmapped,
           &paired, &single, &pairedPr, &singlePr, &supp,
           &skipped, &lowMapQ, minMapQ, xcount, xchrList,
-          &chromLen, &chrom, &readLen, &readMem, unpaired,
-          dummy, singleOpt, extendOpt, extend, avgExtOpt);
+          &secPair, &secSingle, &chromLen, &chrom, &readLen,
+          &readMem, unpaired, aln, readName, singleOpt,
+          extendOpt, extend, avgExtOpt);
 
       // log counts
-      orphan = checkOrphans(dummy);  // orphan paired alignments
+      //orphan = checkOrphans(dummy);  // orphan paired alignments
       if (verbose)
         logCounts(count, unmapped, supp, skipped, xcount, xchrList,
-          minMapQ, lowMapQ, paired, orphan, single, singlePr, pairedPr,
-          totalLen, singleOpt, extendOpt, extend, avgExtOpt, bam);
+          minMapQ, lowMapQ, paired, secPair, orphan, single,
+          secSingle, singlePr, pairedPr, totalLen, singleOpt,
+          extendOpt, extend, avgExtOpt, bam);
 
       // close input files
       if ( (gz && gzclose(in.gzf) != Z_OK) || (! gz && fclose(in.f)) )
@@ -1888,7 +1975,9 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
     free(chr);
   }
   free(chrom);
-  free(dummy);
+  free(aln);  /*******/
+  free(readName);
+  //free(dummy);
   free(line);
 
   // close files

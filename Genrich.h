@@ -14,6 +14,7 @@
 
 // constants
 #define MAX_SIZE    65520   // maximum length of input SAM/BAM alignments
+#define MAX_ALNS    100     // maximum number of alignments per read/pair
 #define TAB         "\t"    // separator for SAM fields
 #define COM         ", "    // separator for input file names / ref. names
 
@@ -127,11 +128,19 @@ typedef struct chrom {
   int pvalLen;  // length of pileup arrays for p- and q-values
 } Chrom;
 
-typedef struct read {
+typedef struct aln {
   uint32_t pos[2];
-  bool strand;
-  bool paired;
-  char* name;
+  bool strand;  // only for SE alignments
+  bool paired;  // PE alignment
+  bool full;    // both parts of PE aln analyzed
+  float val;    // value for aln (only for singletons with avg-ext option)
+  char* name;   // read name (only for singletons with avg-ext option)
   Chrom* chrom;
+} Aln;
+
+typedef struct read {
+  char* name;
+  Aln** aln;
+  int alnLen;
   struct read* next;
 } Read;
