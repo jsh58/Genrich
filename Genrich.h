@@ -4,9 +4,9 @@
 
   Finding sites of enrichment from genome-wide assays.
 
-  Version 0.0
+  Version 0.1
 */
-#define VERSION     "0.0"
+#define VERSION     "0.1"
 
 // macros
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
@@ -66,9 +66,9 @@ enum omp_locks { OUT, UN, LOG, DOVE, ALN, OMP_LOCKS };
 enum errCode { ERRFILE, ERROPEN, ERROPENW, ERRCLOSE, ERRMEM,
   ERRSEQ, ERRQUAL, ERRHEAD, ERRINT, ERRFLOAT, ERRPARAM,
   ERRMISM, ERRINFO, ERRSAM, ERRREP, ERRCHROM, ERREXTEND,
-  ERRBAM, ERRGEN, ERRCHRLEN, ERRCTRL, ERRPOS,
-ERROFFSET, ERRUNGET, ERRGZIP,
-  ERRTHREAD, ERRNAME, ERRRANGE, ERRDEFQ, ERRCIGAR, DEFERR
+  ERRBAM, ERRGEN, ERRCHRLEN, ERRCTRL, ERRPOS, ERRSORT,
+ERRUNGET, ERRGZIP,
+  ERRTHREAD, ERRNAME, ERRCIGAR, DEFERR
 };
 const char* errMsg[] = { "Need input/output files",
   ": cannot open file for reading",
@@ -92,14 +92,12 @@ const char* errMsg[] = { "Need input/output files",
   ": reference sequence has different lengths in BAM/SAM files",
   ": reference sequence missing from control sample(s)",
   ": read aligned beyond reference end",
+  "SAM/BAM file not sorted by queryname (samtools sort -n)",
 
-  ": quality score outside of set range",
   "Failure in ungetc() call",
   "Cannot pipe in gzip compressed file (use zcat instead)",
   "Number of threads must be >= 1",
   ": output filename cannot start with '-'",
-  ": file missing values for quality score range",
-  "Cannot increase max. quality score with default error profile",
   ": unknown Op in CIGAR",
   "Unknown error"
 };

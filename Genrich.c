@@ -4,7 +4,7 @@
 
   Finding sites of enrichment from genome-wide assays.
 
-  Version 0.0
+  Version 0.1
 */
 
 #include <stdio.h>
@@ -57,9 +57,9 @@ void usage(void) {
   fprintf(stderr, "                     cluster them together, in bp (def. %d)\n", DEFMAXGAP);
   fprintf(stderr, "I/O options:\n");
   fprintf(stderr, "  -%c               Option to gzip-compress output(s)\n", GZOPT);
+  fprintf(stderr, "  -%c               Option to print status updates/counts to stderr\n", VERBOSE);
 /*
   fprintf(stderr, "  -%c  <int>        Number of threads to use (def. %d)\n", THREADS, DEFTHR);
-  fprintf(stderr, "  -%c               Option to print status updates/counts to stderr\n", VERBOSE);
 */
   exit(-1);
 }
@@ -703,77 +703,6 @@ double savePileupTreat(Chrom ** chrom, int chromLen) {
   return fragLen;
 }
 
-/* void savePileup()
- * Save pileup values for each Chrom from 'diff' arrays
- *   (and background lambda value for control sample).
- *   Return total length of all fragments (weighted).
- *
-void savePileup(Chrom** chrom, int chromLen,
-    double* fragLen, unsigned long* genomeLen,
-    bool ctrl) {
-
-  // calculate background lambda value
-  float lambda = 0.0f;
-  if (ctrl)
-    lambda = calcLambda(chrom, chromLen, *fragLen, genomeLen);
-
-  // create pileup for each chrom
-  *fragLen = 0.0;  // weighted fragment length
-  for (int i = 0; i < chromLen; i++) {
-    Chrom* chr = chrom[i];
-    if (chr->skip)
-      continue;
-
-    // saving control or pileup values?
-    Pileup** p = ctrl ? &chr->ctrl : &chr->treat;
-    int* size = ctrl ? &chr->ctrlLen : &chr->treatLen;
-
-    // if no read coverage, save constant pileup of 0
-    if (chr->diff == NULL) {
-      saveConst(p, size, chr->len, 0.0f);
-      continue;
-    }
-
-    // determine number of pileup intervals
-    int num = 1;
-    for (int j = 1; j < chr->len; j++)
-      if (chr->diff[j] != 0.0f)
-        num++;
-
-    // create pileup arrays
-    *p = (Pileup*) memalloc(sizeof(Pileup));
-    (*p)->end = (unsigned int*) memalloc(num * sizeof(unsigned int));
-    (*p)->cov = (float*) memalloc(num * sizeof(float));
-    *size = num;
-
-    // save pileup values
-    int pos = 0;              // position in pileup arrays
-    float val = chr->diff[0]; // pileup value
-    int start = 0;            // beginning coordinate of interval
-    int j;
-    for (j = 1; j < chr->len; j++)
-      if (chr->diff[j] != 0.0f) {
-        (*p)->end[pos] = j;
-        (*p)->cov[pos] = MAX(val, lambda);
-
-        // keep track of fragment length
-        *fragLen += (j - start) * val;
-        start = j;
-
-        // update pileup value
-        val += chr->diff[j];
-        pos++;
-      }
-
-    // save final interval
-    (*p)->end[pos] = j;
-    (*p)->cov[pos] = MAX(val, lambda);
-    *fragLen += (j - start) * val;
-  }
-
-}
-*/
-
 /*** Convert alignments to intervals ***/
 
 /* int saveInterval()
@@ -1155,14 +1084,11 @@ int calcDist(char* qname, char* seq, char* cigar) {
 }
 
 /* void loadChrom()
- * Check SAM header line for chromosome info.
+ * Save chromosome length info from a SAM header line.
  */
 void loadChrom(char* line, int* chromLen, Chrom*** chrom,
     int xcount, char** xchrList) {
-  // determine if SAM header line has chrom info
-  char* tag = strtok(line, TAB);
-  if (tag == NULL || strcmp(tag, "@SQ"))
-    return;
+  // parse SAM header line for chrom info
   char* name = NULL, *len = NULL;
   char* field = strtok(NULL, TAB);
   while (field != NULL) {
@@ -1178,6 +1104,41 @@ void loadChrom(char* line, int* chromLen, Chrom*** chrom,
   // save chrom info to array (*chrom)
   saveChrom(name, getInt(len), chromLen, chrom,
     xcount, xchrList);
+}
+
+/* void checkHeader()
+ * Check SAM header line for useful information:
+ *   sort order or chromosome lengths.
+ */
+void checkHeader(char* line, int* chromLen, Chrom*** chrom,
+    int xcount, char** xchrList) {
+
+  // load tag from SAM header line
+  char* tag = strtok(line, TAB);
+  if (tag == NULL)
+    return;
+
+  if (! strcmp(tag, "@HD")) {
+    // first header line: check sort order
+    char* order = NULL;
+    char* field = strtok(NULL, TAB);
+    while (field != NULL) {
+      if (!strncmp(field, "SO:", 3))
+        order = field + 3;
+      field = strtok(NULL, TAB);
+    }
+    // removing trailing '\n'
+    int i = 0;
+    for (; order[i] != '\n' && order[i] != '\0'; i++) ;
+    order[i] = '\0';
+    if (order == NULL || ! strcmp(order, "unknown")
+        || ! strcmp(order, "coordinate"))
+      exit(error("", ERRSORT));
+
+  } else if (! strcmp(tag, "@SQ"))
+    // load chrom lengths from header line
+    loadChrom(line, chromLen, chrom, xcount, xchrList);
+
 }
 
 /* int readSAM()
@@ -1202,8 +1163,7 @@ int readSAM(File in, bool gz, char* line,
   while (getLine(line, MAX_SIZE, in, gz) != NULL) {
 
     if (line[0] == '@') {
-      // load chrom lengths from header
-      loadChrom(line, chromLen, chrom, xcount, xchrList);
+      checkHeader(line, chromLen, chrom, xcount, xchrList);
       continue;
     }
 
@@ -1225,8 +1185,8 @@ int readSAM(File in, bool gz, char* line,
         || pos < 0)
       // insufficient alignment info
       exit(error(line, ERRSAM));
-    if (flag & 0xF00) {
-      // skip supplementary/secondary alignments
+    if (flag & 0xE00) {
+      // skip supplementary/PCR dups/low quality
       (*supp)++;
       continue;
     }
@@ -1489,8 +1449,8 @@ int parseBAM(gzFile in, char* line, int chromLen,
         || pos < 0)
       // insufficient alignment info
       exit(error(read_name, ERRSAM));
-    if (flag & 0xF00) {
-      // skip supplementary/secondary alignments
+    if (flag & 0xE00) {
+      // skip supplementary/PCR dups/low quality
       (*supp)++;
       continue;
     }
@@ -1535,9 +1495,35 @@ int readBAM(gzFile in, char* line, unsigned long* totalLen,
     Chrom*** chrom, int* readLen, int* readMem,
     Read** unpaired, Read* dummy, bool singleOpt,
     bool extendOpt, int extend, bool avgExtOpt) {
-  // skip header
+
+  // load first line from header
   int32_t l_text = readInt32(in, true);
-  if (gzseek(in, l_text, SEEK_CUR) == -1)
+  int i;
+  for (i = 0; i < l_text; i++) {
+    int m = gzgetc(in);
+    if (m == -1)
+      exit(error("", ERRBAM));
+    unsigned char n = m;
+    if (n == '\n' || n == '\0')
+      break;
+    line[i] = n;
+  }
+  line[i] = '\0';
+  // check sort order
+  char* tag = strtok(line, TAB);
+  if (tag == NULL || strcmp(tag, "@HD"))
+    exit(error("", ERRBAM));
+  char* order = NULL;
+  char* field = strtok(NULL, TAB);
+  while (field != NULL) {
+    if (!strncmp(field, "SO:", 3))
+      order = field + 3;
+    field = strtok(NULL, TAB);
+  }
+  if (order == NULL || ! strcmp(order, "unknown")
+      || ! strcmp(order, "coordinate"))
+    exit(error("", ERRSORT));
+  if (gzseek(in, l_text - i - 1, SEEK_CUR) == -1)
     exit(error("", ERRBAM));
 
   // save chromosome lengths
@@ -1722,7 +1708,7 @@ void logCounts(int count, int unmapped, int supp,
   if (unmapped)
     fprintf(stderr, "    Unmapped:           %10d\n", unmapped);
   if (supp)
-    fprintf(stderr, "    Supplementary:      %10d\n", supp);
+    fprintf(stderr, "    Supp./dups/lowQual: %10d\n", supp);
   if (skipped) {
     fprintf(stderr, "    To skipped refs:    %10d\n", skipped);
     fprintf(stderr, "      (%s", xchrList[0]);
