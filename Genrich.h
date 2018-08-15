@@ -14,7 +14,9 @@
 
 // constants
 #define MAX_SIZE    65520   // maximum length of input SAM/BAM alignments
-#define MAX_ALNS    100     // maximum number of alignments per read/pair
+#define MAX_ALNS    128     // maximum number of alignments per read/pair
+                            //   - also used as max. read name length,
+                            //     and for various dynamic memory allocs
 #define TAB         "\t"    // separator for SAM fields
 #define COM         ", "    // separator for input file names / ref. names
 
@@ -65,9 +67,10 @@ enum omp_locks { OUT, UN, LOG, DOVE, ALN, OMP_LOCKS };
 
 // error messages
 enum errCode { ERRFILE, ERROPEN, ERROPENW, ERRCLOSE, ERRMEM,
-  ERRSEQ, ERRQUAL, ERRHEAD, ERRINT, ERRFLOAT, ERRPARAM,
-  ERRMISM, ERRINFO, ERRSAM, ERRREP, ERRCHROM, ERREXTEND,
-  ERRBAM, ERRGEN, ERRCHRLEN, ERRCTRL, ERRPOS, ERRSORT,
+  ERRINT, ERRFLOAT, ERRPARAM,
+  ERRMISM, ERRINFO, ERRSAM, ERRREP, ERRCHROM, ERRHEAD,
+  ERREXTEND,
+  ERRBAM, ERRGEN, ERRTREAT, ERRCHRLEN, ERRCTRL, ERRPOS, ERRSORT,
 ERRUNGET, ERRGZIP,
   ERRTHREAD, ERRNAME, ERRCIGAR, DEFERR
 };
@@ -76,9 +79,6 @@ const char* errMsg[] = { "Need input/output files",
   ": cannot open file for writing",
   ": cannot close file",
   "Cannot allocate memory",
-  "Cannot load sequence",
-  "Sequence/quality scores do not match",
-  ": not matched in input files",
   ": cannot convert to int",
   ": cannot convert to float",
   ": unknown command-line argument",
@@ -87,9 +87,11 @@ const char* errMsg[] = { "Need input/output files",
   ": poorly formatted SAM/BAM record",
   ": read has repeated information in SAM",
   ": cannot find reference sequence name in SAM header",
+  ": misplaced SAM header line",
   "Extension length must be >= 0",
   "Cannot parse BAM file",
   "No analyzable genome (length=0)",
+  "Treatment sample(s) have no analyzable fragments",
   ": reference sequence has different lengths in BAM/SAM files",
   ": reference sequence missing from control sample(s)",
   ": read aligned beyond reference end",
@@ -130,9 +132,10 @@ typedef struct chrom {
 
 typedef struct aln {
   uint32_t pos[2];
-  bool strand;  // only for SE alignments
-  bool paired;  // PE alignment
-  bool full;    // both parts of PE aln analyzed
+  bool paired;  // properly paired alignment?
+  bool full;    // both parts of paired aln analyzed? (only for paired alns)
+  bool strand;  // which strand aln is on (only for singleton alignments)
+  bool first;   // which read of a pair this is (only for singleton alignments)
   float val;    // value for aln (only for singletons with avg-ext option)
   char* name;   // read name (only for singletons with avg-ext option)
   Chrom* chrom;
