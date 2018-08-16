@@ -852,26 +852,28 @@ void processAlns(char* qname, Aln* aln, int alnLen,
     Aln** unpair, int* unpairLen, int* unpairMem) {
 
   // count properly paired vs. singleton alignments
-  int paired = 0, singleR1 = 0, singleR2 = 0;
+  int pairCount = 0, singleR1 = 0, singleR2 = 0;
   for (int i = 0; i < alnLen; i++) {
     Aln* a = aln + i;
     if (a->paired)
-      a->full ? paired++ : (*orphan)++;
+      a->full ? pairCount++ : (*orphan)++;
     else if (a->first)
       singleR1++; // singleton for R1 read
     else
       singleR2++; // singleton for R2 read
   }
 
-  if (paired) {
+  if (pairCount) {
 
     // save full fragments
-    float val = 1.0f / paired;  // weighted value
+    float val = 1.0f / pairCount; // weighted value of each aln
+    int fragLen = 0;              // local sum of fragment lengths
     for (int i = 0; i < alnLen; i++) {
       Aln* a = aln + i;
       if (a->paired && a->full)
-        *totalLen += saveFragment(qname, a, val);
+        fragLen += saveFragment(qname, a, val);
     }
+    *totalLen += (int) ((double) fragLen / pairCount + 0.5);
     (*pairedPr)++;
 
   } else if ((singleR1 || singleR2) && singleOpt) {
@@ -1028,23 +1030,28 @@ void parseAlign(Aln** aln, int* alnLen, int* alnMem,
  *   saved yet, save it to the array. Return the index.
  */
 int saveChrom(char* name, int len, int* chromLen,
-    Chrom** chrom, int xcount, char** xchrList) {
+    Chrom** chrom, int xcount, char** xchrList,
+    bool ctrl) {
 
   // determine if chrom has been saved already
-  for (int i = 0; i < *chromLen; i++)
-    if (!strcmp((*chrom + i)->name, name)) {
-      if ((*chrom + i)->len != len)
-        exit(error((*chrom + i)->name, ERRCHRLEN));
+  for (int i = 0; i < *chromLen; i++) {
+    Chrom* c = *chrom + i;
+    if (!strcmp(c->name, name)) {
+      if (c->len != len)
+        exit(error(c->name, ERRCHRLEN));
       return i;
     }
+  }
 
-  // determine if chrom is on skipped list
-  bool skip = false;
-  for (int i = 0; i < xcount; i++)
-    if (!strcmp(xchrList[i], name)) {
-      skip = true;
-      break;
-    }
+  // determine if chrom should be skipped
+  bool skip = ctrl; // automatically skip if ref in ctrl sample only
+  if (! skip)
+    // check if chrom is on skipped list
+    for (int i = 0; i < xcount; i++)
+      if (!strcmp(xchrList[i], name)) {
+        skip = true;
+        break;
+      }
 
   // save to list
   *chrom = (Chrom*) memrealloc(*chrom,
@@ -1169,7 +1176,7 @@ int calcDist(char* qname, char* seq, char* cigar) {
  * Save chromosome length info from a SAM header line.
  */
 void loadChrom(char* line, int* chromLen, Chrom** chrom,
-    int xcount, char** xchrList) {
+    int xcount, char** xchrList, bool ctrl) {
   // parse SAM header line for chrom info
   char* name = NULL, *len = NULL;
   char* field = strtok(NULL, TAB);
@@ -1185,7 +1192,7 @@ void loadChrom(char* line, int* chromLen, Chrom** chrom,
 
   // save chrom info to array (*chrom)
   saveChrom(name, getInt(len), chromLen, chrom,
-    xcount, xchrList);
+    xcount, xchrList, ctrl);
 }
 
 /* void checkHeader()
@@ -1193,7 +1200,7 @@ void loadChrom(char* line, int* chromLen, Chrom** chrom,
  *   sort order or chromosome lengths.
  */
 void checkHeader(char* line, int* chromLen, Chrom** chrom,
-    int xcount, char** xchrList) {
+    int xcount, char** xchrList, bool ctrl) {
 
   // load tag from SAM header line
   char* tag = strtok(line, TAB);
@@ -1219,7 +1226,8 @@ void checkHeader(char* line, int* chromLen, Chrom** chrom,
 
   } else if (! strcmp(tag, "@SQ"))
     // load chrom lengths from header line
-    loadChrom(line, chromLen, chrom, xcount, xchrList);
+    loadChrom(line, chromLen, chrom, xcount, xchrList,
+      ctrl);
 
 }
 
@@ -1233,7 +1241,8 @@ int readSAM(File in, bool gz, char* line, Aln** aln,
     int minMapQ, int xcount, char** xchrList, int* secPair,
     int* secSingle, int* orphan, int* chromLen,
     Chrom** chrom, bool singleOpt, bool extendOpt,
-    int extend, bool avgExtOpt, Aln** unpair, int* unpairMem) {
+    int extend, bool avgExtOpt, Aln** unpair,
+    int* unpairMem, bool ctrl) {
 
   // SAM fields to save
   char* qname, *rname, *cigar, *rnext, *seq, *qual, *extra;
@@ -1251,7 +1260,8 @@ int readSAM(File in, bool gz, char* line, Aln** aln,
     if (line[0] == '@') {
       if (pastHeader)
         exit(error(line, ERRHEAD));
-      checkHeader(line, chromLen, chrom, xcount, xchrList);
+      checkHeader(line, chromLen, chrom, xcount, xchrList,
+        ctrl);
       continue;
     }
     pastHeader = true;
@@ -1620,7 +1630,8 @@ int readBAM(gzFile in, char* line, Aln** aln, int* alnMem,
     int xcount, char** xchrList, int* secPair,
     int* secSingle, int* orphan, int* chromLen,
     Chrom** chrom, bool singleOpt, bool extendOpt,
-    int extend, bool avgExtOpt, Aln** unpair, int* unpairMem) {
+    int extend, bool avgExtOpt, Aln** unpair,
+    int* unpairMem, bool ctrl) {
 
   // load first line from header
   int32_t l_text = readInt32(in, true);
@@ -1668,7 +1679,7 @@ int readBAM(gzFile in, char* line, Aln** aln, int* alnMem,
     if (line[len-1] != '\0')
       exit(error("", ERRBAM));
     idx[i] = saveChrom(line, readInt32(in, true),
-      chromLen, chrom, xcount, xchrList);
+      chromLen, chrom, xcount, xchrList, ctrl);
   }
 
   return parseBAM(in, line, aln, alnMem, readName,
@@ -1825,22 +1836,29 @@ bool openRead(char* inFile, File* in) {
  * Log alignment counts to stderr.
  */
 void logCounts(int count, int unmapped, int supp,
-    int skipped, int xcount, char** xchrList, int minMapQ,
+    int skipped, Chrom* chrom, int chromLen, int minMapQ,
     int lowMapQ, int paired, int secPair, int orphan,
     int single, int secSingle, int singlePr, int pairedPr,
     unsigned long totalLen, bool singleOpt, bool extendOpt,
     int extend, bool avgExtOpt, bool bam) {
-  double avgLen = totalLen / (double) pairedPr;
-  fprintf(stderr, "  %s records analyzed: %10d\n", bam ? "BAM" : "SAM", count);
+  double avgLen = pairedPr ? totalLen / (double) pairedPr : 0.0;
+  fprintf(stderr, "  %s records analyzed: %10d\n",
+    bam ? "BAM" : "SAM", count);
   if (unmapped)
     fprintf(stderr, "    Unmapped:           %10d\n", unmapped);
   if (supp)
     fprintf(stderr, "    Supp./dups/lowQual: %10d\n", supp);
   if (skipped) {
     fprintf(stderr, "    To skipped refs:    %10d\n", skipped);
-    fprintf(stderr, "      (%s", xchrList[0]);
-    for (int i = 1; i < xcount; i++)
-      fprintf(stderr, ",%s", xchrList[i]);
+    fprintf(stderr, "      (");
+    bool first = true;
+    for (int i = 0; i < chromLen; i++) {
+      Chrom* c = chrom + i;
+      if (c->skip) {
+        fprintf(stderr, "%s%s", first ? "" : ",", c->name);
+        first = false;
+      }
+    }
     fprintf(stderr, ")\n");
   }
   if (lowMapQ)
@@ -1928,19 +1946,19 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
           &pairedPr, &singlePr, &supp, &skipped, &lowMapQ,
           minMapQ, xcount, xchrList, &secPair, &secSingle,
           &orphan, &chromLen, &chrom, singleOpt, extendOpt,
-          extend, avgExtOpt, &unpair, &unpairMem);
+          extend, avgExtOpt, &unpair, &unpairMem, i);
       else
         count = readSAM(in, gz, line, &aln, &alnMem,
           readName, &totalLen, &unmapped, &paired, &single,
           &pairedPr, &singlePr, &supp, &skipped, &lowMapQ,
           minMapQ, xcount, xchrList, &secPair, &secSingle,
           &orphan, &chromLen, &chrom, singleOpt, extendOpt,
-          extend, avgExtOpt, &unpair, &unpairMem);
+          extend, avgExtOpt, &unpair, &unpairMem, i);
 
       // log counts
       if (verbose)
-        logCounts(count, unmapped, supp, skipped, xcount,
-          xchrList, minMapQ, lowMapQ, paired, secPair,
+        logCounts(count, unmapped, supp, skipped, chrom,
+          chromLen, minMapQ, lowMapQ, paired, secPair,
           orphan, single, secSingle, singlePr, pairedPr,
           totalLen, singleOpt, extendOpt, extend,
           avgExtOpt, bam);
