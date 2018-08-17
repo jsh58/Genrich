@@ -591,7 +591,8 @@ void savePileupNoCtrl(Chrom* chrom, int chromLen,
  *   'diff' arrays and background lambda value.
  */
 void savePileupCtrl(Chrom* chrom, int chromLen,
-    double fragLen, unsigned long* genomeLen) {
+    double fragLen, unsigned long* genomeLen,
+    float epsilon) {
 
   // calculate background lambda value
   float lambda = calcLambda(chrom, chromLen, fragLen,
@@ -612,7 +613,7 @@ void savePileupCtrl(Chrom* chrom, int chromLen,
     // determine number of pileup intervals
     int num = 1;
     for (int j = 1; j < chr->len; j++)
-      if (chr->diff[j] != 0.0f)
+      if (fabsf(chr->diff[j]) > epsilon)
         num++;
 
     // create pileup arrays
@@ -626,12 +627,21 @@ void savePileupCtrl(Chrom* chrom, int chromLen,
     float val = chr->diff[0]; // pileup value
     int j;
     for (j = 1; j < chr->len; j++)
-      if (chr->diff[j] != 0.0f) {
+      if (fabsf(chr->diff[j]) > epsilon) {
         chr->ctrl->end[pos] = j;
         chr->ctrl->cov[pos] = MAX(val, lambda);
 
         // update pileup value
         val += chr->diff[j];
+        // reset val to nearest int if it's close
+        if (val < 0.0f)
+          val = 0.0f;
+        else {
+          int valInt = (int) (val + 0.5f);
+          if (fabsf(valInt - val) < epsilon)
+            val = (float) valInt;
+        }
+
         pos++;
       }
 
@@ -647,7 +657,8 @@ void savePileupCtrl(Chrom* chrom, int chromLen,
  *   'diff' arrays.
  *   Return total length of all fragments (weighted).
  */
-double savePileupTreat(Chrom* chrom, int chromLen) {
+double savePileupTreat(Chrom* chrom, int chromLen,
+    float epsilon) {
 
   // create pileup for each chrom
   double fragLen = 0.0;  // weighted fragment length
@@ -665,7 +676,7 @@ double savePileupTreat(Chrom* chrom, int chromLen) {
     // determine number of pileup intervals
     int num = 1;
     for (int j = 1; j < chr->len; j++)
-      if (chr->diff[j] != 0.0f)
+      if (fabsf(chr->diff[j]) > epsilon)
         num++;
 
     // create pileup arrays
@@ -680,7 +691,7 @@ double savePileupTreat(Chrom* chrom, int chromLen) {
     int start = 0;            // beginning coordinate of interval
     int j;
     for (j = 1; j < chr->len; j++)
-      if (chr->diff[j] != 0.0f) {
+      if (fabsf(chr->diff[j]) > epsilon) {
         chr->treat->end[pos] = j;
         chr->treat->cov[pos] = val;
 
@@ -690,6 +701,15 @@ double savePileupTreat(Chrom* chrom, int chromLen) {
 
         // update pileup value
         val += chr->diff[j];
+        // reset val to nearest int if it's close
+        if (val < 0.0f)
+          val = 0.0f;
+        else {
+          int valInt = (int) (val + 0.5f);
+          if (fabsf(valInt - val) < epsilon)
+            val = (float) valInt;
+        }
+
         pos++;
       }
 
@@ -741,21 +761,21 @@ int saveInterval(Chrom* chrom, int start, int end,
   return end - start;
 }
 
-/* int saveAvgExt()
+/* int processAvgExt()
  * Save complete intervals for unpaired alignments
  *   with "extend to average length" option, after
  *   calculating average length from paired alns.
  *   Return number printed.
  */
-int saveAvgExt(Aln* unpair, int unpairLen,
-    unsigned long totalLen, int pairedPr) {
+int processAvgExt(Aln* unpair, int unpairLen,
+    double totalLen, int pairedPr) {
   // determine average fragment length
   int avgLen = 0;
   if (! pairedPr) {
     fprintf(stderr, "Warning! No paired alignments to calculate avg ");
     fprintf(stderr, "frag length --\n  Printing singletons \"as is\"\n");
   } else
-    avgLen = (int) (totalLen / (double) pairedPr + 0.5);
+    avgLen = (int) (totalLen / pairedPr + 0.5);
 
   int printed = 0;  // counting variable
   for (int i = 0; i < unpairLen; i++) {
@@ -778,18 +798,19 @@ int saveAvgExt(Aln* unpair, int unpairLen,
   return printed;
 }
 
-/* void saveAvgExtList()
+/* void saveAvgExt()
  * Save info for an unpaired alignment to list
  *   (for "extend to average length" option), for
  *   later processing by saveAvgExt().
  */
-void saveAvgExtList(char* qname, Aln* b, float val,
+void saveAvgExt(char* qname, Aln* b, float val,
     Aln** unpair, int* unpairLen, int* unpairMem) {
 
   // alloc memory if necessary
   if (*unpairLen + 1 > *unpairMem) {
     *unpairMem += MAX_ALNS;
-    *unpair = (Aln*) memrealloc(*unpair, *unpairMem * sizeof(Aln));
+    *unpair = (Aln*) memrealloc(*unpair,
+      *unpairMem * sizeof(Aln));
   }
 
   // copy alignment info
@@ -846,7 +867,7 @@ int saveFragment(char* qname, Aln* a, float val) {
  *   singleton alignments, also weighted.
  */
 void processAlns(char* qname, Aln* aln, int alnLen,
-    unsigned long* totalLen, int* pairedPr, int* singlePr,
+    double* totalLen, int* pairedPr, int* singlePr,
     int* orphan, bool singleOpt, bool extendOpt,
     int extend, bool avgExtOpt,
     Aln** unpair, int* unpairLen, int* unpairMem) {
@@ -873,7 +894,7 @@ void processAlns(char* qname, Aln* aln, int alnLen,
       if (a->paired && a->full)
         fragLen += saveFragment(qname, a, val);
     }
-    *totalLen += (int) ((double) fragLen / pairCount + 0.5);
+    *totalLen += (double) fragLen / pairCount;
     (*pairedPr)++;
 
   } else if ((singleR1 || singleR2) && singleOpt) {
@@ -893,8 +914,8 @@ void processAlns(char* qname, Aln* aln, int alnLen,
 
           if (avgExtOpt) {
             // for average-extension option, save alignment
-            //   for later processing by saveAvgExt()
-            saveAvgExtList(qname, a, val, unpair,
+            //   for later processing by processAvgExt()
+            saveAvgExt(qname, a, val, unpair,
               unpairLen, unpairMem);
           } else {
             // for other options, save singleton interval
@@ -1073,6 +1094,65 @@ int saveChrom(char* name, int len, int* chromLen,
   return *chromLen - 1;
 }
 
+/* void loadChrom()
+ * Save chromosome length info from a SAM header line.
+ */
+void loadChrom(char* line, int* chromLen, Chrom** chrom,
+    int xcount, char** xchrList, bool ctrl) {
+  // parse SAM header line for chrom info
+  char* name = NULL, *len = NULL;
+  char* field = strtok(NULL, TAB);
+  while (field != NULL) {
+    if (!strncmp(field, "SN:", 3))
+      name = field + 3;
+    else if (!strncmp(field, "LN:", 3))
+      len = field + 3;
+    field = strtok(NULL, TAB);
+  }
+  if (name == NULL || len == NULL)
+    return;
+
+  // save chrom info to array (*chrom)
+  saveChrom(name, getInt(len), chromLen, chrom,
+    xcount, xchrList, ctrl);
+}
+
+/* void checkHeader()
+ * Check SAM header line for useful information:
+ *   sort order or chromosome lengths.
+ */
+void checkHeader(char* line, int* chromLen, Chrom** chrom,
+    int xcount, char** xchrList, bool ctrl) {
+
+  // load tag from SAM header line
+  char* tag = strtok(line, TAB);
+  if (tag == NULL)
+    return;
+
+  if (! strcmp(tag, "@HD")) {
+    // first header line: check sort order
+    char* order = NULL;
+    char* field = strtok(NULL, TAB);
+    while (field != NULL) {
+      if (!strncmp(field, "SO:", 3))
+        order = field + 3;
+      field = strtok(NULL, TAB);
+    }
+    // removing trailing '\n'
+    int i = 0;
+    for (; order[i] != '\n' && order[i] != '\0'; i++) ;
+    order[i] = '\0';
+    if (order == NULL || ! strcmp(order, "unknown")
+        || ! strcmp(order, "coordinate"))
+      exit(error("", ERRSORT));
+
+  } else if (! strcmp(tag, "@SQ"))
+    // load chrom lengths from header line
+    loadChrom(line, chromLen, chrom, xcount, xchrList,
+      ctrl);
+
+}
+
 /*** SAM parsing ***/
 
 /* bool loadFields()
@@ -1172,70 +1252,11 @@ int calcDist(char* qname, char* seq, char* cigar) {
   return length + offset;
 }
 
-/* void loadChrom()
- * Save chromosome length info from a SAM header line.
- */
-void loadChrom(char* line, int* chromLen, Chrom** chrom,
-    int xcount, char** xchrList, bool ctrl) {
-  // parse SAM header line for chrom info
-  char* name = NULL, *len = NULL;
-  char* field = strtok(NULL, TAB);
-  while (field != NULL) {
-    if (!strncmp(field, "SN:", 3))
-      name = field + 3;
-    else if (!strncmp(field, "LN:", 3))
-      len = field + 3;
-    field = strtok(NULL, TAB);
-  }
-  if (name == NULL || len == NULL)
-    return;
-
-  // save chrom info to array (*chrom)
-  saveChrom(name, getInt(len), chromLen, chrom,
-    xcount, xchrList, ctrl);
-}
-
-/* void checkHeader()
- * Check SAM header line for useful information:
- *   sort order or chromosome lengths.
- */
-void checkHeader(char* line, int* chromLen, Chrom** chrom,
-    int xcount, char** xchrList, bool ctrl) {
-
-  // load tag from SAM header line
-  char* tag = strtok(line, TAB);
-  if (tag == NULL)
-    return;
-
-  if (! strcmp(tag, "@HD")) {
-    // first header line: check sort order
-    char* order = NULL;
-    char* field = strtok(NULL, TAB);
-    while (field != NULL) {
-      if (!strncmp(field, "SO:", 3))
-        order = field + 3;
-      field = strtok(NULL, TAB);
-    }
-    // removing trailing '\n'
-    int i = 0;
-    for (; order[i] != '\n' && order[i] != '\0'; i++) ;
-    order[i] = '\0';
-    if (order == NULL || ! strcmp(order, "unknown")
-        || ! strcmp(order, "coordinate"))
-      exit(error("", ERRSORT));
-
-  } else if (! strcmp(tag, "@SQ"))
-    // load chrom lengths from header line
-    loadChrom(line, chromLen, chrom, xcount, xchrList,
-      ctrl);
-
-}
-
 /* int readSAM()
  * Parse the alignments in a SAM file.
  */
 int readSAM(File in, bool gz, char* line, Aln** aln,
-    int* alnMem, char* readName, unsigned long* totalLen,
+    int* alnMem, char* readName, double* totalLen,
     int* unmapped, int* paired, int* single, int* pairedPr,
     int* singlePr, int* supp, int* skipped, int* lowMapQ,
     int minMapQ, int xcount, char** xchrList, int* secPair,
@@ -1339,89 +1360,9 @@ int readSAM(File in, bool gz, char* line, Aln** aln,
 
   // process single alignments w/ avgExtOpt
   if (avgExtOpt)
-    *singlePr += saveAvgExt(*unpair, unpairLen,
+    *singlePr += processAvgExt(*unpair, unpairLen,
       *totalLen, *pairedPr);
 
-
-/*******************************************/
-
-/*
-  // initialize omp locks -- out, un, log, dove, aln
-  omp_lock_t lock[OMP_LOCKS];
-  for (int i = 0; i < OMP_LOCKS; i++)
-    omp_init_lock(&lock[i]);
-
-  // process files in parallel
-  int count = 0, stitchRed = 0;
-  #pragma omp parallel num_threads(threads) reduction(+: count, stitchRed)
-  {
-
-    // allocate memory for both reads
-    char** read1 = (char**) memalloc(FASTQ * sizeof(char*));
-    char** read2 = (char**) memalloc((FASTQ + EXTRA) * sizeof(char*));
-    for (int i = 0; i < FASTQ + EXTRA; i++) {
-      if (i < FASTQ)
-        read1[i] = (char*) memalloc(MAX_SIZE);
-      // for 2nd read, save extra fields for revComp(seq) and rev(qual)
-      read2[i] = (char*) memalloc(MAX_SIZE);
-    }
-    char* header = (char*) memalloc(MAX_SIZE); // consensus header
-
-    // process reads
-    int len1 = 0, len2 = 0; // lengths of reads
-    while (loadReads(in1, in2, read1, read2, header,
-        &len1, &len2, offset, maxQual, gz1, gz2)) {
-
-      // find optimal overlap
-      float best = 1.0f;
-      int pos = findPos(read1[SEQ], read2[SEQ + EXTRA + 1],
-        read1[QUAL], read2[QUAL + EXTRA], len1, len2, overlap,
-        dovetail, doveOverlap, mismatch, maxLen, &best);
-
-      // print result
-      if (pos == len1 - overlap + 1) {
-        // stitch failure
-        if (adaptOpt)
-          printFail(out, out2, 1, log, 0, header, read1,
-            read2, gzOut, lock + OUT, lock + LOG);
-        else
-          printFail(un1, un2, unOpt, log, logOpt, header,
-            read1, read2, gzOut, lock + UN, lock + LOG);
-      } else {
-        // stitch success
-        if (adaptOpt) {
-          stitchRed += printResAdapt(out, out2, dove, doveOpt,
-            header, read1, read2, len1, len2, pos, best,
-            gzOut, lock);
-        } else {
-          printRes(out, log, logOpt, dove, doveOpt, aln, alnOpt,
-            header, read1, read2, len1, len2, pos, best, offset,
-            gzOut, fjoin, match, mism, lock);
-          stitchRed++;
-        }
-      }
-
-      count++;
-    }
-
-    // free memory
-    free(header);
-    for (int i = 0; i < FASTQ + EXTRA; i++) {
-      if (i < FASTQ)
-        free(read1[i]);
-      free(read2[i]);
-    }
-    free(read1);
-    free(read2);
-
-  }  // END parallel
-
-  // destroy omp locks
-  for (int i = 0; i < 5; i++)
-    omp_destroy_lock(&lock[i]);
-
-  *stitch = stitchRed;
-*/
   return count;
 }
 
@@ -1515,7 +1456,7 @@ int calcDistBAM(int32_t l_seq, uint16_t n_cigar_op,
  */
 int parseBAM(gzFile in, char* line, Aln** aln, int* alnMem,
     char* readName, int chromLen, Chrom* chrom, int n_ref,
-    int idx[], unsigned long* totalLen, int* unmapped,
+    int idx[], double* totalLen, int* unmapped,
     int* paired, int* single, int* pairedPr, int* singlePr,
     int* supp, int* skipped, int* lowMapQ, int minMapQ,
     int* secPair, int* secSingle, int* orphan,
@@ -1613,7 +1554,7 @@ int parseBAM(gzFile in, char* line, Aln** aln, int* alnMem,
 
   // process single alignments w/ avgExtOpt
   if (avgExtOpt)
-    *singlePr += saveAvgExt(*unpair, unpairLen,
+    *singlePr += processAvgExt(*unpair, unpairLen,
       *totalLen, *pairedPr);
 
   return count;
@@ -1624,7 +1565,7 @@ int parseBAM(gzFile in, char* line, Aln** aln, int* alnMem,
  *   call parseBAM().
  */
 int readBAM(gzFile in, char* line, Aln** aln, int* alnMem,
-    char* readName, unsigned long* totalLen, int* unmapped,
+    char* readName, double* totalLen, int* unmapped,
     int* paired, int* single, int* pairedPr, int* singlePr,
     int* supp, int* skipped, int* lowMapQ, int minMapQ,
     int xcount, char** xchrList, int* secPair,
@@ -1839,9 +1780,9 @@ void logCounts(int count, int unmapped, int supp,
     int skipped, Chrom* chrom, int chromLen, int minMapQ,
     int lowMapQ, int paired, int secPair, int orphan,
     int single, int secSingle, int singlePr, int pairedPr,
-    unsigned long totalLen, bool singleOpt, bool extendOpt,
+    double totalLen, bool singleOpt, bool extendOpt,
     int extend, bool avgExtOpt, bool bam) {
-  double avgLen = pairedPr ? totalLen / (double) pairedPr : 0.0;
+  double avgLen = pairedPr ? totalLen / pairedPr : 0.0;
   fprintf(stderr, "  %s records analyzed: %10d\n",
     bam ? "BAM" : "SAM", count);
   if (unmapped)
@@ -1908,7 +1849,7 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
   Aln* unpair = NULL;     // array of unpaired alns (for avg-ext option)
   char* readName = memalloc(MAX_ALNS + 1);  // name of read being analyzed
   readName[0] = readName[MAX_ALNS] = '\0';
-  double fragLen = 0.0;   // total weighted length of treatment fragments
+  double fragLen = 0.0;   // total weighted length of all treatment fragments
   unsigned long genomeLen = 0;  // total length of genome
 
   // loop through input files (treatment and control)
@@ -1938,7 +1879,7 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
       int unmapped = 0, paired = 0, single = 0, orphan = 0,
         pairedPr = 0, singlePr = 0, supp = 0, skipped = 0,
         lowMapQ = 0, secPair = 0, secSingle = 0;  // counting variables
-      unsigned long totalLen = 0; // total length of paired reads
+      double totalLen = 0.0; // total weighted length of paired fragments
       int count;
       if (bam)
         count = readBAM(in.gzf, line, &aln, &alnMem,
@@ -1972,14 +1913,18 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
 
     // save pileup values
     if (i)
-      savePileupCtrl(chrom, chromLen, fragLen, &genomeLen);
+      savePileupCtrl(chrom, chromLen, fragLen, &genomeLen,
+        1.0f / alnMem);
     else {
-      fragLen = savePileupTreat(chrom, chromLen);
+      fragLen = savePileupTreat(chrom, chromLen,
+        1.0f / alnMem);
       // reset 'diff' array for each Chrom
-      for (int j = 0; j < chromLen; j++)
-        if ((chrom + j)->diff != NULL)
-          for (int k = 0; k < (chrom + j)->len + 1; k++)
-            (chrom + j)->diff[k] = 0.0f;
+      for (int j = 0; j < chromLen; j++) {
+        Chrom* c = chrom + j;
+        if (c->diff != NULL)
+          for (int k = 0; k < c->len + 1; k++)
+            c->diff[k] = 0.0f;
+      }
     }
   }
 
@@ -2063,8 +2008,8 @@ void getArgs(int argc, char** argv) {
   int extend = 0, minMapQ = 0, minLen = DEFMINLEN,
     maxGap = DEFMAXGAP, threads = DEFTHR;
   float pqvalue = DEFQVAL;
-  bool singleOpt = false, extendOpt = false, avgExtOpt = false,
-    gzOut = false, qvalOpt = true;
+  bool singleOpt = false, extendOpt = false,
+    avgExtOpt = false, gzOut = false, qvalOpt = true;
   bool verbose = false;
 
   // parse argv
