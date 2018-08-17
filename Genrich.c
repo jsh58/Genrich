@@ -139,32 +139,34 @@ void swapFloat(float* a, float* b) {
   *a = *b;
   *b = t;
 }
-void swapInt(unsigned int* a, unsigned int* b) {
-  unsigned int t = *a;
+void swapInt(unsigned long* a, unsigned long* b) {
+  unsigned long t = *a;
   *a = *b;
   *b = t;
 }
-int partition(Pileup* p, int low, int high) {
-  float pivot = p->cov[high];  // pivot value: last elt
+int partition(float* pVal, unsigned long* pEnd,
+    int low, int high) {
+  float pivot = pVal[high];  // pivot value: last elt
   int idx = low - 1;
 
   for (int j = low; j < high; j++) {
-    if (p->cov[j] < pivot) {
+    if (pVal[j] < pivot) {
       idx++;
-      swapFloat(&p->cov[idx], &p->cov[j]);
-      swapInt(&p->end[idx], &p->end[j]);  // swap int values too
+      swapFloat(pVal + idx, pVal + j);
+      swapInt(pEnd + idx, pEnd + j);  // swap int values too
     }
   }
   idx++;
-  swapFloat(&p->cov[idx], &p->cov[high]);
-  swapInt(&p->end[idx], &p->end[high]);
+  swapFloat(pVal + idx, pVal + high);
+  swapInt(pEnd + idx, pEnd + high);
   return idx;
 }
-void quickSort(Pileup* p, int low, int high) {
+void quickSort(float* pVal, unsigned long* pEnd,
+    int low, int high) {
   if (low < high) {
-    int idx = partition(p, low, high);
-    quickSort(p, low, idx - 1);
-    quickSort(p, idx + 1, high);
+    int idx = partition(pVal, pEnd, low, high);
+    quickSort(pVal, pEnd, low, idx - 1);
+    quickSort(pVal, pEnd, idx + 1, high);
   }
 }
 
@@ -174,38 +176,39 @@ void quickSort(Pileup* p, int low, int high) {
  * Return the pre-computed q-value for a given p-value,
  *   using parallel arrays (p->cov and qval).
  */
-float lookup(Pileup* p, int low, int high, float* qval,
-    float pval) {
+float lookup(float* pVal, int low, int high, float* qVal,
+    float p) {
   if (low == high)
-    return qval[low];
+    return qVal[low];
   int idx = (low + high) / 2;
-  if (p->cov[idx] == pval)
-    return qval[idx];
-  if (p->cov[idx] > pval)
-    return lookup(p, low, idx - 1, qval, pval);
-  return lookup(p, idx + 1, high, qval, pval);
+  if (pVal[idx] == p)
+    return qVal[idx];
+  if (pVal[idx] > p)
+    return lookup(pVal, low, idx - 1, qVal, p);
+  return lookup(pVal, idx + 1, high, qVal, p);
 }
 
 /* void saveQval()
  * Calculate and save q-values, given the pre-compiled
- *   list of p-values (Pileup* p).
+ *   arrays of p-values (pVal) and lengths (pEnd).
  */
 void saveQval(Chrom* chrom, int chromLen,
-    unsigned long genomeLen, Pileup* p, int pLen) {
+    unsigned long genomeLen, float* pVal,
+    unsigned long* pEnd, int pLen) {
 
   // sort pileup by p-values
-  quickSort(p, 0, pLen - 1);
+  quickSort(pVal, pEnd, 0, pLen - 1);
 
   // calculate q-values for each p-value: -log(q) = -log(p*N/k)
-  unsigned int k = 1;  // 1 + number of bases with higher -log(p)
+  unsigned long k = 1;  // 1 + number of bases with higher -log(p)
   float logN = -1 * log10f(genomeLen);
-  float* qval = (float*) memalloc((pLen + 1) * sizeof(float));
-  qval[pLen] = FLT_MAX;
+  float* qVal = (float*) memalloc((pLen + 1) * sizeof(float));
+  qVal[pLen] = FLT_MAX;
   for (int i = pLen - 1; i > -1; i--) {
     // ensure monotonicity
-    qval[i] = MAX( MIN( p->cov[i] + logN + log10f(k),
-      qval[i + 1]), 0.0f);
-    k += p->end[i];
+    qVal[i] = MAX( MIN( pVal[i] + logN + log10f(k),
+      qVal[i + 1]), 0.0f);
+    k += pEnd[i];
   }
 
   // save pileups of q-values for each chrom
@@ -214,15 +217,70 @@ void saveQval(Chrom* chrom, int chromLen,
     if (chr->skip)
       continue;
     for (int j = 0; j < chr->pvalLen; j++)
-      chr->qval->cov[j] = lookup(p, 0, pLen, qval,
+      chr->qval->cov[j] = lookup(pVal, 0, pLen, qVal,
         chr->pval->cov[j]);
   }
 
   // free memory
-  free(qval);
-  free(p->end);
-  free(p->cov);
-  free(p);
+  free(qVal);
+}
+
+/*** Save p-values in hashtable ***/
+
+/* unsigned long hash()
+ * djb2 hash function
+ * Modified to take a float (p-value) as input.
+ *   Returns index into hashtable.
+ */
+unsigned int hash(float f) {
+  unsigned long val = 5381;
+  unsigned char* p = (unsigned char*) &f;
+  for (int i = 0; i < sizeof(float); i++)
+    val = ((val << 5) + val) + p[i];
+  return (unsigned int) (val % HASH_SIZE);
+}
+
+/* int recordPval()
+ * Save length of given p-value into hashtable.
+ *   Return 1 if new entry made, else 0.
+ */
+int recordPval(Hash** table, float p, uint32_t length) {
+
+  // check hashtable for matching p-value
+  unsigned int idx = hash(p);
+  for (Hash* h = table[idx]; h != NULL; h = h->next)
+    if (p == h->val) {
+      // match: add length to bucket
+      h->len += length;
+      return 0;
+    }
+
+  // no match: add info into bucket
+  Hash* newVal = (Hash*) memalloc(sizeof(Hash));
+  newVal->val = p;
+  newVal->len = length;
+  newVal->next = table[idx];
+  table[idx] = newVal;
+  return 1;
+}
+
+/* float* collectPval()
+ * Collect arrays of p-values and genome lengths from
+ *   hashtable (to be used in q-value calculations).
+ */
+float* collectPval(Hash** table, unsigned long** pEnd,
+    int pLen) {
+  float* pVal = (float*) memalloc(pLen * sizeof(float));
+  int idx = 0;
+  for (int i = 0; i < HASH_SIZE; i++)
+    for (Hash* h = table[i]; h != NULL; h = h->next) {
+      pVal[idx] = h->val;
+      (*pEnd)[idx] = h->len;
+      idx++;
+    }
+  if (idx != pLen)
+    exit(error("", ERRPVAL));
+  return pVal;
 }
 
 /*** Calculate p-values ***/
@@ -230,51 +288,24 @@ void saveQval(Chrom* chrom, int chromLen,
 /* void saveConst()
  * Save a given value as pileup for a full chromosome.
  */
-void saveConst(Pileup** p, int* size, int len, float val) {
+void saveConst(Pileup** p, uint32_t* size, uint32_t len,
+    float val) {
   (*p) = (Pileup*) memalloc(sizeof(Pileup));
-  (*p)->end = (unsigned int*) memalloc(sizeof(unsigned int));
+  (*p)->end = (uint32_t*) memalloc(sizeof(uint32_t));
   (*p)->end[0] = len;
   (*p)->cov = (float*) memalloc(sizeof(float));
   (*p)->cov[0] = val;
   *size = 1;
 }
 
-/* void recordPval()
- * Save length of given p-value into Pileup arrays.
- */
-void recordPval(Pileup* p, int* pLen, int* pMem,
-    float pval, int length) {
-  // look for p-value in array
-  for (int i = 0; i < *pLen; i++)
-    if (p->cov[i] == pval) {
-      // if found, just add length
-      p->end[i] += length;
-      return;
-    }
-
-  // realloc memory if necessary
-  if (*pLen + 1 > *pMem) {
-    *pMem += 10000;
-    p->end = (unsigned int*) memrealloc(p->end,
-      *pMem * sizeof(unsigned int));
-    p->cov = (float*) memrealloc(p->cov,
-      *pMem * sizeof(float));
-  }
-
-  // save values to arrays
-  p->end[*pLen] = length;
-  p->cov[*pLen] = pval;
-  (*pLen)++;
-}
-
-/* int countIntervals()
+/* uint32_t countIntervals()
  * Count the number of pileup intervals to create
  *   for a composite.
  */
-int countIntervals(Chrom* chr) {
-  int num = 0;
-  int k = 0;
-  for (int j = 0; j < chr->treatLen; j++) {
+uint32_t countIntervals(Chrom* chr) {
+  uint32_t num = 0;
+  uint32_t k = 0;
+  for (uint32_t j = 0; j < chr->treatLen; j++) {
     while (k < chr->ctrlLen
         && chr->ctrl->end[k] < chr->treat->end[j]) {
       num++;
@@ -297,22 +328,20 @@ float calcPval(float treatVal, float ctrlVal) {
   return treatVal / ctrlVal * M_LOG10E;
 }
 
-/* Pileup* savePval()
+/* Hash* savePval()
  * Create and save p-values as pileups for each chrom.
- *   Return a pileup of all p-values to be used in
+ *   Return a hash of all p-values to be used in
  *   q-value calculations.
  */
-Pileup* savePval(Chrom* chrom, int chromLen,
-    bool qvalOpt, int* pLen) {
+Hash** savePval(Chrom* chrom, int chromLen, bool qvalOpt,
+    int* pLen) {
 
-  // create pileup for conversion of p-values to q-values
-  Pileup* p = NULL;
-  int pMem = 0;
+  // create hashtable for conversion of p-values to q-values
+  Hash** table = NULL;
   if (qvalOpt) {
-    p = (Pileup*) memalloc(sizeof(Pileup));
-    p->end = (unsigned int*) memalloc(10000 * sizeof(unsigned int));
-    p->cov = (float*) memalloc(10000 * sizeof(float));
-    pMem = 10000;
+    table = (Hash**) memalloc(HASH_SIZE * sizeof(Hash*));
+    for (int i = 0; i < HASH_SIZE; i++)
+      table[i] = NULL;
   }
 
   // create pileups for each chrom
@@ -328,22 +357,22 @@ Pileup* savePval(Chrom* chrom, int chromLen,
       exit(error(chr->name, ERRCTRL));
 
     // create 'pileup' arrays for p-values
-    int num = countIntervals(chr);
+    uint32_t num = countIntervals(chr);
     chr->pval = (Pileup*) memalloc(sizeof(Pileup));
-    chr->pval->end = (unsigned int*) memalloc(num * sizeof(unsigned int));
+    chr->pval->end = (uint32_t*) memalloc(num * sizeof(uint32_t));
     chr->pval->cov = (float*) memalloc(num * sizeof(float));
     if (qvalOpt) {
       // create pileups arrays for q-values (to be populated later)
       chr->qval = (Pileup*) memalloc(sizeof(Pileup));
-      chr->qval->end = (unsigned int*) memalloc(num * sizeof(unsigned int));
+      chr->qval->end = (uint32_t*) memalloc(num * sizeof(uint32_t));
       chr->qval->cov = (float*) memalloc(num * sizeof(float));
     }
     chr->pvalLen = num;
 
     // save p-values to arrays
-    int start = 0;
-    int j = 0, k = 0;
-    for (int m = 0; m < num; m++) {
+    uint32_t start = 0;
+    uint32_t j = 0, k = 0;
+    for (uint32_t m = 0; m < num; m++) {
       if (chr->ctrl->end[k] < chr->treat->end[j]) {
         chr->pval->end[m] = chr->ctrl->end[k];
         chr->pval->cov[m] = calcPval(chr->treat->cov[j],
@@ -358,14 +387,16 @@ Pileup* savePval(Chrom* chrom, int chromLen,
         j++;
       }
       if (qvalOpt) {
-        recordPval(p, pLen, &pMem, chr->pval->cov[m],
+        // save p-value to hashtable
+        *pLen += recordPval(table, chr->pval->cov[m],
           chr->pval->end[m] - start);
         start = chr->pval->end[m];
       }
     }
 
   }
-  return p;
+
+  return table;
 }
 
 /*** Call peaks ***/
@@ -376,8 +407,8 @@ Pileup* savePval(Chrom* chrom, int chromLen,
  *   -log(q), and significance ('*') for each.
  */
 void printInterval(File out, bool gzOut, char* name,
-    int start, int end, float treatVal, float ctrlVal,
-    float pval, float qval, bool sig) {
+    uint32_t start, uint32_t end, float treatVal,
+    float ctrlVal, float pval, float qval, bool sig) {
   if (gzOut) {
     gzprintf(out.gzf, "%s\t%d\t%d\t%.5f\t%.5f\t%.5f",
       name, start, end, treatVal, ctrlVal, pval);
@@ -396,16 +427,16 @@ void printInterval(File out, bool gzOut, char* name,
 /* void printPeak()
  * Print BED interval for a peak.
  */
-void printPeak(File out, bool gzOut, char* name, int start,
-    int end, int count, float val, float fe,
-    float pval, float qval, int pos) {
+void printPeak(File out, bool gzOut, char* name,
+    long start, long end, int count, float val,
+    float fe, float pval, float qval, uint32_t pos) {
   if (gzOut)
-    gzprintf(out.gzf, "%s\t%d\t%d\tpeak_%d\t%d\t.\t%f\t%f\t%f\t%d\n",
+    gzprintf(out.gzf, "%s\t%ld\t%ld\tpeak_%d\t%d\t.\t%f\t%f\t%f\t%d\n",
       name, start, end, count,
       MIN((unsigned int) (val * 10.0f + 0.5f), 1000),
       fe, pval, qval, pos);
   else
-    fprintf(out.f, "%s\t%d\t%d\tpeak_%d\t%d\t.\t%f\t%f\t%f\t%d\n",
+    fprintf(out.f, "%s\t%ld\t%ld\tpeak_%d\t%d\t.\t%f\t%f\t%f\t%d\n",
       name, start, end, count,
       MIN((unsigned int) (val * 10.0f + 0.5f), 1000),
       fe, pval, qval, pos);
@@ -427,17 +458,17 @@ int callPeaks(File out, File log, bool logOpt, bool gzOut,
       continue;
 
     // reset peak variables
-    int peakStart = -1, peakEnd = -1; // ends of potential peak
-    float summitVal = -1.0f;          // summit p/q value
-    int summitPos = 0;                // distance from peakStart to summit
-    int summitLen = 0;                // length of summit interval
+    long peakStart = -1, peakEnd = -1;  // ends of potential peak
+    float summitVal = -1.0f;            // summit p/q value
+    uint32_t summitPos = 0;             // distance from peakStart to summit
+    uint32_t summitLen = 0;             // length of summit interval
     float summitPval = -1.0f, summitQval = -1.0f; // summit p- and q-values
-    float summitFE = -1.0f;           // summit fold enrichment
+    float summitFE = -1.0f;             // summit fold enrichment
 
     // loop through intervals (defined by chr->pval)
-    int start = 0;      // start of interval
-    int j = 0, k = 0;   // indexes into chr->treat, chr->ctrl
-    for (int m = 0; m < chr->pvalLen; m++) {
+    uint32_t start = 0;    // start of interval
+    uint32_t j = 0, k = 0; // indexes into chr->treat, chr->ctrl
+    for (uint32_t m = 0; m < chr->pvalLen; m++) {
 
       bool sig = false;
       float val = qvalOpt ? chr->qval->cov[m] : chr->pval->cov[m];
@@ -541,10 +572,29 @@ void findPeaks(File out, File log, bool logOpt, bool gzOut,
 
   // compute p- and q-values
   int pLen = 0;
-  Pileup* p = savePval(chrom, chromLen, qvalOpt, &pLen);
-  if (qvalOpt)
+  Hash** table = savePval(chrom, chromLen, qvalOpt, &pLen);
+  if (qvalOpt) {
+    // collect p-values from hashtable
+    unsigned long* pEnd = memalloc(pLen * sizeof(unsigned long));
+    float* pVal = collectPval(table, &pEnd, pLen);
+
     // convert p-values to q-values
-    saveQval(chrom, chromLen, genomeLen, p, pLen);
+    saveQval(chrom, chromLen, genomeLen, pVal, pEnd, pLen);
+
+    // free memory
+    free(pEnd);
+    free(pVal);
+    for (int i = 0; i < HASH_SIZE; i++) {
+      Hash* tmp;
+      Hash* h = table[i];
+      while (h != NULL) {
+        tmp = h->next;
+        free(h);
+        h = tmp;
+      }
+    }
+    free(table);
+  }
 
   // identify peaks
   int count = callPeaks(out, log, logOpt, gzOut, chrom,
@@ -611,21 +661,21 @@ void savePileupCtrl(Chrom* chrom, int chromLen,
     }
 
     // determine number of pileup intervals
-    int num = 1;
-    for (int j = 1; j < chr->len; j++)
+    uint32_t num = 1;
+    for (uint32_t j = 1; j < chr->len; j++)
       if (fabsf(chr->diff[j]) > epsilon)
         num++;
 
     // create pileup arrays
     chr->ctrl = (Pileup*) memalloc(sizeof(Pileup));
-    chr->ctrl->end = (unsigned int*) memalloc(num * sizeof(unsigned int));
+    chr->ctrl->end = (uint32_t*) memalloc(num * sizeof(uint32_t));
     chr->ctrl->cov = (float*) memalloc(num * sizeof(float));
     chr->ctrlLen = num;
 
     // save pileup values
     int pos = 0;              // position in pileup arrays
     float val = chr->diff[0]; // pileup value
-    int j;
+    uint32_t j;
     for (j = 1; j < chr->len; j++)
       if (fabsf(chr->diff[j]) > epsilon) {
         chr->ctrl->end[pos] = j;
@@ -634,7 +684,7 @@ void savePileupCtrl(Chrom* chrom, int chromLen,
         // update pileup value
         val += chr->diff[j];
         // reset val to nearest int if it's close
-        if (val < 0.0f)
+        if (val < epsilon)
           val = 0.0f;
         else {
           int valInt = (int) (val + 0.5f);
@@ -674,22 +724,22 @@ double savePileupTreat(Chrom* chrom, int chromLen,
     }
 
     // determine number of pileup intervals
-    int num = 1;
-    for (int j = 1; j < chr->len; j++)
+    uint32_t num = 1;
+    for (uint32_t j = 1; j < chr->len; j++)
       if (fabsf(chr->diff[j]) > epsilon)
         num++;
 
     // create pileup arrays
     chr->treat = (Pileup*) memalloc(sizeof(Pileup));
-    chr->treat->end = (unsigned int*) memalloc(num * sizeof(unsigned int));
+    chr->treat->end = (uint32_t*) memalloc(num * sizeof(uint32_t));
     chr->treat->cov = (float*) memalloc(num * sizeof(float));
     chr->treatLen = num;
 
     // save pileup values
     int pos = 0;              // position in pileup arrays
     float val = chr->diff[0]; // pileup value
-    int start = 0;            // beginning coordinate of interval
-    int j;
+    uint32_t start = 0;       // beginning coordinate of interval
+    uint32_t j;
     for (j = 1; j < chr->len; j++)
       if (fabsf(chr->diff[j]) > epsilon) {
         chr->treat->end[pos] = j;
@@ -702,7 +752,7 @@ double savePileupTreat(Chrom* chrom, int chromLen,
         // update pileup value
         val += chr->diff[j];
         // reset val to nearest int if it's close
-        if (val < 0.0f)
+        if (val < epsilon)
           val = 0.0f;
         else {
           int valInt = (int) (val + 0.5f);
@@ -730,8 +780,8 @@ double savePileupTreat(Chrom* chrom, int chromLen,
  * Save BED interval for a read/fragment.
  *   Return fragment length.
  */
-int saveInterval(Chrom* chrom, int start, int end,
-    char* qname, float val) {
+int saveInterval(Chrom* chrom, long start, long end,
+    char* qname, float val, float epsilon) {
   // check validity of positions
   if (start < 0) {
     fprintf(stderr, "Warning! Read %s prevented from extending below 0 on %s\n",
@@ -749,14 +799,25 @@ int saveInterval(Chrom* chrom, int start, int end,
     end = chrom->len;
   }
 
-  // save ends of fragment to 'diff' array
+  // create 'diff' array if necessary
   if (chrom->diff == NULL) {
     chrom->diff = (float*) memalloc((chrom->len + 1) * sizeof(float));
     for (int i = 0; i < chrom->len; i++)
       chrom->diff[i] = 0.0f;
   }
-  chrom->diff[start] += val;
-  chrom->diff[end] -= val;
+  // save ends of fragment to 'diff' array
+  for (int i = 0; i < 2; i++) {
+    long idx = i ? end : start;
+    float num = chrom->diff[idx];
+    num += i ? -val : val;
+
+    // reset value to nearest int if it's close
+    int numInt = (int) (num + 0.5f);
+    if (fabsf(numInt - num) < epsilon)
+      num = (float) numInt;
+
+    chrom->diff[idx] = num;
+  }
 
   return end - start;
 }
@@ -768,7 +829,7 @@ int saveInterval(Chrom* chrom, int start, int end,
  *   Return number printed.
  */
 int processAvgExt(Aln* unpair, int unpairLen,
-    double totalLen, int pairedPr) {
+    double totalLen, int pairedPr, float epsilon) {
   // determine average fragment length
   int avgLen = 0;
   if (! pairedPr) {
@@ -782,13 +843,13 @@ int processAvgExt(Aln* unpair, int unpairLen,
     Aln* a = unpair + i;
     if (! avgLen)
       saveInterval(a->chrom, a->pos[0], a->pos[1], a->name,
-        a->val);
+        a->val, epsilon);
     else if (a->strand)
       saveInterval(a->chrom, a->pos[0], a->pos[0] + avgLen,
-        a->name, a->val);
+        a->name, a->val, epsilon);
     else
       saveInterval(a->chrom, a->pos[1] - avgLen, a->pos[1],
-        a->name, a->val);
+        a->name, a->val, epsilon);
     printed++;
 
     // free memory
@@ -832,24 +893,26 @@ void saveAvgExt(char* qname, Aln* b, float val,
  *   to a given length).
  */
 void saveSingle(char* qname, Aln* a, float val,
-    bool extendOpt, int extend) {
+    bool extendOpt, int extend, float epsilon) {
   if (extendOpt) {
     if (a->strand)
       saveInterval(a->chrom, a->pos[0], a->pos[0] + extend,
-        qname, val);
+        qname, val, epsilon);
     else
       saveInterval(a->chrom, a->pos[1] - extend, a->pos[1],
-        qname, val);
+        qname, val, epsilon);
   } else
-    saveInterval(a->chrom, a->pos[0], a->pos[1], qname, val);
+    saveInterval(a->chrom, a->pos[0], a->pos[1], qname,
+      val, epsilon);
 }
 
 /* int saveFragment()
  * Save full fragment for a proper pair. Return length.
  */
-int saveFragment(char* qname, Aln* a, float val) {
+int saveFragment(char* qname, Aln* a, float val,
+    float epsilon) {
   // ensure start < end
-  int start, end;
+  uint32_t start, end;
   if (a->pos[0] > a->pos[1]) {
     start = a->pos[1];
     end = a->pos[0];
@@ -857,7 +920,8 @@ int saveFragment(char* qname, Aln* a, float val) {
     start = a->pos[0];
     end = a->pos[1];
   }
-  return saveInterval(a->chrom, start, end, qname, val);
+  return saveInterval(a->chrom, start, end, qname,
+    val, epsilon);
 }
 
 /* void processAlns()
@@ -870,7 +934,8 @@ void processAlns(char* qname, Aln* aln, int alnLen,
     double* totalLen, int* pairedPr, int* singlePr,
     int* orphan, bool singleOpt, bool extendOpt,
     int extend, bool avgExtOpt,
-    Aln** unpair, int* unpairLen, int* unpairMem) {
+    Aln** unpair, int* unpairLen, int* unpairMem,
+    float epsilon) {
 
   // count properly paired vs. singleton alignments
   int pairCount = 0, singleR1 = 0, singleR2 = 0;
@@ -892,7 +957,7 @@ void processAlns(char* qname, Aln* aln, int alnLen,
     for (int i = 0; i < alnLen; i++) {
       Aln* a = aln + i;
       if (a->paired && a->full)
-        fragLen += saveFragment(qname, a, val);
+        fragLen += saveFragment(qname, a, val, epsilon);
     }
     *totalLen += (double) fragLen / pairCount;
     (*pairedPr)++;
@@ -919,7 +984,8 @@ void processAlns(char* qname, Aln* aln, int alnLen,
               unpairLen, unpairMem);
           } else {
             // for other options, save singleton interval
-            saveSingle(qname, a, val, extendOpt, extend);
+            saveSingle(qname, a, val, extendOpt, extend,
+              epsilon);
             (*singlePr)++;
           }
 
@@ -1337,7 +1403,8 @@ int readSAM(File in, bool gz, char* line, Aln** aln,
         processAlns(readName, *aln, alnLen, totalLen,
           pairedPr, singlePr, orphan, singleOpt,
           extendOpt, extend, avgExtOpt,
-          unpair, &unpairLen, unpairMem);
+          unpair, &unpairLen, unpairMem,
+          1.0f / *alnMem);
       alnLen = 0;
       strncpy(readName, qname, MAX_ALNS);
     }
@@ -1356,12 +1423,13 @@ int readSAM(File in, bool gz, char* line, Aln** aln,
     processAlns(readName, *aln, alnLen, totalLen,
       pairedPr, singlePr, orphan, singleOpt,
       extendOpt, extend, avgExtOpt,
-      unpair, &unpairLen, unpairMem);
+      unpair, &unpairLen, unpairMem,
+      1.0f / *alnMem);
 
   // process single alignments w/ avgExtOpt
   if (avgExtOpt)
     *singlePr += processAvgExt(*unpair, unpairLen,
-      *totalLen, *pairedPr);
+      *totalLen, *pairedPr, 1.0f / *alnMem);
 
   return count;
 }
@@ -1531,7 +1599,8 @@ int parseBAM(gzFile in, char* line, Aln** aln, int* alnMem,
         processAlns(readName, *aln, alnLen, totalLen,
           pairedPr, singlePr, orphan, singleOpt,
           extendOpt, extend, avgExtOpt,
-          unpair, &unpairLen, unpairMem);
+          unpair, &unpairLen, unpairMem,
+          1.0f / *alnMem);
       alnLen = 0;
       strncpy(readName, read_name, MAX_ALNS);
     }
@@ -1550,12 +1619,13 @@ int parseBAM(gzFile in, char* line, Aln** aln, int* alnMem,
     processAlns(readName, *aln, alnLen, totalLen,
       pairedPr, singlePr, orphan, singleOpt,
       extendOpt, extend, avgExtOpt,
-      unpair, &unpairLen, unpairMem);
+      unpair, &unpairLen, unpairMem,
+      1.0f / *alnMem);
 
   // process single alignments w/ avgExtOpt
   if (avgExtOpt)
     *singlePr += processAvgExt(*unpair, unpairLen,
-      *totalLen, *pairedPr);
+      *totalLen, *pairedPr, 1.0f / *alnMem);
 
   return count;
 }

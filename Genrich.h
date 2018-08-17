@@ -17,6 +17,7 @@
 #define MAX_ALNS    128     // maximum number of alignments per read/pair
                             //   - also used as max. read name length,
                             //     and for various dynamic memory allocs
+#define HASH_SIZE   131041  // size of hashtable
 #define TAB         "\t"    // separator for SAM fields
 #define COM         ", "    // separator for input file names / ref. names
 
@@ -70,7 +71,8 @@ enum errCode { ERRFILE, ERROPEN, ERROPENW, ERRCLOSE, ERRMEM,
   ERRINT, ERRFLOAT, ERRPARAM,
   ERRMISM, ERRINFO, ERRSAM, ERRREP, ERRCHROM, ERRHEAD,
   ERREXTEND,
-  ERRBAM, ERRGEN, ERRTREAT, ERRCHRLEN, ERRCTRL, ERRPOS, ERRSORT,
+  ERRBAM, ERRGEN, ERRTREAT, ERRCHRLEN, ERRCTRL, ERRPOS,
+  ERRSORT, ERRPVAL,
 ERRUNGET, ERRGZIP,
   ERRTHREAD, ERRNAME, ERRCIGAR, DEFERR
 };
@@ -96,6 +98,7 @@ const char* errMsg[] = { "Need input/output files",
   ": reference sequence missing from control sample(s)",
   ": read aligned beyond reference end",
   "SAM/BAM file not sorted by queryname (samtools sort -n)",
+  "Collected p-values do not match",
 
   "Failure in ungetc() call",
   "Cannot pipe in gzip compressed file (use zcat instead)",
@@ -111,23 +114,29 @@ typedef union file {
   gzFile gzf;
 } File;
 
+typedef struct hash {
+  float val;
+  unsigned long len;
+  struct hash* next;
+} Hash;
+
 typedef struct pileup {
-  unsigned int* end;
+  uint32_t* end;
   float* cov;
 } Pileup;
 
 typedef struct chrom {
   char* name;
-  uint32_t len;
+  uint32_t len;       // length of chromosome
   bool skip;
   float* diff;
   Pileup* treat;
-  int treatLen; // length of pileup arrays for treatment sample(s)
+  uint32_t treatLen;  // length of pileup arrays for treatment sample(s)
   Pileup* ctrl;
-  int ctrlLen;  // length of pileup arrays for control sample(s)
+  uint32_t ctrlLen;   // length of pileup arrays for control sample(s)
   Pileup* pval;
   Pileup* qval;
-  int pvalLen;  // length of pileup arrays for p- and q-values
+  uint32_t pvalLen;   // length of pileup arrays for p- and q-values
 } Chrom;
 
 typedef struct aln {
