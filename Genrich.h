@@ -19,6 +19,7 @@
                             //     and for various dynamic memory allocs
 #define HASH_SIZE   131041  // size of hashtable
 #define TAB         "\t"    // separator for SAM fields
+#define COL         ":"     // separator for SAM optional fields (TAG:TYPE:VALUE)
 #define COM         ", "    // separator for input file names / ref. names
 
 // default parameter values
@@ -30,6 +31,8 @@
 // SAM fields
 enum sam { NIL, QNAME, FLAG, RNAME, POS, MAPQ, CIGAR, RNEXT,
   PNEXT, TLEN, SEQ, QUAL };
+#define SCORE       "AS"      // extra field: alignment score
+#define NOSCORE     -FLT_MAX  // for alignments with no scores
 
 // command-line options
 #define OPTIONS     "ht:c:o:b:zya:xe:m:p:q:g:l:n:vV"
@@ -72,7 +75,7 @@ enum errCode { ERRFILE, ERROPEN, ERROPENW, ERRCLOSE, ERRMEM,
   ERRMISM, ERRINFO, ERRSAM, ERRREP, ERRCHROM, ERRHEAD,
   ERREXTEND,
   ERRBAM, ERRGEN, ERRTREAT, ERRCHRLEN, ERRCTRL, ERRPOS,
-  ERRSORT, ERRPVAL,
+  ERRSORT, ERRPVAL, ERRTYPE, ERRAUX,
 ERRUNGET, ERRGZIP,
   ERRTHREAD, ERRNAME, ERRCIGAR, DEFERR
 };
@@ -99,6 +102,8 @@ const char* errMsg[] = { "Need input/output files",
   ": read aligned beyond reference end",
   "SAM/BAM file not sorted by queryname (samtools sort -n)",
   "Collected p-values do not match",
+  ": unknown value type in BAM auxiliary field",
+  "Poorly formatted BAM auxiliary field",
 
   "Failure in ungetc() call",
   "Cannot pipe in gzip compressed file (use zcat instead)",
@@ -141,18 +146,22 @@ typedef struct chrom {
 
 typedef struct aln {
   uint32_t pos[2];
+  float score;  // alignment score, if given in SAM/BAM
+  bool primary; // primary alignment?
   bool paired;  // properly paired alignment?
   bool full;    // both parts of paired aln analyzed? (only for paired alns)
   bool strand;  // which strand aln is on (only for singleton alignments)
   bool first;   // which read of a pair this is (only for singleton alignments)
-  float val;    // value for aln (only for singletons with avg-ext option)
+  float val;    // value of aln (only for singletons with avg-ext option)
   char* name;   // read name (only for singletons with avg-ext option)
   Chrom* chrom;
 } Aln;
 
+/*
 typedef struct read {
   char* name;
   Aln** aln;
   int alnLen;
   struct read* next;
 } Read;
+*/

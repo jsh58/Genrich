@@ -1002,11 +1002,15 @@ void processAlns(char* qname, Aln* aln, int alnLen,
  * Complete a properly paired alignment.
  */
 void updatePairedAln(Aln* a, uint16_t flag, uint32_t pos,
-    int length) {
+    int length, float score) {
   if (flag & 0x40)
     a->pos[0] = flag & 0x10 ? pos + length : pos;
   else
     a->pos[1] = flag & 0x10 ? pos + length : pos;
+  if (score == NOSCORE)
+    a->score = NOSCORE;
+  else if (a->score != NOSCORE)
+    a->score += score;
   a->full = true;
 }
 
@@ -1015,7 +1019,7 @@ void updatePairedAln(Aln* a, uint16_t flag, uint32_t pos,
  */
 void savePairedAln(Aln** aln, int* alnLen, int* alnMem,
     uint16_t flag, Chrom* chrom, uint32_t pos, int length,
-    uint32_t pnext) {
+    uint32_t pnext, float score) {
 
   // alloc memory if necessary
   if (*alnLen + 1 > *alnMem) {
@@ -1026,6 +1030,8 @@ void savePairedAln(Aln** aln, int* alnLen, int* alnMem,
   // save aln info
   Aln* a = *aln + *alnLen;
   a->chrom = chrom;
+  a->score = score;
+  a->primary = flag & 0x100 ? false : true;
   a->full = false;
   a->paired = true;
 
@@ -1046,7 +1052,8 @@ void savePairedAln(Aln** aln, int* alnLen, int* alnMem,
  * Save the information for a singleton alignment.
  */
 void saveSingleAln(Aln** aln, int* alnLen, int* alnMem,
-    uint16_t flag, Chrom* chrom, uint32_t pos, int length) {
+    uint16_t flag, Chrom* chrom, uint32_t pos, int length,
+    float score) {
 
   // alloc memory if necessary
   if (*alnLen + 1 > *alnMem) {
@@ -1057,6 +1064,8 @@ void saveSingleAln(Aln** aln, int* alnLen, int* alnMem,
   // save aln info
   Aln* a = *aln + *alnLen;
   a->chrom = chrom;
+  a->score = score;
+  a->primary = flag & 0x100 ? false : true;
   a->paired = false;
   a->strand = flag & 0x10 ? false : true;
   a->first = flag & 0x40 ? true : false;
@@ -1072,7 +1081,7 @@ void saveSingleAln(Aln** aln, int* alnLen, int* alnMem,
 void parseAlign(Aln** aln, int* alnLen, int* alnMem,
     uint16_t flag, Chrom* chrom, uint32_t pos, int length,
     uint32_t pnext, int* paired, int* single, int* secPair,
-    int* secSingle, bool singleOpt) {
+    int* secSingle, bool singleOpt, float score) {
 
   if ((flag & 0x3) == 0x3) {
     // paired alignment: save alignment information
@@ -1084,18 +1093,18 @@ void parseAlign(Aln** aln, int* alnLen, int* alnMem,
     int i;
     for (i = 0; i < *alnLen; i++) {
       Aln* a = *aln + i;
-      if (a->paired && ! a->full && a->chrom == chrom
-          && (flag & 0x40 ? a->pos[0] == pos
-          : a->pos[1] == pos)) {
+      if ( a->paired && ! a->full && a->chrom == chrom
+          && (flag & 0x40 ? a->pos[0] == pos : a->pos[1] == pos)
+          && (flag & 0x100 ? ! a->primary : a->primary) ) {
         // complete paired alignment
-        updatePairedAln(a, flag, pos, length);
+        updatePairedAln(a, flag, pos, length, score);
         break;
       }
     }
     if (i == *alnLen)
       // start new paired alignment
       savePairedAln(aln, alnLen, alnMem, flag, chrom,
-        pos, length, pnext);
+        pos, length, pnext, score);
 
   } else {
 
@@ -1105,7 +1114,7 @@ void parseAlign(Aln** aln, int* alnLen, int* alnMem,
       (*secSingle)++;
     if (singleOpt)
       saveSingleAln(aln, alnLen, alnMem, flag, chrom,
-        pos, length);
+        pos, length, score);
 
   }
 }
@@ -1228,6 +1237,7 @@ void checkHeader(char* line, int* chromLen, Chrom** chrom,
 bool loadFields(uint16_t* flag, char** rname, uint32_t* pos,
     uint8_t* mapq, char** cigar, char** rnext, uint32_t* pnext,
     int32_t* tlen, char** seq, char** qual, char** extra) {
+  *extra = NULL;  // reset 'extra' fields
   int i = 2;
   char* field = strtok(NULL, TAB);
   while (field != NULL) {
@@ -1243,10 +1253,6 @@ bool loadFields(uint16_t* flag, char** rname, uint32_t* pos,
       case SEQ: *seq = field; break;
       case QUAL: *qual = field; break;
       default: return false;
-      /*  *extra = (char**) memrealloc(*extra,
-          (*extraCount + 1) * sizeof(char*));
-        (*extra)[*extraCount] = field;
-        (*extraCount)++;*/
     }
     if (++i > 11) {
       *extra = strtok(NULL, "\n");
@@ -1255,6 +1261,31 @@ bool loadFields(uint16_t* flag, char** rname, uint32_t* pos,
     field = strtok(NULL, TAB);
   }
   return i > 11;
+}
+
+/* float getScore()
+ * Search SAM optional fields for an alignment score.
+ *   Return NOSCORE if not found.
+ */
+float getScore(char* extra) {
+  if (extra == NULL)
+    return NOSCORE;
+  char* end;
+  char* field = strtok_r(extra, TAB, &end);
+  while (field != NULL) {
+    char* tag = strtok(field, COL);
+    if (!strcmp(tag, SCORE)) {
+      for (int i = 0; i < 2; i++) {
+        tag = strtok(NULL, COL);
+        if (tag == NULL)
+          return NOSCORE;
+        if (i)
+          return getFloat(tag);
+      }
+    }
+    field = strtok_r(NULL, TAB, &end);
+  }
+  return NOSCORE;
 }
 
 /* int parseCigar()
@@ -1411,11 +1442,12 @@ int readSAM(File in, bool gz, char* line, Aln** aln,
 
     // save alignment information
     int length = calcDist(qname, seq, cigar); // distance to 3' end
+    float score = getScore(extra);
     parseAlign(aln, &alnLen, alnMem, flag, ref, pos,
       length, pnext, paired, single, secPair, secSingle,
-      singleOpt);
+      singleOpt, score);
     // NOTE: the following SAM fields are ignored:
-    //   rnext, tlen, qual, extra (optional fields)
+    //   rnext, tlen, qual
   }
 
   // process last set of alns
@@ -1519,6 +1551,118 @@ int calcDistBAM(int32_t l_seq, uint16_t n_cigar_op,
   return length;
 }
 
+/* int arrayLen()
+ * Calculate length of BAM auxiliary field of
+ *   array type ('B').
+ */
+int arrayLen(char* extra) {
+  int size = 0;
+  switch (extra[0]) {
+    case 'c': size = sizeof(int8_t); break;
+    case 'C': size = sizeof(uint8_t); break;
+    case 's': size = sizeof(int16_t); break;
+    case 'S': size = sizeof(uint16_t); break;
+    case 'i': size = sizeof(int32_t); break;
+    case 'I': size = sizeof(uint32_t); break;
+    case 'f': size = sizeof(float); break;
+    default: ;
+      char msg[4] = "' '";
+      msg[1] = extra[0];
+      exit(error(msg, ERRTYPE));
+  }
+  extra++;
+  int32_t count = loadInt32(&extra);
+  return 1 + sizeof(int32_t) + size * count;
+}
+
+/* int64_t loadInt()
+ * Load an arbitrarily-sized int in little-endian format
+ *   from a char* block. Return an int64_t that should
+ *   be cast by the caller.
+ */
+int64_t loadInt(char* block, size_t size) {
+  int64_t ans = 0;
+  for (int i = 0; i < size; i++)
+    ans = ans | ((block[i] & 0xFF) << (i*8));
+  return ans;
+}
+
+/* float getBAMscore()
+ * Search BAM auxiliary fields for an alignment score.
+ *   Return NOSCORE if not found.
+ */
+float getBAMscore(char* extra, int len) {
+  if (extra == NULL)
+    return NOSCORE;
+
+  // check auxiliary field
+  char tag[3], val;
+  tag[2] = '\0';
+  int i = 0;
+  while (i < len - 4) {
+
+    // load tag and value
+    for (int j = 0; j < 3; j++) {
+      if (j < 2)
+        tag[j] = extra[i];
+      else
+        val = extra[i];
+      i++;
+    }
+
+    if (! strcmp(tag, SCORE)) {
+
+      // return alignment score (cast to float)
+      extra += i;
+      switch(val) {
+        case 'c':
+          return (float) (int8_t) loadInt(extra, sizeof(int8_t));
+        case 'C':
+          return (float) (uint8_t) loadInt(extra, sizeof(uint8_t));
+        case 's':
+          return (float) (int16_t) loadInt(extra, sizeof(int16_t));
+        case 'S':
+          return (float) (uint16_t) loadInt(extra, sizeof(uint16_t));
+        case 'i':
+          return (float) (int32_t) loadInt(extra, sizeof(int32_t));
+        case 'I':
+          return (float) (uint32_t) loadInt(extra, sizeof(uint32_t));
+        default: ;
+          char msg[4] = "' '";
+          msg[1] = val;
+          exit(error(msg, ERRTYPE));
+      }
+
+    } else {
+
+      // skip to next auxiliary field
+      switch(val) {
+        case 'A': i++; break;
+        case 'c': i += sizeof(int8_t); break;
+        case 'C': i += sizeof(uint8_t); break;
+        case 's': i += sizeof(int16_t); break;
+        case 'S': i += sizeof(uint16_t); break;
+        case 'i': i += sizeof(int32_t); break;
+        case 'I': i += sizeof(uint32_t); break;
+        case 'f': i += sizeof(float); break;
+        case 'Z': for (; extra[i] != '\0'; i++) ; i++; break;
+        case 'H': for (; extra[i] != '\0'; i += 2) ; i++; break;
+        case 'B': i += arrayLen(extra + i); break;
+        default: ;
+          char msg[4] = "' '";
+          msg[1] = val;
+          exit(error(msg, ERRTYPE));
+      }
+    }
+
+    // check if field has gone past end of block
+    if (i > len)
+      exit(error("", ERRAUX));
+  }
+
+  return NOSCORE;
+}
+
 /* int parseBAM()
  * Parse the alignments in a BAM file.
  */
@@ -1607,11 +1751,12 @@ int parseBAM(gzFile in, char* line, Aln** aln, int* alnMem,
 
     // save alignment information
     int length = calcDistBAM(l_seq, n_cigar_op, cigar); // distance to 3' end
+    float score = getBAMscore(extra, block_size - (int) (extra - line));
     parseAlign(aln, &alnLen, alnMem, flag, ref, pos,
       length, next_pos, paired, single, secPair, secSingle,
-      singleOpt);
+      singleOpt, score);
     // NOTE: the following BAM fields are ignored:
-    //   next_refID, tlen, seq, qual, extra (optional fields)
+    //   next_refID, tlen, seq, qual
   }
 
   // process last set of alns
