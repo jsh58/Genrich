@@ -35,7 +35,7 @@ enum sam { NIL, QNAME, FLAG, RNAME, POS, MAPQ, CIGAR, RNEXT,
 #define NOSCORE     -FLT_MAX  // for alignments with no scores
 
 // command-line options
-#define OPTIONS     "ht:c:o:b:zya:xe:m:p:q:g:l:n:vV"
+#define OPTIONS     "ht:c:o:b:zya:xe:m:s:p:q:g:l:n:vV"
 #define HELP        'h'
 #define INFILE      't'
 #define CTRLFILE    'c'
@@ -47,6 +47,7 @@ enum sam { NIL, QNAME, FLAG, RNAME, POS, MAPQ, CIGAR, RNEXT,
 #define AVGEXTOPT   'x'
 #define XCHROM      'e'
 #define MINMAPQ     'm'
+#define ASDIFF      's'
 #define PVALUE      'p'
 #define QVALUE      'q'
 #define MAXGAP      'g'
@@ -75,7 +76,7 @@ enum errCode { ERRFILE, ERROPEN, ERROPENW, ERRCLOSE, ERRMEM,
   ERRMISM, ERRINFO, ERRSAM, ERRREP, ERRCHROM, ERRHEAD,
   ERREXTEND,
   ERRBAM, ERRGEN, ERRTREAT, ERRCHRLEN, ERRCTRL, ERRPOS,
-  ERRSORT, ERRPVAL, ERRTYPE, ERRAUX,
+  ERRSORT, ERRPVAL, ERRTYPE, ERRAUX, ERRASDIFF,
 ERRUNGET, ERRGZIP,
   ERRTHREAD, ERRNAME, ERRCIGAR, DEFERR
 };
@@ -104,6 +105,7 @@ const char* errMsg[] = { "Need input/output files",
   "Collected p-values do not match",
   ": unknown value type in BAM auxiliary field",
   "Poorly formatted BAM auxiliary field",
+  "Secondary alignment score threshold must be >= 0",
 
   "Failure in ungetc() call",
   "Cannot pipe in gzip compressed file (use zcat instead)",

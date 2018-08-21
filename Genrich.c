@@ -43,6 +43,8 @@ void usage(void) {
   fprintf(stderr, "Filtering options:\n");
   fprintf(stderr, "  -%c  <arg>        Comma-separated list of chromosomes to ignore\n", XCHROM);
   fprintf(stderr, "  -%c  <int>        Minimum MAPQ to keep an alignment (def. 0)\n", MINMAPQ);
+  fprintf(stderr, "  -%c  <float>      Keep secondary alignments whose scores are\n", ASDIFF);
+  fprintf(stderr, "                     within <float> of the best (def. 0)\n");
   fprintf(stderr, "Options for unpaired alignments:\n");
   fprintf(stderr, "  -%c               Keep unpaired alignments (def. false)\n", SINGLEOPT);
   fprintf(stderr, "  -%c  <int>        Keep unpaired alignments, with fragment length\n", EXTENDOPT);
@@ -673,7 +675,7 @@ void savePileupCtrl(Chrom* chrom, int chromLen,
     chr->ctrlLen = num;
 
     // save pileup values
-    int pos = 0;              // position in pileup arrays
+    uint32_t pos = 0;         // position in pileup arrays
     float val = chr->diff[0]; // pileup value
     uint32_t j;
     for (j = 1; j < chr->len; j++)
@@ -736,7 +738,7 @@ double savePileupTreat(Chrom* chrom, int chromLen,
     chr->treatLen = num;
 
     // save pileup values
-    int pos = 0;              // position in pileup arrays
+    uint32_t pos = 0;         // position in pileup arrays
     float val = chr->diff[0]; // pileup value
     uint32_t start = 0;       // beginning coordinate of interval
     uint32_t j;
@@ -776,11 +778,11 @@ double savePileupTreat(Chrom* chrom, int chromLen,
 
 /*** Convert alignments to intervals ***/
 
-/* int saveInterval()
+/* uint32_t saveInterval()
  * Save BED interval for a read/fragment.
  *   Return fragment length.
  */
-int saveInterval(Chrom* chrom, long start, long end,
+uint32_t saveInterval(Chrom* chrom, long start, long end,
     char* qname, float val, float epsilon) {
   // check validity of positions
   if (start < 0) {
@@ -822,13 +824,12 @@ int saveInterval(Chrom* chrom, long start, long end,
   return end - start;
 }
 
-/* int processAvgExt()
+/* void processAvgExt()
  * Save complete intervals for unpaired alignments
  *   with "extend to average length" option, after
  *   calculating average length from paired alns.
- *   Return number printed.
  */
-int processAvgExt(Aln* unpair, int unpairLen,
+void processAvgExt(Aln* unpair, int unpairLen,
     double totalLen, int pairedPr, float epsilon) {
   // determine average fragment length
   int avgLen = 0;
@@ -838,7 +839,7 @@ int processAvgExt(Aln* unpair, int unpairLen,
   } else
     avgLen = (int) (totalLen / pairedPr + 0.5);
 
-  int printed = 0;  // counting variable
+  // process each alignment
   for (int i = 0; i < unpairLen; i++) {
     Aln* a = unpair + i;
     if (! avgLen)
@@ -850,13 +851,11 @@ int processAvgExt(Aln* unpair, int unpairLen,
     else
       saveInterval(a->chrom, a->pos[1] - avgLen, a->pos[1],
         a->name, a->val, epsilon);
-    printed++;
 
     // free memory
     free(a->name);
   }
 
-  return printed;
 }
 
 /* void saveAvgExt()
@@ -906,10 +905,10 @@ void saveSingle(char* qname, Aln* a, float val,
       val, epsilon);
 }
 
-/* int saveFragment()
+/* uint32_t saveFragment()
  * Save full fragment for a proper pair. Return length.
  */
-int saveFragment(char* qname, Aln* a, float val,
+uint32_t saveFragment(char* qname, Aln* a, float val,
     float epsilon) {
   // ensure start < end
   uint32_t start, end;
@@ -924,75 +923,164 @@ int saveFragment(char* qname, Aln* a, float val,
     val, epsilon);
 }
 
+/* int processSingle()
+ * Process a set of singleton alignments, weighted to
+ *   1/n (number of valid alignments).
+ *   Return 1 if valid alignments found, else 0.
+ */
+int processSingle(char* qname, Aln* aln, int alnLen,
+    bool extendOpt, int extend, bool avgExtOpt,
+    Aln** unpair, int* unpairLen, int* unpairMem,
+    float score, float asDiff, float epsilon,
+    bool first) {
+
+  // adjust AS tolerance for secondary alns
+  if (score != NOSCORE)
+    score -= asDiff;
+
+  // determine number of valid alignments
+  int count = 0;
+  for (int i = 0; i < alnLen; i++) {
+    Aln* a = aln + i;
+    if (! a->paired && a->first == first
+        && a->score >= score && ! a->chrom->skip)
+      count++;
+  }
+  if (! count)
+    return 0;
+
+  // save singletons as fragments
+  float val = 1.0f / count; // weighted value of each aln
+  for (int i = 0; i < alnLen; i++) {
+    Aln* a = aln + i;
+    if (! a->paired && a->first == first
+        && a->score >= score && ! a->chrom->skip) {
+
+      if (avgExtOpt) {
+        // for average-extension option, save alignment
+        //   for later processing by processAvgExt()
+        saveAvgExt(qname, a, val, unpair,
+          unpairLen, unpairMem);
+      } else {
+        // for other options, save singleton interval
+        saveSingle(qname, a, val, extendOpt, extend,
+          epsilon);
+      }
+
+    }
+  }
+  return 1;
+}
+
+/* int processPair()
+ * Process a set of paired alignments, weighted to
+ *   1/n (number of valid alignments).
+ *   Return 1 if valid alignments found, else 0.
+ */
+int processPair(char* qname, Aln* aln, int alnLen,
+    double* totalLen, float score, float asDiff,
+    float epsilon) {
+
+  // adjust AS tolerance for secondary alns
+  if (score != NOSCORE)
+    score -= asDiff;
+
+  // determine number of valid alignments
+  int count = 0;
+  for (int i = 0; i < alnLen; i++) {
+    Aln* a = aln + i;
+    if (a->paired && a->full && a->score >= score
+        && ! a->chrom->skip)
+      count++;
+  }
+  if (! count)
+    return 0;
+
+  // save full fragments
+  float val = 1.0f / count; // weighted value of each aln
+  uint64_t fragLen = 0;     // local sum of fragment lengths
+  for (int i = 0; i < alnLen; i++) {
+    Aln* a = aln + i;
+    if (a->paired && a->full && a->score >= score
+        && ! a->chrom->skip)
+      fragLen += saveFragment(qname, a, val, epsilon);
+  }
+
+  *totalLen += (double) fragLen / count;
+  return 1;
+}
+
 /* void processAlns()
- * Process a set of alignments. If there are properly
- *   paired alignments, process them only, weighted to
- *   1/n. Otherwise, and only if singleOpt, process
- *   singleton alignments, also weighted.
+ * Control processing of a set of alignments.
+ *   Determine if the set has complete paired
+ *   alignments or not, and what the best alignment
+ *   scores are. Pass results to processPair()
+ *   or processSingle().
  */
 void processAlns(char* qname, Aln* aln, int alnLen,
     double* totalLen, int* pairedPr, int* singlePr,
     int* orphan, bool singleOpt, bool extendOpt,
     int extend, bool avgExtOpt,
     Aln** unpair, int* unpairLen, int* unpairMem,
-    float epsilon) {
+    float asDiff, float epsilon) {
 
-  // count properly paired vs. singleton alignments
-  int pairCount = 0, singleR1 = 0, singleR2 = 0;
+  // determine if paired alns are valid, and best score
+  float scorePr = NOSCORE, scoreR1 = NOSCORE,
+    scoreR2 = NOSCORE;
+  bool pair = false;
   for (int i = 0; i < alnLen; i++) {
     Aln* a = aln + i;
-    if (a->paired)
-      a->full ? pairCount++ : (*orphan)++;
-    else if (a->first)
-      singleR1++; // singleton for R1 read
-    else
-      singleR2++; // singleton for R2 read
+    if (a->paired) {
+      if (a->full) {
+        if (! pair || scorePr < a->score)
+          scorePr = a->score; // best score so far
+        pair = true;
+      } else
+        (*orphan)++;  // incomplete paired alignment
+    } else if (singleOpt && ! pair) {
+      // update best scores of singletons
+      if (a->first && scoreR1 < a->score)
+        scoreR1 = a->score;
+      else if (! a->first && scoreR2 < a->score)
+        scoreR2 = a->score;
+    }
   }
 
-  if (pairCount) {
 
-    // save full fragments
-    float val = 1.0f / pairCount; // weighted value of each aln
-    int fragLen = 0;              // local sum of fragment lengths
-    for (int i = 0; i < alnLen; i++) {
-      Aln* a = aln + i;
-      if (a->paired && a->full)
-        fragLen += saveFragment(qname, a, val, epsilon);
-    }
-    *totalLen += (double) fragLen / pairCount;
-    (*pairedPr)++;
+//int prevPr = *pairedPr, prevSn = *singlePr;
 
-  } else if ((singleR1 || singleR2) && singleOpt) {
+  if (pair)
+    // process paired alignments
+    *pairedPr += processPair(qname, aln, alnLen, totalLen,
+      scorePr, asDiff, epsilon);
 
+  else if (singleOpt)
     // process singleton alignments (separately for R1, R2)
-    for (int j = 0; j < 2; j++) {
+    for (int j = 0; j < 2; j++)
+      *singlePr += processSingle(qname, aln, alnLen,
+        extendOpt, extend, avgExtOpt,
+        unpair, unpairLen, unpairMem,
+        j ? scoreR2 : scoreR1, asDiff, epsilon, ! j);
 
-      if ((j && ! singleR2) || (! j && ! singleR1) )
-        continue;
-      float val = j ? 1.0f / singleR2 : 1.0f / singleR1;  // weighted value
-
-      // find and save singleton alignments
-      for (int i = 0; i < alnLen; i++) {
-        Aln* a = aln + i;
-        if (! a->paired && ((j && ! a->first)
-            || (! j && a->first))) {
-
-          if (avgExtOpt) {
-            // for average-extension option, save alignment
-            //   for later processing by processAvgExt()
-            saveAvgExt(qname, a, val, unpair,
-              unpairLen, unpairMem);
-          } else {
-            // for other options, save singleton interval
-            saveSingle(qname, a, val, extendOpt, extend,
-              epsilon);
-            (*singlePr)++;
-          }
-
-        }
-      }
-    }
+/*
+//if (scoreR1 != NOSCORE && scoreR2 != NOSCORE) {
+  if (pair)
+    fprintf(stderr, "paired; score %f\n", scorePr);
+  else
+    fprintf(stderr, "single; scoreR1 %f, scoreR2 %f\n", scoreR1, scoreR2);
+  for (int i = 0; i < alnLen; i++) {
+    Aln* a = aln + i;
+    fprintf(stderr, "Aln %d: %s%s%s; %s:%d-%d; AS=%f\n",
+      i, a->paired && a->full ? "paired" : "single",
+      ! a->paired && a->first ? " R1" : "",
+      ! a->paired && ! a->first ? " R2": "",
+      a->chrom->name, a->pos[0], a->pos[1], a->score);
   }
+  fprintf(stderr, "printed: %d paired, %d single\n",
+    *pairedPr - prevPr, *singlePr - prevSn);
+while(!getchar()) ;
+//}
+*/
 
 }
 
@@ -1081,13 +1169,18 @@ void saveSingleAln(Aln** aln, int* alnLen, int* alnMem,
 void parseAlign(Aln** aln, int* alnLen, int* alnMem,
     uint16_t flag, Chrom* chrom, uint32_t pos, int length,
     uint32_t pnext, int* paired, int* single, int* secPair,
-    int* secSingle, bool singleOpt, float score) {
+    int* secSingle, int* skipped, bool singleOpt,
+    float score) {
 
   if ((flag & 0x3) == 0x3) {
     // paired alignment: save alignment information
-    (*paired)++;
-    if (flag & 0x100)
-      (*secPair)++;
+    if (chrom->skip)
+      (*skipped)++;
+    else {
+      (*paired)++;
+      if (flag & 0x100)
+        (*secPair)++;
+    }
 
     // search for matching paired alignment (already analyzed)
     int i;
@@ -1102,16 +1195,21 @@ void parseAlign(Aln** aln, int* alnLen, int* alnMem,
       }
     }
     if (i == *alnLen)
-      // start new paired alignment
+      // not found: start new paired alignment
       savePairedAln(aln, alnLen, alnMem, flag, chrom,
         pos, length, pnext, score);
 
   } else {
-
     // unpaired alignment
-    (*single)++;
-    if (flag & 0x100)
-      (*secSingle)++;
+    if (chrom->skip)
+      (*skipped)++;
+    else {
+      (*single)++;
+      if (flag & 0x100)
+        (*secSingle)++;
+    }
+
+    // save alignment info
     if (singleOpt)
       saveSingleAln(aln, alnLen, alnMem, flag, chrom,
         pos, length, score);
@@ -1360,7 +1458,7 @@ int readSAM(File in, bool gz, char* line, Aln** aln,
     int* secSingle, int* orphan, int* chromLen,
     Chrom** chrom, bool singleOpt, bool extendOpt,
     int extend, bool avgExtOpt, Aln** unpair,
-    int* unpairMem, bool ctrl) {
+    int* unpairMem, float asDiff, bool ctrl) {
 
   // SAM fields to save
   char* qname, *rname, *cigar, *rnext, *seq, *qual, *extra;
@@ -1417,11 +1515,11 @@ int readSAM(File in, bool gz, char* line, Aln** aln,
     if (ref == NULL)
       // cannot find reference sequence
       exit(error(rname, ERRCHROM));
-    if (ref->skip) {
+//    if (ref->skip) {
       // alignment to skipped chromosome
-      (*skipped)++;
-      continue;
-    }
+//      (*skipped)++;
+//      continue;
+//    }
     if (mapq < minMapQ) {
       // skip low MAPQ alignments
       (*lowMapQ)++;
@@ -1435,7 +1533,7 @@ int readSAM(File in, bool gz, char* line, Aln** aln,
           pairedPr, singlePr, orphan, singleOpt,
           extendOpt, extend, avgExtOpt,
           unpair, &unpairLen, unpairMem,
-          1.0f / *alnMem);
+          asDiff, 1.0f / *alnMem);
       alnLen = 0;
       strncpy(readName, qname, MAX_ALNS);
     }
@@ -1445,7 +1543,7 @@ int readSAM(File in, bool gz, char* line, Aln** aln,
     float score = getScore(extra);
     parseAlign(aln, &alnLen, alnMem, flag, ref, pos,
       length, pnext, paired, single, secPair, secSingle,
-      singleOpt, score);
+      skipped, singleOpt, score);
     // NOTE: the following SAM fields are ignored:
     //   rnext, tlen, qual
   }
@@ -1456,12 +1554,12 @@ int readSAM(File in, bool gz, char* line, Aln** aln,
       pairedPr, singlePr, orphan, singleOpt,
       extendOpt, extend, avgExtOpt,
       unpair, &unpairLen, unpairMem,
-      1.0f / *alnMem);
+      asDiff, 1.0f / *alnMem);
 
   // process single alignments w/ avgExtOpt
   if (avgExtOpt)
-    *singlePr += processAvgExt(*unpair, unpairLen,
-      *totalLen, *pairedPr, 1.0f / *alnMem);
+    processAvgExt(*unpair, unpairLen, *totalLen,
+      *pairedPr, 1.0f / *alnMem);
 
   return count;
 }
@@ -1673,7 +1771,8 @@ int parseBAM(gzFile in, char* line, Aln** aln, int* alnMem,
     int* supp, int* skipped, int* lowMapQ, int minMapQ,
     int* secPair, int* secSingle, int* orphan,
     bool singleOpt, bool extendOpt, int extend,
-    bool avgExtOpt, Aln** unpair, int* unpairMem) {
+    bool avgExtOpt, Aln** unpair, int* unpairMem,
+    float asDiff) {
 
   // BAM fields to save
   int32_t refID, pos, l_seq, next_refID, next_pos, tlen;
@@ -1726,11 +1825,11 @@ int parseBAM(gzFile in, char* line, Aln** aln, int* alnMem,
       continue;
     }
     Chrom* ref = chrom + idx[refID];
-    if (ref->skip) {
+//    if (ref->skip) {
       // alignment to skipped chromosome
-      (*skipped)++;
-      continue;
-    }
+//      (*skipped)++;
+//      continue;
+//    }
     if (mapq < minMapQ) {
       // skip low MAPQ alignments
       (*lowMapQ)++;
@@ -1744,7 +1843,7 @@ int parseBAM(gzFile in, char* line, Aln** aln, int* alnMem,
           pairedPr, singlePr, orphan, singleOpt,
           extendOpt, extend, avgExtOpt,
           unpair, &unpairLen, unpairMem,
-          1.0f / *alnMem);
+          asDiff, 1.0f / *alnMem);
       alnLen = 0;
       strncpy(readName, read_name, MAX_ALNS);
     }
@@ -1754,7 +1853,7 @@ int parseBAM(gzFile in, char* line, Aln** aln, int* alnMem,
     float score = getBAMscore(extra, block_size - (int) (extra - line));
     parseAlign(aln, &alnLen, alnMem, flag, ref, pos,
       length, next_pos, paired, single, secPair, secSingle,
-      singleOpt, score);
+      skipped, singleOpt, score);
     // NOTE: the following BAM fields are ignored:
     //   next_refID, tlen, seq, qual
   }
@@ -1765,12 +1864,12 @@ int parseBAM(gzFile in, char* line, Aln** aln, int* alnMem,
       pairedPr, singlePr, orphan, singleOpt,
       extendOpt, extend, avgExtOpt,
       unpair, &unpairLen, unpairMem,
-      1.0f / *alnMem);
+      asDiff, 1.0f / *alnMem);
 
   // process single alignments w/ avgExtOpt
   if (avgExtOpt)
-    *singlePr += processAvgExt(*unpair, unpairLen,
-      *totalLen, *pairedPr, 1.0f / *alnMem);
+    processAvgExt(*unpair, unpairLen, *totalLen,
+      *pairedPr, 1.0f / *alnMem);
 
   return count;
 }
@@ -1787,7 +1886,7 @@ int readBAM(gzFile in, char* line, Aln** aln, int* alnMem,
     int* secSingle, int* orphan, int* chromLen,
     Chrom** chrom, bool singleOpt, bool extendOpt,
     int extend, bool avgExtOpt, Aln** unpair,
-    int* unpairMem, bool ctrl) {
+    int* unpairMem, float asDiff, bool ctrl) {
 
   // load first line from header
   int32_t l_text = readInt32(in, true);
@@ -1843,7 +1942,7 @@ int readBAM(gzFile in, char* line, Aln** aln, int* alnMem,
     paired, single, pairedPr, singlePr, supp, skipped,
     lowMapQ, minMapQ, secPair, secSingle, orphan,
     singleOpt, extendOpt, extend, avgExtOpt,
-    unpair, unpairMem);
+    unpair, unpairMem, asDiff);
 }
 
 /*** File I/O ***/
@@ -2052,7 +2151,8 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
     char* logFile, bool gzOut, bool singleOpt, bool extendOpt,
     int extend, bool avgExtOpt, int minMapQ, int xcount,
     char** xchrList, float pqvalue, bool qvalOpt,
-    int minLen, int maxGap, bool verbose, int threads) {
+    int minLen, int maxGap, float asDiff, bool verbose,
+    int threads) {
 
   // initialize variables
   char* line = (char*) memalloc(MAX_SIZE);
@@ -2102,14 +2202,14 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
           &pairedPr, &singlePr, &supp, &skipped, &lowMapQ,
           minMapQ, xcount, xchrList, &secPair, &secSingle,
           &orphan, &chromLen, &chrom, singleOpt, extendOpt,
-          extend, avgExtOpt, &unpair, &unpairMem, i);
+          extend, avgExtOpt, &unpair, &unpairMem, asDiff, i);
       else
         count = readSAM(in, gz, line, &aln, &alnMem,
           readName, &totalLen, &unmapped, &paired, &single,
           &pairedPr, &singlePr, &supp, &skipped, &lowMapQ,
           minMapQ, xcount, xchrList, &secPair, &secSingle,
           &orphan, &chromLen, &chrom, singleOpt, extendOpt,
-          extend, avgExtOpt, &unpair, &unpairMem, i);
+          extend, avgExtOpt, &unpair, &unpairMem, asDiff, i);
 
       // log counts
       if (verbose)
@@ -2221,7 +2321,7 @@ void getArgs(int argc, char** argv) {
     *ctrlFile = NULL, *logFile = NULL;
   char* xchrom = NULL;
   int extend = 0, minMapQ = 0, minLen = DEFMINLEN,
-    maxGap = DEFMAXGAP, threads = DEFTHR;
+    maxGap = DEFMAXGAP, asDiff = 0.0f, threads = DEFTHR;
   float pqvalue = DEFQVAL;
   bool singleOpt = false, extendOpt = false,
     avgExtOpt = false, gzOut = false, qvalOpt = true;
@@ -2241,6 +2341,7 @@ void getArgs(int argc, char** argv) {
       case AVGEXTOPT: avgExtOpt = true; break;
       case XCHROM: xchrom = optarg; break;
       case MINMAPQ: minMapQ = getInt(optarg); break;
+      case ASDIFF: asDiff = getFloat(optarg); break;
       case QVALUE: pqvalue = getFloat(optarg); break;
       case PVALUE: pqvalue = getFloat(optarg); qvalOpt = false; break;
       case MINLEN: minLen = getInt(optarg); break;
@@ -2270,6 +2371,8 @@ void getArgs(int argc, char** argv) {
     if (extend <= 0)
       exit(error("", ERREXTEND));
   }
+  if (asDiff < 0.0f)
+    exit(error("", ERRASDIFF));
   if (threads < 1)
     exit(error("", ERRTHREAD));
 
@@ -2286,7 +2389,7 @@ void getArgs(int argc, char** argv) {
   runProgram(inFile, ctrlFile, outFile, logFile, gzOut,
     singleOpt, extendOpt, extend, avgExtOpt, minMapQ,
     xcount, xchrList, pqvalue, qvalOpt, minLen, maxGap,
-    verbose, threads);
+    asDiff, verbose, threads);
 }
 
 /* int main()
