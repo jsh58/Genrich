@@ -123,7 +123,7 @@ typedef union file {
 
 typedef struct hash {
   float val;
-  unsigned long len;
+  uint64_t len;
   struct hash* next;
 } Hash;
 

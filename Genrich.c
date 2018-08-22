@@ -141,17 +141,17 @@ void swapFloat(float* a, float* b) {
   *a = *b;
   *b = t;
 }
-void swapInt(unsigned long* a, unsigned long* b) {
-  unsigned long t = *a;
+void swapInt(uint64_t* a, uint64_t* b) {
+  uint64_t t = *a;
   *a = *b;
   *b = t;
 }
-int partition(float* pVal, unsigned long* pEnd,
-    int low, int high) {
+uint64_t partition(float* pVal, uint64_t* pEnd,
+    uint64_t low, uint64_t high) {
   float pivot = pVal[high];  // pivot value: last elt
-  int idx = low - 1;
+  uint64_t idx = low - 1;
 
-  for (int j = low; j < high; j++) {
+  for (uint64_t j = low; j < high; j++) {
     if (pVal[j] < pivot) {
       idx++;
       swapFloat(pVal + idx, pVal + j);
@@ -163,10 +163,10 @@ int partition(float* pVal, unsigned long* pEnd,
   swapInt(pEnd + idx, pEnd + high);
   return idx;
 }
-void quickSort(float* pVal, unsigned long* pEnd,
-    int low, int high) {
+void quickSort(float* pVal, uint64_t* pEnd,
+    uint64_t low, uint64_t high) {
   if (low < high) {
-    int idx = partition(pVal, pEnd, low, high);
+    uint64_t idx = partition(pVal, pEnd, low, high);
     quickSort(pVal, pEnd, low, idx - 1);
     quickSort(pVal, pEnd, idx + 1, high);
   }
@@ -178,8 +178,8 @@ void quickSort(float* pVal, unsigned long* pEnd,
  * Return the pre-computed q-value for a given p-value,
  *   using parallel arrays (p->cov and qval).
  */
-float lookup(float* pVal, int low, int high, float* qVal,
-    float p) {
+float lookup(float* pVal, uint64_t low, uint64_t high,
+    float* qVal, float p) {
   if (low == high)
     return qVal[low];
   int idx = (low + high) / 2;
@@ -195,18 +195,18 @@ float lookup(float* pVal, int low, int high, float* qVal,
  *   arrays of p-values (pVal) and lengths (pEnd).
  */
 void saveQval(Chrom* chrom, int chromLen,
-    unsigned long genomeLen, float* pVal,
-    unsigned long* pEnd, int pLen) {
+    uint64_t genomeLen, float* pVal,
+    uint64_t* pEnd, uint64_t pLen) {
 
   // sort pileup by p-values
   quickSort(pVal, pEnd, 0, pLen - 1);
 
   // calculate q-values for each p-value: -log(q) = -log(p*N/k)
-  unsigned long k = 1;  // 1 + number of bases with higher -log(p)
-  float logN = -1 * log10f(genomeLen);
+  uint64_t k = 1;  // 1 + number of bases with higher -log(p)
+  float logN = -1.0f * log10f(genomeLen);
   float* qVal = (float*) memalloc((pLen + 1) * sizeof(float));
   qVal[pLen] = FLT_MAX;
-  for (int i = pLen - 1; i > -1; i--) {
+  for (int64_t i = pLen - 1; i > -1; i--) {
     // ensure monotonicity
     qVal[i] = MAX( MIN( pVal[i] + logN + log10f(k),
       qVal[i + 1]), 0.0f);
@@ -218,7 +218,7 @@ void saveQval(Chrom* chrom, int chromLen,
     Chrom* chr = chrom + i;
     if (chr->skip)
       continue;
-    for (int j = 0; j < chr->pvalLen; j++)
+    for (uint32_t j = 0; j < chr->pvalLen; j++)
       chr->qval->cov[j] = lookup(pVal, 0, pLen, qVal,
         chr->pval->cov[j]);
   }
@@ -229,7 +229,7 @@ void saveQval(Chrom* chrom, int chromLen,
 
 /*** Save p-values in hashtable ***/
 
-/* unsigned long hash()
+/* unsigned int hash()
  * djb2 hash function
  * Modified to take a float (p-value) as input.
  *   Returns index into hashtable.
@@ -238,7 +238,7 @@ unsigned int hash(float f) {
   unsigned long val = 5381;
   unsigned char* p = (unsigned char*) &f;
   for (int i = 0; i < sizeof(float); i++)
-    val = ((val << 5) + val) + p[i];
+    val = (val << 5) + val + p[i];
   return (unsigned int) (val % HASH_SIZE);
 }
 
@@ -270,10 +270,10 @@ int recordPval(Hash** table, float p, uint32_t length) {
  * Collect arrays of p-values and genome lengths from
  *   hashtable (to be used in q-value calculations).
  */
-float* collectPval(Hash** table, unsigned long** pEnd,
-    int pLen) {
+float* collectPval(Hash** table, uint64_t** pEnd,
+    uint64_t pLen) {
   float* pVal = (float*) memalloc(pLen * sizeof(float));
-  int idx = 0;
+  uint64_t idx = 0;
   for (int i = 0; i < HASH_SIZE; i++)
     for (Hash* h = table[i]; h != NULL; h = h->next) {
       pVal[idx] = h->val;
@@ -336,7 +336,7 @@ float calcPval(float treatVal, float ctrlVal) {
  *   q-value calculations.
  */
 Hash** savePval(Chrom* chrom, int chromLen, bool qvalOpt,
-    int* pLen) {
+    uint64_t* pLen) {
 
   // create hashtable for conversion of p-values to q-values
   Hash** table = NULL;
@@ -430,7 +430,7 @@ void printInterval(File out, bool gzOut, char* name,
  * Print BED interval for a peak.
  */
 void printPeak(File out, bool gzOut, char* name,
-    long start, long end, int count, float val,
+    int64_t start, int64_t end, int count, float val,
     float fe, float pval, float qval, uint32_t pos) {
   if (gzOut)
     gzprintf(out.gzf, "%s\t%ld\t%ld\tpeak_%d\t%d\t.\t%f\t%f\t%f\t%d\n",
@@ -460,12 +460,12 @@ int callPeaks(File out, File log, bool logOpt, bool gzOut,
       continue;
 
     // reset peak variables
-    long peakStart = -1, peakEnd = -1;  // ends of potential peak
-    float summitVal = -1.0f;            // summit p/q value
-    uint32_t summitPos = 0;             // distance from peakStart to summit
-    uint32_t summitLen = 0;             // length of summit interval
+    int64_t peakStart = -1, peakEnd = -1; // ends of potential peak
+    float summitVal = -1.0f;              // summit p/q value
+    uint32_t summitPos = 0;               // distance from peakStart to summit
+    uint32_t summitLen = 0;               // length of summit interval
     float summitPval = -1.0f, summitQval = -1.0f; // summit p- and q-values
-    float summitFE = -1.0f;             // summit fold enrichment
+    float summitFE = -1.0f;               // summit fold enrichment
 
     // loop through intervals (defined by chr->pval)
     uint32_t start = 0;    // start of interval
@@ -559,7 +559,7 @@ int callPeaks(File out, File log, bool logOpt, bool gzOut,
  *   and printing output.
  */
 void findPeaks(File out, File log, bool logOpt, bool gzOut,
-    unsigned long genomeLen, Chrom* chrom, int chromLen,
+    uint64_t genomeLen, Chrom* chrom, int chromLen,
     float pqvalue, bool qvalOpt, int minLen, int maxGap,
     bool verbose) {
 
@@ -573,11 +573,11 @@ void findPeaks(File out, File log, bool logOpt, bool gzOut,
   }
 
   // compute p- and q-values
-  int pLen = 0;
+  uint64_t pLen = 0;
   Hash** table = savePval(chrom, chromLen, qvalOpt, &pLen);
   if (qvalOpt) {
     // collect p-values from hashtable
-    unsigned long* pEnd = memalloc(pLen * sizeof(unsigned long));
+    uint64_t* pEnd = memalloc(pLen * sizeof(uint64_t));
     float* pVal = collectPval(table, &pEnd, pLen);
 
     // convert p-values to q-values
@@ -613,7 +613,7 @@ void findPeaks(File out, File log, bool logOpt, bool gzOut,
  *   lengths divided by total genome length.
  */
 float calcLambda(Chrom* chrom, int chromLen,
-    double fragLen, unsigned long* genomeLen) {
+    double fragLen, uint64_t* genomeLen) {
   for (int i = 0; i < chromLen; i++)
     if (! (chrom + i)->skip)
       *genomeLen += (chrom + i)->len;
@@ -627,7 +627,7 @@ float calcLambda(Chrom* chrom, int chromLen,
  *   pileup as the background lambda value.
  */
 void savePileupNoCtrl(Chrom* chrom, int chromLen,
-    double fragLen, unsigned long* genomeLen) {
+    double fragLen, uint64_t* genomeLen) {
   float lambda = calcLambda(chrom, chromLen, fragLen,
     genomeLen);
   for (int i = 0; i < chromLen; i++) {
@@ -643,7 +643,7 @@ void savePileupNoCtrl(Chrom* chrom, int chromLen,
  *   'diff' arrays and background lambda value.
  */
 void savePileupCtrl(Chrom* chrom, int chromLen,
-    double fragLen, unsigned long* genomeLen,
+    double fragLen, uint64_t* genomeLen,
     float epsilon) {
 
   // calculate background lambda value
@@ -782,8 +782,8 @@ double savePileupTreat(Chrom* chrom, int chromLen,
  * Save BED interval for a read/fragment.
  *   Return fragment length.
  */
-uint32_t saveInterval(Chrom* chrom, long start, long end,
-    char* qname, float val, float epsilon) {
+uint32_t saveInterval(Chrom* chrom, int64_t start,
+    int64_t end, char* qname, float val, float epsilon) {
   // check validity of positions
   if (start < 0) {
     fprintf(stderr, "Warning! Read %s prevented from extending below 0 on %s\n",
@@ -809,7 +809,7 @@ uint32_t saveInterval(Chrom* chrom, long start, long end,
   }
   // save ends of fragment to 'diff' array
   for (int i = 0; i < 2; i++) {
-    long idx = i ? end : start;
+    uint32_t idx = i ? end : start;
     float num = chrom->diff[idx];
     num += i ? -val : val;
 
@@ -849,8 +849,8 @@ void processAvgExt(Aln* unpair, int unpairLen,
       saveInterval(a->chrom, a->pos[0], a->pos[0] + avgLen,
         a->name, a->val, epsilon);
     else
-      saveInterval(a->chrom, a->pos[1] - avgLen, a->pos[1],
-        a->name, a->val, epsilon);
+      saveInterval(a->chrom, (signed) (a->pos[1] - avgLen),
+        a->pos[1], a->name, a->val, epsilon);
 
     // free memory
     free(a->name);
@@ -898,8 +898,8 @@ void saveSingle(char* qname, Aln* a, float val,
       saveInterval(a->chrom, a->pos[0], a->pos[0] + extend,
         qname, val, epsilon);
     else
-      saveInterval(a->chrom, a->pos[1] - extend, a->pos[1],
-        qname, val, epsilon);
+      saveInterval(a->chrom, (signed) (a->pos[1] - extend),
+        a->pos[1], qname, val, epsilon);
   } else
     saveInterval(a->chrom, a->pos[0], a->pos[1], qname,
       val, epsilon);
@@ -956,16 +956,16 @@ int processSingle(char* qname, Aln* aln, int alnLen,
     if (! a->paired && a->first == first
         && a->score >= score && ! a->chrom->skip) {
 
-      if (avgExtOpt) {
+      if (avgExtOpt)
         // for average-extension option, save alignment
         //   for later processing by processAvgExt()
         saveAvgExt(qname, a, val, unpair,
           unpairLen, unpairMem);
-      } else {
+
+      else
         // for other options, save singleton interval
         saveSingle(qname, a, val, extendOpt, extend,
           epsilon);
-      }
 
     }
   }
@@ -1020,9 +1020,9 @@ int processPair(char* qname, Aln* aln, int alnLen,
 void processAlns(char* qname, Aln* aln, int alnLen,
     double* totalLen, int* pairedPr, int* singlePr,
     int* orphan, bool singleOpt, bool extendOpt,
-    int extend, bool avgExtOpt,
-    Aln** unpair, int* unpairLen, int* unpairMem,
-    float asDiff, float epsilon) {
+    int extend, bool avgExtOpt, Aln** unpair,
+    int* unpairLen, int* unpairMem, float asDiff,
+    float epsilon) {
 
   // determine if paired alns are valid, and best score
   float scorePr = NOSCORE, scoreR1 = NOSCORE,
@@ -1032,6 +1032,7 @@ void processAlns(char* qname, Aln* aln, int alnLen,
     Aln* a = aln + i;
     if (a->paired) {
       if (a->full) {
+        // valid paired aln
         if (! pair || scorePr < a->score)
           scorePr = a->score; // best score so far
         pair = true;
@@ -2165,7 +2166,7 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
   char* readName = memalloc(MAX_ALNS + 1);  // name of read being analyzed
   readName[0] = readName[MAX_ALNS] = '\0';
   double fragLen = 0.0;   // total weighted length of all treatment fragments
-  unsigned long genomeLen = 0;  // total length of genome
+  uint64_t genomeLen = 0; // total length of genome
 
   // loop through input files (treatment and control)
   for (int i = 0; i < 2; i++) {
