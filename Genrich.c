@@ -182,7 +182,7 @@ float lookup(float* pVal, uint64_t low, uint64_t high,
     float* qVal, float p) {
   if (low == high)
     return qVal[low];
-  int idx = (low + high) / 2;
+  uint64_t idx = (low + high) / 2;
   if (pVal[idx] == p)
     return qVal[idx];
   if (pVal[idx] > p)
@@ -292,7 +292,7 @@ float* collectPval(Hash** table, uint64_t** pEnd,
  */
 void saveConst(Pileup** p, uint32_t* size, uint32_t len,
     float val) {
-  (*p) = (Pileup*) memalloc(sizeof(Pileup));
+  *p = (Pileup*) memalloc(sizeof(Pileup));
   (*p)->end = (uint32_t*) memalloc(sizeof(uint32_t));
   (*p)->end[0] = len;
   (*p)->cov = (float*) memalloc(sizeof(float));
@@ -322,7 +322,7 @@ uint32_t countIntervals(Chrom* chr) {
 
 /* float calcPval()
  * Calculate -log10(p) using an exponential distribution
- *   with parameter beta ('ctrl') and observation 'treat'.
+ *   with parameter beta (ctrlVal) and observation treatVal.
  */
 float calcPval(float treatVal, float ctrlVal) {
   if (ctrlVal == 0.0f)
@@ -494,7 +494,7 @@ int callPeaks(File out, File log, bool logOpt, bool gzOut,
           summitLen = peakEnd - (m ? chr->pval->end[m-1] : 0);
         } else if (val == summitVal) {
           // update summitPos only if interval is longer
-          int len = chr->pval->end[m] - (m ? chr->pval->end[m-1] : 0);
+          uint32_t len = chr->pval->end[m] - (m ? chr->pval->end[m-1] : 0);
           if (len > summitLen) {
             summitPos = (peakEnd + (m ? chr->pval->end[m-1] : 0) ) / 2
               - peakStart;  // midpoint of interval
@@ -700,6 +700,11 @@ void savePileupCtrl(Chrom* chrom, int chromLen,
     // save final interval
     chr->ctrl->end[pos] = j;
     chr->ctrl->cov[pos] = MAX(val, lambda);
+
+    // check for val error
+    if (val + chr->diff[j] > epsilon)
+      fprintf(stderr, "Warning! Control pileup for ref %s finishes at %f\n",
+        chr->name, val + chr->diff[j]);
   }
 
 }
@@ -724,6 +729,8 @@ double savePileupTreat(Chrom* chrom, int chromLen,
       saveConst(&chr->treat, &chr->treatLen, chr->len, 0.0f);
       continue;
     }
+
+fprintf(stderr, "chrom %s\n", chr->name);
 
     // determine number of pileup intervals
     uint32_t num = 1;
@@ -753,15 +760,27 @@ double savePileupTreat(Chrom* chrom, int chromLen,
 
         // update pileup value
         val += chr->diff[j];
+fprintf(stderr, "  pos %d: diff %.11f -> %.11f", j, chr->diff[j], val);
         // reset val to nearest int if it's close
         if (val < epsilon)
           val = 0.0f;
         else {
-          int valInt = (int) (val + 0.5f);
-          if (fabsf(valInt - val) < epsilon)
-            val = (float) valInt;
+//          for (int k = 1; k < 6; k++) {
+//            float valk = k * val;
+//            int valInt = (int) (valk + 0.5f);
+//            if (fabsf(valInt - valk) < epsilon) {
+//              val = (float) valInt / k;
+            int valInt = (int) (val + 0.5f);
+            if (fabsf(valInt - val) < epsilon) {
+              val = (float) valInt;
+fprintf(stderr, " -> %.11f", val);
+//fprintf(stderr, " -> %.11f (%d)", val, k);
+//              break;
+            }
+//          }
         }
-
+//fprintf(stderr, "%f", val);
+while(!getchar()) ;
         pos++;
       }
 
@@ -769,6 +788,11 @@ double savePileupTreat(Chrom* chrom, int chromLen,
     chr->treat->end[pos] = j;
     chr->treat->cov[pos] = val;
     fragLen += (j - start) * val;
+
+    // check for val error
+    if (val + chr->diff[j] > epsilon)
+      fprintf(stderr, "Warning! Treatment pileup for ref %s finishes at %f\n",
+        chr->name, val + chr->diff[j]);
   }
 
   if (fragLen == 0.0)
@@ -814,7 +838,8 @@ uint32_t saveInterval(Chrom* chrom, int64_t start,
     num += i ? -val : val;
 
     // reset value to nearest int if it's close
-    int numInt = (int) (num + 0.5f);
+    int numInt = num < 0.0f ? (int) (num - 0.5f)
+      : (int) (num + 0.5f);
     if (fabsf(numInt - num) < epsilon)
       num = (float) numInt;
 
@@ -1022,7 +1047,11 @@ void processAlns(char* qname, Aln* aln, int alnLen,
     int* orphan, bool singleOpt, bool extendOpt,
     int extend, bool avgExtOpt, Aln** unpair,
     int* unpairLen, int* unpairMem, float asDiff,
-    float epsilon) {
+    int* alnMem) {
+
+  // update max number of alns (*alnMem)
+  if (alnLen > *alnMem)
+    *alnMem = alnLen;
 
   // determine if paired alns are valid, and best score
   float scorePr = NOSCORE, scoreR1 = NOSCORE,
@@ -1050,6 +1079,7 @@ void processAlns(char* qname, Aln* aln, int alnLen,
 
 //int prevPr = *pairedPr, prevSn = *singlePr;
 
+  float epsilon = 1.0f / MAX_ALNS;
   if (pair)
     // process paired alignments
     *pairedPr += processPair(qname, aln, alnLen, totalLen,
@@ -1090,8 +1120,8 @@ while(!getchar()) ;
 /* void updatePairedAln()
  * Complete a properly paired alignment.
  */
-void updatePairedAln(Aln* a, uint16_t flag, uint32_t pos,
-    int length, float score) {
+void updatePairedAln(Aln* a, uint16_t flag,
+    uint32_t pos, int length, float score) {
   if (flag & 0x40)
     a->pos[0] = flag & 0x10 ? pos + length : pos;
   else
@@ -1103,18 +1133,17 @@ void updatePairedAln(Aln* a, uint16_t flag, uint32_t pos,
   a->full = true;
 }
 
-/* void savePairedAln()
- * Start a properly paired alignment.
+/* bool savePairedAln()
+ * Start a properly paired alignment. Return false
+ *   if max. number has been reached.
  */
-void savePairedAln(Aln** aln, int* alnLen, int* alnMem,
-    uint16_t flag, Chrom* chrom, uint32_t pos, int length,
-    uint32_t pnext, float score) {
+bool savePairedAln(Aln** aln, int* alnLen,
+    uint16_t flag, Chrom* chrom, uint32_t pos,
+    int length, uint32_t pnext, float score) {
 
-  // alloc memory if necessary
-  if (*alnLen + 1 > *alnMem) {
-    *alnMem += MAX_ALNS;
-    *aln = (Aln*) memrealloc(*aln, *alnMem * sizeof(Aln));
-  }
+  // check for excessive alignments
+  if (*alnLen + 1 > MAX_ALNS)
+    return false;
 
   // save aln info
   Aln* a = *aln + *alnLen;
@@ -1135,20 +1164,20 @@ void savePairedAln(Aln** aln, int* alnLen, int* alnMem,
   }
 
   (*alnLen)++;
+  return true;
 }
 
-/* void saveSingleAln()
+/* bool saveSingleAln()
  * Save the information for a singleton alignment.
+ *   Return false if max. number has been reached.
  */
-void saveSingleAln(Aln** aln, int* alnLen, int* alnMem,
-    uint16_t flag, Chrom* chrom, uint32_t pos, int length,
-    float score) {
+bool saveSingleAln(Aln** aln, int* alnLen,
+    uint16_t flag, Chrom* chrom, uint32_t pos,
+    int length, float score) {
 
-  // alloc memory if necessary
-  if (*alnLen + 1 > *alnMem) {
-    *alnMem += MAX_ALNS;
-    *aln = (Aln*) memrealloc(*aln, *alnMem * sizeof(Aln));
-  }
+  // check for excessive alignments
+  if (*alnLen + 1 > MAX_ALNS)
+    return false;
 
   // save aln info
   Aln* a = *aln + *alnLen;
@@ -1161,17 +1190,18 @@ void saveSingleAln(Aln** aln, int* alnLen, int* alnMem,
   a->pos[0] = pos;
   a->pos[1] = pos + length;
   (*alnLen)++;
+  return true;
 }
 
-/* void parseAlign()
+/* bool parseAlign()
  * Parse a SAM/BAM alignment record. Save alignment
- *   info to Aln* array.
+ *   info to Aln* array. Return true unless the max.
+ *   number of alignments has been reached.
  */
-void parseAlign(Aln** aln, int* alnLen, int* alnMem,
-    uint16_t flag, Chrom* chrom, uint32_t pos, int length,
-    uint32_t pnext, int* paired, int* single, int* secPair,
-    int* secSingle, int* skipped, bool singleOpt,
-    float score) {
+bool parseAlign(Aln** aln, int* alnLen, uint16_t flag,
+    Chrom* chrom, uint32_t pos, int length, uint32_t pnext,
+    int* paired, int* single, int* secPair, int* secSingle,
+    int* skipped, bool singleOpt, float score) {
 
   if ((flag & 0x3) == 0x3) {
     // paired alignment: save alignment information
@@ -1184,38 +1214,37 @@ void parseAlign(Aln** aln, int* alnLen, int* alnMem,
     }
 
     // search for matching paired alignment (already analyzed)
-    int i;
-    for (i = 0; i < *alnLen; i++) {
+    for (int i = 0; i < *alnLen; i++) {
       Aln* a = *aln + i;
       if ( a->paired && ! a->full && a->chrom == chrom
           && (flag & 0x40 ? a->pos[0] == pos : a->pos[1] == pos)
           && (flag & 0x100 ? ! a->primary : a->primary) ) {
         // complete paired alignment
         updatePairedAln(a, flag, pos, length, score);
-        break;
+        return true;
       }
     }
-    if (i == *alnLen)
-      // not found: start new paired alignment
-      savePairedAln(aln, alnLen, alnMem, flag, chrom,
-        pos, length, pnext, score);
 
-  } else {
-    // unpaired alignment
-    if (chrom->skip)
-      (*skipped)++;
-    else {
-      (*single)++;
-      if (flag & 0x100)
-        (*secSingle)++;
-    }
-
-    // save alignment info
-    if (singleOpt)
-      saveSingleAln(aln, alnLen, alnMem, flag, chrom,
-        pos, length, score);
-
+    // not found: start new paired alignment
+    return savePairedAln(aln, alnLen, flag, chrom,
+      pos, length, pnext, score);
   }
+
+  // unpaired alignment
+  if (chrom->skip)
+    (*skipped)++;
+  else {
+    (*single)++;
+    if (flag & 0x100)
+      (*secSingle)++;
+  }
+
+  // save alignment info
+  if (singleOpt)
+    return saveSingleAln(aln, alnLen, flag, chrom,
+      pos, length, score);
+
+  return true;
 }
 
 /*** Save SAM/BAM header info ***/
@@ -1532,9 +1561,8 @@ int readSAM(File in, bool gz, char* line, Aln** aln,
       if (readName[0] != '\0')
         processAlns(readName, *aln, alnLen, totalLen,
           pairedPr, singlePr, orphan, singleOpt,
-          extendOpt, extend, avgExtOpt,
-          unpair, &unpairLen, unpairMem,
-          asDiff, 1.0f / *alnMem);
+          extendOpt, extend, avgExtOpt, unpair,
+          &unpairLen, unpairMem, asDiff, alnMem);
       alnLen = 0;
       strncpy(readName, qname, MAX_ALNS);
     }
@@ -1542,9 +1570,11 @@ int readSAM(File in, bool gz, char* line, Aln** aln,
     // save alignment information
     int length = calcDist(qname, seq, cigar); // distance to 3' end
     float score = getScore(extra);
-    parseAlign(aln, &alnLen, alnMem, flag, ref, pos,
-      length, pnext, paired, single, secPair, secSingle,
-      skipped, singleOpt, score);
+    if (! parseAlign(aln, &alnLen, flag, ref, pos, length,
+        pnext, paired, single, secPair, secSingle, skipped,
+        singleOpt, score))
+      fprintf(stderr, "Warning! Read %s has more than %d alignments\n",
+        qname, MAX_ALNS);
     // NOTE: the following SAM fields are ignored:
     //   rnext, tlen, qual
   }
@@ -1553,9 +1583,8 @@ int readSAM(File in, bool gz, char* line, Aln** aln,
   if (readName[0] != '\0')
     processAlns(readName, *aln, alnLen, totalLen,
       pairedPr, singlePr, orphan, singleOpt,
-      extendOpt, extend, avgExtOpt,
-      unpair, &unpairLen, unpairMem,
-      asDiff, 1.0f / *alnMem);
+      extendOpt, extend, avgExtOpt, unpair,
+      &unpairLen, unpairMem, asDiff, alnMem);
 
   // process single alignments w/ avgExtOpt
   if (avgExtOpt)
@@ -1842,9 +1871,8 @@ int parseBAM(gzFile in, char* line, Aln** aln, int* alnMem,
       if (readName[0] != '\0')
         processAlns(readName, *aln, alnLen, totalLen,
           pairedPr, singlePr, orphan, singleOpt,
-          extendOpt, extend, avgExtOpt,
-          unpair, &unpairLen, unpairMem,
-          asDiff, 1.0f / *alnMem);
+          extendOpt, extend, avgExtOpt, unpair,
+          &unpairLen, unpairMem, asDiff, alnMem);
       alnLen = 0;
       strncpy(readName, read_name, MAX_ALNS);
     }
@@ -1852,9 +1880,11 @@ int parseBAM(gzFile in, char* line, Aln** aln, int* alnMem,
     // save alignment information
     int length = calcDistBAM(l_seq, n_cigar_op, cigar); // distance to 3' end
     float score = getBAMscore(extra, block_size - (int) (extra - line));
-    parseAlign(aln, &alnLen, alnMem, flag, ref, pos,
-      length, next_pos, paired, single, secPair, secSingle,
-      skipped, singleOpt, score);
+    if (! parseAlign(aln, &alnLen, flag, ref, pos, length,
+        next_pos, paired, single, secPair, secSingle, skipped,
+        singleOpt, score))
+      fprintf(stderr, "Warning! Read %s has more than %d alignments\n",
+        read_name, MAX_ALNS);
     // NOTE: the following BAM fields are ignored:
     //   next_refID, tlen, seq, qual
   }
@@ -1863,9 +1893,8 @@ int parseBAM(gzFile in, char* line, Aln** aln, int* alnMem,
   if (readName[0] != '\0')
     processAlns(readName, *aln, alnLen, totalLen,
       pairedPr, singlePr, orphan, singleOpt,
-      extendOpt, extend, avgExtOpt,
-      unpair, &unpairLen, unpairMem,
-      asDiff, 1.0f / *alnMem);
+      extendOpt, extend, avgExtOpt, unpair,
+      &unpairLen, unpairMem, asDiff, alnMem);
 
   // process single alignments w/ avgExtOpt
   if (avgExtOpt)
@@ -2159,8 +2188,7 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
   char* line = (char*) memalloc(MAX_SIZE);
   int chromLen = 0;       // number of reference sequences
   Chrom* chrom = NULL;    // array of reference sequences
-  int alnMem = MAX_ALNS;  // number of alignments to save per read (dynamic)
-  Aln* aln = (Aln*) memalloc(alnMem * sizeof(Aln)); // array of saved alns
+  Aln* aln = (Aln*) memalloc(MAX_ALNS * sizeof(Aln)); // array of saved alns
   int unpairMem = 0;      // number of unpaired alns (for avg-ext option)
   Aln* unpair = NULL;     // array of unpaired alns (for avg-ext option)
   char* readName = memalloc(MAX_ALNS + 1);  // name of read being analyzed
@@ -2180,6 +2208,7 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
       break;
     }
 
+    int alnMem = 1; // max. number of alignments per read
     char* end;
     char* filename = strtok_r(file, COM, &end);
     while (filename) {
@@ -2195,7 +2224,7 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
       int unmapped = 0, paired = 0, single = 0, orphan = 0,
         pairedPr = 0, singlePr = 0, supp = 0, skipped = 0,
         lowMapQ = 0, secPair = 0, secSingle = 0;  // counting variables
-      double totalLen = 0.0; // total weighted length of paired fragments
+      double totalLen = 0.0;  // total weighted length of paired fragments
       int count;
       if (bam)
         count = readBAM(in.gzf, line, &aln, &alnMem,
