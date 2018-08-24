@@ -638,13 +638,58 @@ void savePileupNoCtrl(Chrom* chrom, int chromLen,
   }
 }
 
+
+void updateVal(Diff* d, uint32_t idx, int32_t* cov,
+    uint8_t* frac) {
+  *cov += d->cov[idx];
+  uint8_t val = d->frac[idx];
+  if (val & 0x1) {
+    if (*frac & 0x1) {
+      (*cov)++;
+      *frac -= 0x1;
+    } else
+      *frac += 0x1;
+  }
+  if (val & 0x6) {
+    int x = ((val >> 1) & 0x3) + ((*frac >> 1) & 0x3);
+    if (x > 2) {
+      (*cov)++;
+      x -= 3;
+    }
+    *frac = (*frac & 0xF9) | (x << 1);
+  }
+  if (val & 0x18) {
+    int x = ((val >> 3) & 0x3) + ((*frac >> 3) & 0x3);
+    if (x > 3) {
+      (*cov)++;
+      x -= 4;
+    }
+    *frac = (*frac & 0xE7) | (x << 3);
+  }
+  if (val & 0xE0) {
+    int x = ((val >> 5) & 0x7) + ((*frac >> 5) & 0x7);
+    if (x > 4) {
+      (*cov)++;
+      x -= 5;
+    }
+    *frac = (*frac & 0x1F) | (x << 5);
+  }
+}
+
+float getVal(int32_t cov, uint8_t frac) {
+  return (float) cov
+    + ((frac & 0x1) / 2.0f)
+    + (((frac >> 1) & 0x3) / 3.0f)
+    + (((frac >> 3) & 0x3) / 4.0f)
+    + (((frac >> 5) & 0x7) / 5.0f);
+}
+
 /* void savePileupCtrl()
  * Save pileup values for control sample(s) from
  *   'diff' arrays and background lambda value.
  */
 void savePileupCtrl(Chrom* chrom, int chromLen,
-    double fragLen, uint64_t* genomeLen,
-    float epsilon) {
+    double fragLen, uint64_t* genomeLen) {
 
   // calculate background lambda value
   float lambda = calcLambda(chrom, chromLen, fragLen,
@@ -663,9 +708,10 @@ void savePileupCtrl(Chrom* chrom, int chromLen,
     }
 
     // determine number of pileup intervals
+    Diff* d = chr->diff;
     uint32_t num = 1;
     for (uint32_t j = 1; j < chr->len; j++)
-      if (fabsf(chr->diff[j]) > epsilon)
+      if (d->cov[j] || d->frac[j])
         num++;
 
     // create pileup arrays
@@ -674,15 +720,26 @@ void savePileupCtrl(Chrom* chrom, int chromLen,
     chr->ctrl->cov = (float*) memalloc(num * sizeof(float));
     chr->ctrlLen = num;
 
-    // save pileup values
+    // initialize pileup values
+    int32_t cov = 0;          // current pileup value
+    uint8_t frac = 0;         // current pileup value (fraction part)
+    updateVal(d, 0, &cov, &frac);
+    float val = getVal(cov, frac);
+
+    // save pileup values along the chrom
     uint32_t pos = 0;         // position in pileup arrays
-    float val = chr->diff[0]; // pileup value
     uint32_t j;
     for (j = 1; j < chr->len; j++)
-      if (fabsf(chr->diff[j]) > epsilon) {
+      if (d->cov[j] || d->frac[j]) {
+
         chr->ctrl->end[pos] = j;
         chr->ctrl->cov[pos] = MAX(val, lambda);
 
+        // update pileup value
+        updateVal(d, j, &cov, &frac);
+        val = getVal(cov, frac);
+
+/*
         // update pileup value
         val += chr->diff[j];
         // reset val to nearest int if it's close
@@ -693,7 +750,7 @@ void savePileupCtrl(Chrom* chrom, int chromLen,
           if (fabsf(valInt - val) < epsilon)
             val = (float) valInt;
         }
-
+*/
         pos++;
       }
 
@@ -702,9 +759,11 @@ void savePileupCtrl(Chrom* chrom, int chromLen,
     chr->ctrl->cov[pos] = MAX(val, lambda);
 
     // check for val error
-    if (val + chr->diff[j] > epsilon)
+    updateVal(d, j, &cov, &frac);
+    val = getVal(cov, frac);
+    if (val)
       fprintf(stderr, "Warning! Control pileup for ref %s finishes at %f\n",
-        chr->name, val + chr->diff[j]);
+        chr->name, val);
   }
 
 }
@@ -714,8 +773,7 @@ void savePileupCtrl(Chrom* chrom, int chromLen,
  *   'diff' arrays.
  *   Return total length of all fragments (weighted).
  */
-double savePileupTreat(Chrom* chrom, int chromLen,
-    float epsilon) {
+double savePileupTreat(Chrom* chrom, int chromLen) {
 
   // create pileup for each chrom
   double fragLen = 0.0;  // weighted fragment length
@@ -730,12 +788,13 @@ double savePileupTreat(Chrom* chrom, int chromLen,
       continue;
     }
 
-fprintf(stderr, "chrom %s\n", chr->name);
+//fprintf(stderr, "chrom %s\n", chr->name);
 
     // determine number of pileup intervals
+    Diff* d = chr->diff;
     uint32_t num = 1;
     for (uint32_t j = 1; j < chr->len; j++)
-      if (fabsf(chr->diff[j]) > epsilon)
+      if (d->cov[j] || d->frac[j])
         num++;
 
     // create pileup arrays
@@ -744,20 +803,31 @@ fprintf(stderr, "chrom %s\n", chr->name);
     chr->treat->cov = (float*) memalloc(num * sizeof(float));
     chr->treatLen = num;
 
-    // save pileup values
+    // intialize pileup values
+    int32_t cov = 0;          // current pileup value
+    uint8_t frac = 0;         // current pileup value (fraction part)
+    updateVal(d, 0, &cov, &frac);
+    float val = getVal(cov, frac);
+
+    // save pileup values along the chrom
     uint32_t pos = 0;         // position in pileup arrays
-    float val = chr->diff[0]; // pileup value
     uint32_t start = 0;       // beginning coordinate of interval
     uint32_t j;
     for (j = 1; j < chr->len; j++)
-      if (fabsf(chr->diff[j]) > epsilon) {
+      if (d->cov[j] || d->frac[j]) {
+
         chr->treat->end[pos] = j;
         chr->treat->cov[pos] = val;
+//fprintf(stderr, "pos %d: %.9f -> %.9f", j, getVal(d->cov[j], d->frac[j]), val);
 
         // keep track of fragment length (weighted by val)
         fragLen += (j - start) * val;
         start = j;
 
+        // update pileup value
+        updateVal(d, j, &cov, &frac);
+        val = getVal(cov, frac);
+/*
         // update pileup value
         val += chr->diff[j];
 fprintf(stderr, "  pos %d: diff %.11f -> %.11f", j, chr->diff[j], val);
@@ -771,8 +841,9 @@ fprintf(stderr, "  pos %d: diff %.11f -> %.11f", j, chr->diff[j], val);
 //            if (fabsf(valInt - valk) < epsilon) {
 //              val = (float) valInt / k;
             int valInt = (int) (val + 0.5f);
-            if (fabsf(valInt - val) < epsilon) {
-              val = (float) valInt;
+            //if (fabsf(valInt - val) < epsilon) {
+            if (fabs(valInt - val) < epsilon) {
+              val = (double) valInt;
 fprintf(stderr, " -> %.11f", val);
 //fprintf(stderr, " -> %.11f (%d)", val, k);
 //              break;
@@ -780,7 +851,8 @@ fprintf(stderr, " -> %.11f", val);
 //          }
         }
 //fprintf(stderr, "%f", val);
-while(!getchar()) ;
+*/
+//while(!getchar()) ;
         pos++;
       }
 
@@ -790,9 +862,11 @@ while(!getchar()) ;
     fragLen += (j - start) * val;
 
     // check for val error
-    if (val + chr->diff[j] > epsilon)
+    updateVal(d, j, &cov, &frac);
+    val = getVal(cov, frac);
+    if (val)
       fprintf(stderr, "Warning! Treatment pileup for ref %s finishes at %f\n",
-        chr->name, val + chr->diff[j]);
+        chr->name, val);
   }
 
   if (fragLen == 0.0)
@@ -802,35 +876,128 @@ while(!getchar()) ;
 
 /*** Convert alignments to intervals ***/
 
+/* void addFrac()
+ * Add a fractional count to the diff arrays.
+ *   The counts are split among the 8 bits of diff->plus
+ *   and diff->minus:
+ *       000     00     00     0
+ *     fifths fourths thirds halves
+ *   Carry over is applied to diff->cov.
+ */
+void addFrac(Diff* diff, uint32_t start, uint32_t end,
+    int count) {
+  for (int i = 0; i < 2; i++) {
+    uint32_t idx = i ? end : start;
+
+    switch (count) {
+      case 2:
+        if (diff->frac[idx] & 0x1) {
+          diff->frac[idx]--;
+          if (! i)
+            diff->cov[idx]++;
+        } else {
+          diff->frac[idx]++;
+          if (i)
+            diff->cov[idx]--;
+        }
+        break;
+      case 3:
+        if (i) {
+          if (diff->frac[idx] & 0x6)
+            diff->frac[idx] -= 0x2;
+          else {
+            diff->cov[idx]--;
+            diff->frac[idx] += 0x4;
+          }
+        } else {
+          if (diff->frac[idx] & 0x4) {
+            diff->cov[idx]++;
+            diff->frac[idx] -= 0x4;
+          } else
+            diff->frac[idx] += 0x2;
+        }
+        break;
+      case 4:
+        if (i) {
+          if (diff->frac[idx] & 0x18)
+            diff->frac[idx] -= 0x8;
+          else {
+            diff->cov[idx]--;
+            diff->frac[idx] += 0x18;
+          }
+        } else {
+          if ((diff->frac[idx] & 0x18) == 0x18) {
+            diff->cov[idx]++;
+            diff->frac[idx] -= 0x18;
+          } else
+            diff->frac[idx] += 0x8;
+        }
+        break;
+      case 5:
+        if (i) {
+          if (diff->frac[idx] & 0xE0)
+            diff->frac[idx] -= 0x20;
+          else {
+            diff->cov[idx]--;
+            diff->frac[idx] += 0x80;
+          }
+        } else {
+          if (diff->frac[idx] & 0x80) {
+            diff->cov[idx]++;
+            diff->frac[idx] -= 0x80;
+          } else
+            diff->frac[idx] += 0x20;
+        }
+        break;
+      default:
+        exit(error("", ERRCOUNT));
+    }
+  }
+
+}
+
 /* uint32_t saveInterval()
  * Save BED interval for a read/fragment.
  *   Return fragment length.
  */
-uint32_t saveInterval(Chrom* chrom, int64_t start,
-    int64_t end, char* qname, float val, float epsilon) {
+uint32_t saveInterval(Chrom* c, int64_t start,
+    int64_t end, char* qname, int count) {
   // check validity of positions
   if (start < 0) {
     fprintf(stderr, "Warning! Read %s prevented from extending below 0 on %s\n",
-      qname, chrom->name);
+      qname, c->name);
     start = 0;
   }
-  if (start >= chrom->len) {
+  if (start >= c->len) {
     char* msg = (char*) memalloc(MAX_ALNS);
-    sprintf(msg, "Read %s, ref. %s", qname, chrom->name);
+    sprintf(msg, "Read %s, ref. %s", qname, c->name);
     exit(error(msg, ERRPOS));
   }
-  if (end > chrom->len) {
+  if (end > c->len) {
     fprintf(stderr, "Warning! Read %s prevented from extending past %d on %s\n",
-      qname, chrom->len, chrom->name);
-    end = chrom->len;
+      qname, c->len, c->name);
+    end = c->len;
   }
 
-  // create 'diff' array if necessary
-  if (chrom->diff == NULL) {
-    chrom->diff = (float*) memalloc((chrom->len + 1) * sizeof(float));
-    for (int i = 0; i < chrom->len; i++)
-      chrom->diff[i] = 0.0f;
+  // create 'diff' arrays if necessary
+  if (c->diff == NULL) {
+    c->diff = (Diff*) memalloc(sizeof(Diff));
+    c->diff->frac = (uint8_t*) memalloc((1 + c->len) * sizeof(uint8_t));
+    c->diff->cov = (int16_t*) memalloc((1 + c->len) * sizeof(int16_t));
+    for (int i = 0; i < 1 + c->len; i++) {
+      c->diff->frac[i] = 0;
+      c->diff->cov[i] = 0;
+    }
   }
+
+  if (count == 1) {
+    c->diff->cov[start]++;
+    c->diff->cov[end]--;
+  } else
+    // add fractional count
+    addFrac(c->diff, start, end, count);
+
+/*
   // save ends of fragment to 'diff' array
   for (int i = 0; i < 2; i++) {
     uint32_t idx = i ? end : start;
@@ -845,6 +1012,7 @@ uint32_t saveInterval(Chrom* chrom, int64_t start,
 
     chrom->diff[idx] = num;
   }
+*/
 
   return end - start;
 }
@@ -855,7 +1023,7 @@ uint32_t saveInterval(Chrom* chrom, int64_t start,
  *   calculating average length from paired alns.
  */
 void processAvgExt(Aln* unpair, int unpairLen,
-    double totalLen, int pairedPr, float epsilon) {
+    double totalLen, int pairedPr) {
   // determine average fragment length
   int avgLen = 0;
   if (! pairedPr) {
@@ -869,13 +1037,13 @@ void processAvgExt(Aln* unpair, int unpairLen,
     Aln* a = unpair + i;
     if (! avgLen)
       saveInterval(a->chrom, a->pos[0], a->pos[1], a->name,
-        a->val, epsilon);
+        a->count);
     else if (a->strand)
       saveInterval(a->chrom, a->pos[0], a->pos[0] + avgLen,
-        a->name, a->val, epsilon);
+        a->name, a->count);
     else
       saveInterval(a->chrom, (signed) (a->pos[1] - avgLen),
-        a->pos[1], a->name, a->val, epsilon);
+        a->pos[1], a->name, a->count);
 
     // free memory
     free(a->name);
@@ -888,7 +1056,7 @@ void processAvgExt(Aln* unpair, int unpairLen,
  *   (for "extend to average length" option), for
  *   later processing by saveAvgExt().
  */
-void saveAvgExt(char* qname, Aln* b, float val,
+void saveAvgExt(char* qname, Aln* b, int count,
     Aln** unpair, int* unpairLen, int* unpairMem) {
 
   // alloc memory if necessary
@@ -906,7 +1074,7 @@ void saveAvgExt(char* qname, Aln* b, float val,
   a->strand = b->strand;
   a->pos[0] = b->pos[0];
   a->pos[1] = b->pos[1];
-  a->val = val;
+  a->count = count;
 
   (*unpairLen)++;
 }
@@ -916,25 +1084,24 @@ void saveAvgExt(char* qname, Aln* b, float val,
  *   (either keeping them as is, or extending
  *   to a given length).
  */
-void saveSingle(char* qname, Aln* a, float val,
-    bool extendOpt, int extend, float epsilon) {
+void saveSingle(char* qname, Aln* a, int count,
+    bool extendOpt, int extend) {
   if (extendOpt) {
     if (a->strand)
       saveInterval(a->chrom, a->pos[0], a->pos[0] + extend,
-        qname, val, epsilon);
+        qname, count);
     else
       saveInterval(a->chrom, (signed) (a->pos[1] - extend),
-        a->pos[1], qname, val, epsilon);
+        a->pos[1], qname, count);
   } else
     saveInterval(a->chrom, a->pos[0], a->pos[1], qname,
-      val, epsilon);
+      count);
 }
 
 /* uint32_t saveFragment()
  * Save full fragment for a proper pair. Return length.
  */
-uint32_t saveFragment(char* qname, Aln* a, float val,
-    float epsilon) {
+uint32_t saveFragment(char* qname, Aln* a, int count) {
   // ensure start < end
   uint32_t start, end;
   if (a->pos[0] > a->pos[1]) {
@@ -944,8 +1111,7 @@ uint32_t saveFragment(char* qname, Aln* a, float val,
     start = a->pos[0];
     end = a->pos[1];
   }
-  return saveInterval(a->chrom, start, end, qname,
-    val, epsilon);
+  return saveInterval(a->chrom, start, end, qname, count);
 }
 
 /* int processSingle()
@@ -956,8 +1122,7 @@ uint32_t saveFragment(char* qname, Aln* a, float val,
 int processSingle(char* qname, Aln* aln, int alnLen,
     bool extendOpt, int extend, bool avgExtOpt,
     Aln** unpair, int* unpairLen, int* unpairMem,
-    float score, float asDiff, float epsilon,
-    bool first) {
+    float score, float asDiff, bool first) {
 
   // adjust AS tolerance for secondary alns
   if (score != NOSCORE)
@@ -975,7 +1140,6 @@ int processSingle(char* qname, Aln* aln, int alnLen,
     return 0;
 
   // save singletons as fragments
-  float val = 1.0f / count; // weighted value of each aln
   for (int i = 0; i < alnLen; i++) {
     Aln* a = aln + i;
     if (! a->paired && a->first == first
@@ -984,13 +1148,12 @@ int processSingle(char* qname, Aln* aln, int alnLen,
       if (avgExtOpt)
         // for average-extension option, save alignment
         //   for later processing by processAvgExt()
-        saveAvgExt(qname, a, val, unpair,
+        saveAvgExt(qname, a, count, unpair,
           unpairLen, unpairMem);
 
       else
         // for other options, save singleton interval
-        saveSingle(qname, a, val, extendOpt, extend,
-          epsilon);
+        saveSingle(qname, a, count, extendOpt, extend);
 
     }
   }
@@ -1003,8 +1166,7 @@ int processSingle(char* qname, Aln* aln, int alnLen,
  *   Return 1 if valid alignments found, else 0.
  */
 int processPair(char* qname, Aln* aln, int alnLen,
-    double* totalLen, float score, float asDiff,
-    float epsilon) {
+    double* totalLen, float score, float asDiff) {
 
   // adjust AS tolerance for secondary alns
   if (score != NOSCORE)
@@ -1022,13 +1184,12 @@ int processPair(char* qname, Aln* aln, int alnLen,
     return 0;
 
   // save full fragments
-  float val = 1.0f / count; // weighted value of each aln
   uint64_t fragLen = 0;     // local sum of fragment lengths
   for (int i = 0; i < alnLen; i++) {
     Aln* a = aln + i;
     if (a->paired && a->full && a->score >= score
         && ! a->chrom->skip)
-      fragLen += saveFragment(qname, a, val, epsilon);
+      fragLen += saveFragment(qname, a, count);
   }
 
   *totalLen += (double) fragLen / count;
@@ -1079,11 +1240,10 @@ void processAlns(char* qname, Aln* aln, int alnLen,
 
 //int prevPr = *pairedPr, prevSn = *singlePr;
 
-  float epsilon = 1.0f / MAX_ALNS;
   if (pair)
     // process paired alignments
     *pairedPr += processPair(qname, aln, alnLen, totalLen,
-      scorePr, asDiff, epsilon);
+      scorePr, asDiff);
 
   else if (singleOpt)
     // process singleton alignments (separately for R1, R2)
@@ -1091,7 +1251,7 @@ void processAlns(char* qname, Aln* aln, int alnLen,
       *singlePr += processSingle(qname, aln, alnLen,
         extendOpt, extend, avgExtOpt,
         unpair, unpairLen, unpairMem,
-        j ? scoreR2 : scoreR1, asDiff, epsilon, ! j);
+        j ? scoreR2 : scoreR1, asDiff, ! j);
 
 /*
 //if (scoreR1 != NOSCORE && scoreR2 != NOSCORE) {
@@ -1589,7 +1749,7 @@ int readSAM(File in, bool gz, char* line, Aln** aln,
   // process single alignments w/ avgExtOpt
   if (avgExtOpt)
     processAvgExt(*unpair, unpairLen, *totalLen,
-      *pairedPr, 1.0f / *alnMem);
+      *pairedPr);
 
   return count;
 }
@@ -1742,7 +1902,7 @@ float getBAMscore(char* extra, int len) {
 
       // return alignment score (cast to float)
       extra += i;
-      switch(val) {
+      switch (val) {
         case 'c':
           return (float) (int8_t) loadInt(extra, sizeof(int8_t));
         case 'C':
@@ -1764,7 +1924,7 @@ float getBAMscore(char* extra, int len) {
     } else {
 
       // skip to next auxiliary field
-      switch(val) {
+      switch (val) {
         case 'A': i++; break;
         case 'c': i += sizeof(int8_t); break;
         case 'C': i += sizeof(uint8_t); break;
@@ -1899,7 +2059,7 @@ int parseBAM(gzFile in, char* line, Aln** aln, int* alnMem,
   // process single alignments w/ avgExtOpt
   if (avgExtOpt)
     processAvgExt(*unpair, unpairLen, *totalLen,
-      *pairedPr, 1.0f / *alnMem);
+      *pairedPr);
 
   return count;
 }
@@ -2258,17 +2418,17 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
 
     // save pileup values
     if (i)
-      savePileupCtrl(chrom, chromLen, fragLen, &genomeLen,
-        1.0f / alnMem);
+      savePileupCtrl(chrom, chromLen, fragLen, &genomeLen);
     else {
-      fragLen = savePileupTreat(chrom, chromLen,
-        1.0f / alnMem);
+      fragLen = savePileupTreat(chrom, chromLen);
       // reset 'diff' array for each Chrom
       for (int j = 0; j < chromLen; j++) {
         Chrom* c = chrom + j;
         if (c->diff != NULL)
-          for (int k = 0; k < c->len + 1; k++)
-            c->diff[k] = 0.0f;
+          for (int k = 0; k < c->len + 1; k++) {
+            c->diff->frac[k] = 0;
+            c->diff->cov[k] = 0;
+          }
       }
     }
   }

@@ -76,7 +76,7 @@ enum errCode { ERRFILE, ERROPEN, ERROPENW, ERRCLOSE, ERRMEM,
   ERRMISM, ERRINFO, ERRSAM, ERRREP, ERRCHROM, ERRHEAD,
   ERREXTEND,
   ERRBAM, ERRGEN, ERRTREAT, ERRCHRLEN, ERRCTRL, ERRPOS,
-  ERRSORT, ERRPVAL, ERRTYPE, ERRAUX, ERRASDIFF,
+  ERRSORT, ERRPVAL, ERRTYPE, ERRAUX, ERRASDIFF, ERRCOUNT,
 ERRUNGET, ERRGZIP,
   ERRTHREAD, ERRNAME, ERRCIGAR, DEFERR
 };
@@ -106,6 +106,7 @@ const char* errMsg[] = { "Need input/output files",
   ": unknown value type in BAM auxiliary field",
   "Poorly formatted BAM auxiliary field",
   "Secondary alignment score threshold must be >= 0",
+  "Cannot analyze more than 5 alignments per read/pair",
 
   "Failure in ungetc() call",
   "Cannot pipe in gzip compressed file (use zcat instead)",
@@ -132,11 +133,16 @@ typedef struct pileup {
   float* cov;
 } Pileup;
 
+typedef struct diff {
+  uint8_t* frac;  // fractions of a count
+  int16_t* cov;   // int counts
+} Diff;
+
 typedef struct chrom {
   char* name;
   uint32_t len;       // length of chromosome
   bool skip;
-  float* diff;
+  Diff* diff;
   Pileup* treat;
   uint32_t treatLen;  // length of pileup arrays for treatment sample(s)
   Pileup* ctrl;
@@ -154,7 +160,7 @@ typedef struct aln {
   bool full;    // both parts of paired aln analyzed? (only for paired alns)
   bool strand;  // which strand aln is on (only for singleton alignments)
   bool first;   // which read of a pair this is (only for singleton alignments)
-  float val;    // value of aln (only for singletons with avg-ext option)
+  int count;    // value of aln (only for singletons with avg-ext option)
   char* name;   // read name (only for singletons with avg-ext option)
   Chrom* chrom;
 } Aln;
