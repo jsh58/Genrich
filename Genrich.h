@@ -17,7 +17,7 @@
 #define MAX_ALNS    128     // maximum number of alignments per read/pair
                             //   - also used as max. read name length,
                             //     and for various dynamic memory allocs
-#define HASH_SIZE   131041  // size of hashtable
+#define HASH_SIZE   131041  // size of hashtable for p-values
 #define TAB         "\t"    // separator for SAM fields
 #define COL         ":"     // separator for SAM optional fields (TAG:TYPE:VALUE)
 #define COM         ", "    // separator for input file names / ref. names
@@ -32,7 +32,7 @@
 enum sam { NIL, QNAME, FLAG, RNAME, POS, MAPQ, CIGAR, RNEXT,
   PNEXT, TLEN, SEQ, QUAL };
 #define SCORE       "AS"      // extra field: alignment score
-#define NOSCORE     -FLT_MAX  // for alignments with no scores
+#define NOSCORE     -FLT_MAX  // for alignments with no alignment score(s)
 
 // command-line options
 #define OPTIONS     "ht:c:o:b:zya:xe:m:s:p:q:g:l:n:vV"
@@ -73,10 +73,10 @@ enum omp_locks { OUT, UN, LOG, DOVE, ALN, OMP_LOCKS };
 // error messages
 enum errCode { ERRFILE, ERROPEN, ERROPENW, ERRCLOSE, ERRMEM,
   ERRINT, ERRFLOAT, ERRPARAM,
-  ERRMISM, ERRINFO, ERRSAM, ERRREP, ERRCHROM, ERRHEAD,
+  ERRMISM, ERRINFO, ERRSAM, ERRCHROM, ERRHEAD,
   ERREXTEND,
   ERRBAM, ERRGEN, ERRTREAT, ERRCHRLEN, ERRCTRL, ERRPOS,
-  ERRSORT, ERRPVAL, ERRTYPE, ERRAUX, ERRASDIFF, ERRCOUNT,
+  ERRSORT, ERRTYPE, ERRAUX, ERRASDIFF, ERRISSUE,
 ERRUNGET, ERRGZIP,
   ERRTHREAD, ERRNAME, ERRCIGAR, DEFERR
 };
@@ -91,7 +91,6 @@ const char* errMsg[] = { "Need input/output files",
   ": mismatch between sequence length and CIGAR",
   ": no sequence information (SEQ or CIGAR)",
   ": poorly formatted SAM/BAM record",
-  ": read has repeated information in SAM",
   ": cannot find reference sequence name in SAM header",
   ": misplaced SAM header line",
   "Extension length must be >= 0",
@@ -102,11 +101,13 @@ const char* errMsg[] = { "Need input/output files",
   ": reference sequence missing from control sample(s)",
   ": read aligned beyond reference end",
   "SAM/BAM file not sorted by queryname (samtools sort -n)",
-  "Collected p-values do not match",
+//  "Collected p-values do not match",
   ": unknown value type in BAM auxiliary field",
   "Poorly formatted BAM auxiliary field",
   "Secondary alignment score threshold must be >= 0",
-  "Cannot analyze more than 5 alignments per read/pair",
+//  "Cannot analyze more than 5 alignments per read/pair",
+
+  ": internal error; please open an Issue on https://github.com/jsh58/Genrich",
 
   "Failure in ungetc() call",
   "Cannot pipe in gzip compressed file (use zcat instead)",
@@ -154,7 +155,7 @@ typedef struct chrom {
 
 typedef struct aln {
   uint32_t pos[2];
-  float score;  // alignment score, if given in SAM/BAM
+  float score;  // alignment score (sum of scores for paired alns)
   bool primary; // primary alignment?
   bool paired;  // properly paired alignment?
   bool full;    // both parts of paired aln analyzed? (only for paired alns)

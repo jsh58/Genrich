@@ -146,12 +146,12 @@ void swapInt(uint64_t* a, uint64_t* b) {
   *a = *b;
   *b = t;
 }
-uint64_t partition(float* pVal, uint64_t* pEnd,
-    uint64_t low, uint64_t high) {
+int64_t partition(float* pVal, uint64_t* pEnd,
+    int64_t low, int64_t high) {
   float pivot = pVal[high];  // pivot value: last elt
-  uint64_t idx = low - 1;
+  int64_t idx = low - 1;
 
-  for (uint64_t j = low; j < high; j++) {
+  for (int64_t j = low; j < high; j++) {
     if (pVal[j] < pivot) {
       idx++;
       swapFloat(pVal + idx, pVal + j);
@@ -164,9 +164,9 @@ uint64_t partition(float* pVal, uint64_t* pEnd,
   return idx;
 }
 void quickSort(float* pVal, uint64_t* pEnd,
-    uint64_t low, uint64_t high) {
+    int64_t low, int64_t high) {
   if (low < high) {
-    uint64_t idx = partition(pVal, pEnd, low, high);
+    int64_t idx = partition(pVal, pEnd, low, high);
     quickSort(pVal, pEnd, low, idx - 1);
     quickSort(pVal, pEnd, idx + 1, high);
   }
@@ -196,7 +196,7 @@ float lookup(float* pVal, uint64_t low, uint64_t high,
  */
 void saveQval(Chrom* chrom, int chromLen,
     uint64_t genomeLen, float* pVal,
-    uint64_t* pEnd, uint64_t pLen) {
+    uint64_t* pEnd, int64_t pLen) {
 
   // sort pileup by p-values
   quickSort(pVal, pEnd, 0, pLen - 1);
@@ -271,9 +271,9 @@ int recordPval(Hash** table, float p, uint32_t length) {
  *   hashtable (to be used in q-value calculations).
  */
 float* collectPval(Hash** table, uint64_t** pEnd,
-    uint64_t pLen) {
+    int64_t pLen) {
   float* pVal = (float*) memalloc(pLen * sizeof(float));
-  uint64_t idx = 0;
+  int64_t idx = 0;
   for (int i = 0; i < HASH_SIZE; i++)
     for (Hash* h = table[i]; h != NULL; h = h->next) {
       pVal[idx] = h->val;
@@ -281,7 +281,7 @@ float* collectPval(Hash** table, uint64_t** pEnd,
       idx++;
     }
   if (idx != pLen)
-    exit(error("", ERRPVAL));
+    exit(error("Failure collecting p-values", ERRISSUE));
   return pVal;
 }
 
@@ -336,7 +336,7 @@ float calcPval(float treatVal, float ctrlVal) {
  *   q-value calculations.
  */
 Hash** savePval(Chrom* chrom, int chromLen, bool qvalOpt,
-    uint64_t* pLen) {
+    int64_t* pLen) {
 
   // create hashtable for conversion of p-values to q-values
   Hash** table = NULL;
@@ -573,9 +573,10 @@ void findPeaks(File out, File log, bool logOpt, bool gzOut,
   }
 
   // compute p- and q-values
-  uint64_t pLen = 0;
+  int64_t pLen = 0;
   Hash** table = savePval(chrom, chromLen, qvalOpt, &pLen);
   if (qvalOpt) {
+
     // collect p-values from hashtable
     uint64_t* pEnd = memalloc(pLen * sizeof(uint64_t));
     float* pVal = collectPval(table, &pEnd, pLen);
@@ -639,9 +640,77 @@ void savePileupNoCtrl(Chrom* chrom, int chromLen,
 }
 
 
-void updateVal(Diff* d, uint32_t idx, int32_t* cov,
+void updateVal(int16_t dCov, uint8_t dFrac, int32_t* cov,
     uint8_t* frac) {
-  *cov += d->cov[idx];
+
+  // add ints
+  *cov += dCov;
+  if (! dFrac) {
+//fprintf(stderr, "  adding %d     -> %d / %02x", dCov, *cov, *frac);
+//while (!getchar()) ;
+    if (*cov < 0)
+      exit(error("Pileup < 0", ERRISSUE));
+    return;
+  }
+
+  // collect eighths and halves
+  int half = 0;
+  int sum8 = *frac & 0x7;
+  if (dFrac & 0x7) {
+    sum8 += dFrac & 0x7;
+    if (sum8 > 7) {
+      (*cov)++;
+      sum8 -= 8;
+    }
+  }
+  if (sum8 > 3) {
+    half++;
+    sum8 -= 4;
+  }
+
+  // collect sixths
+  int sum6 = (*frac >> 3) & 0x3;
+  if (dFrac & 0x18) {
+    sum6 += (dFrac >> 3) & 0x3;
+    if (sum6 > 5) {
+      (*cov)++;
+      sum6 -= 6;
+    }
+    if (sum6 > 2) {
+      half++;
+      sum6 -= 3;
+    }
+  }
+
+  // collect tenths
+  int sum10 = (*frac >> 5) & 0x7;
+  if (dFrac & 0xE0) {
+    sum10 += (dFrac >> 5) & 0x7;
+    if (sum10 > 9) {
+      (*cov)++;
+      sum10 -= 10;
+    }
+    if (sum10 > 4) {
+      half++;
+      sum10 -= 5;
+    }
+  }
+
+  // combine halves
+  if (half > 1) {
+    (*cov)++;
+    half -= 2;
+  }
+
+  // reconstruct fraction
+  *frac = (sum10 << 5) | (sum6 << 3) | (half << 2) | sum8;
+
+  if (*cov < 0)
+    exit(error("Pileup < 0", ERRISSUE));
+//fprintf(stderr, "  adding %d / %02x -> %d / %02x", dCov, dFrac, *cov, *frac);
+//while (!getchar()) ;
+
+/*
   uint8_t val = d->frac[idx];
   if (val & 0x1) {
     if (*frac & 0x1) {
@@ -674,14 +743,14 @@ void updateVal(Diff* d, uint32_t idx, int32_t* cov,
     }
     *frac = (*frac & 0x1F) | (x << 5);
   }
+*/
 }
 
 float getVal(int32_t cov, uint8_t frac) {
   return (float) cov
-    + ((frac & 0x1) / 2.0f)
-    + (((frac >> 1) & 0x3) / 3.0f)
-    + (((frac >> 3) & 0x3) / 4.0f)
-    + (((frac >> 5) & 0x7) / 5.0f);
+    + ((frac & 0x7) / 8.0f)
+    + (((frac >> 3) & 0x3) / 6.0f)
+    + (((frac >> 5) & 0x7) / 10.0f);
 }
 
 /* void savePileupCtrl()
@@ -723,7 +792,8 @@ void savePileupCtrl(Chrom* chrom, int chromLen,
     // initialize pileup values
     int32_t cov = 0;          // current pileup value
     uint8_t frac = 0;         // current pileup value (fraction part)
-    updateVal(d, 0, &cov, &frac);
+    //updateVal(d, 0, &cov, &frac);
+    updateVal(d->cov[0], d->frac[0], &cov, &frac);
     float val = getVal(cov, frac);
 
     // save pileup values along the chrom
@@ -736,7 +806,8 @@ void savePileupCtrl(Chrom* chrom, int chromLen,
         chr->ctrl->cov[pos] = MAX(val, lambda);
 
         // update pileup value
-        updateVal(d, j, &cov, &frac);
+        //updateVal(d, j, &cov, &frac);
+        updateVal(d->cov[j], d->frac[j], &cov, &frac);
         val = getVal(cov, frac);
 
 /*
@@ -759,7 +830,8 @@ void savePileupCtrl(Chrom* chrom, int chromLen,
     chr->ctrl->cov[pos] = MAX(val, lambda);
 
     // check for val error
-    updateVal(d, j, &cov, &frac);
+    //updateVal(d, j, &cov, &frac);
+    updateVal(d->cov[j], d->frac[j], &cov, &frac);
     val = getVal(cov, frac);
     if (val)
       fprintf(stderr, "Warning! Control pileup for ref %s finishes at %f\n",
@@ -806,7 +878,7 @@ double savePileupTreat(Chrom* chrom, int chromLen) {
     // intialize pileup values
     int32_t cov = 0;          // current pileup value
     uint8_t frac = 0;         // current pileup value (fraction part)
-    updateVal(d, 0, &cov, &frac);
+    updateVal(d->cov[0], d->frac[0], &cov, &frac);
     float val = getVal(cov, frac);
 
     // save pileup values along the chrom
@@ -818,15 +890,19 @@ double savePileupTreat(Chrom* chrom, int chromLen) {
 
         chr->treat->end[pos] = j;
         chr->treat->cov[pos] = val;
-//fprintf(stderr, "pos %d: %.9f -> %.9f", j, getVal(d->cov[j], d->frac[j]), val);
 
         // keep track of fragment length (weighted by val)
         fragLen += (j - start) * val;
         start = j;
 
         // update pileup value
-        updateVal(d, j, &cov, &frac);
+        //updateVal(d, j, &cov, &frac);
+        updateVal(d->cov[j], d->frac[j], &cov, &frac);
         val = getVal(cov, frac);
+
+//fprintf(stderr, "pos %d: %.9f -> %.9f", j, getVal(d->cov[j], d->frac[j]), val);
+//while(!getchar()) ;
+
 /*
         // update pileup value
         val += chr->diff[j];
@@ -862,7 +938,8 @@ fprintf(stderr, " -> %.11f", val);
     fragLen += (j - start) * val;
 
     // check for val error
-    updateVal(d, j, &cov, &frac);
+    //updateVal(d, j, &cov, &frac);
+    updateVal(d->cov[j], d->frac[j], &cov, &frac);
     val = getVal(cov, frac);
     if (val)
       fprintf(stderr, "Warning! Treatment pileup for ref %s finishes at %f\n",
@@ -877,83 +954,187 @@ fprintf(stderr, " -> %.11f", val);
 /*** Convert alignments to intervals ***/
 
 /* void addFrac()
- * Add a fractional count to the diff arrays.
- *   The counts are split among the 8 bits of diff->plus
- *   and diff->minus:
- *       000     00     00     0
- *     fifths fourths thirds halves
- *   Carry over is applied to diff->cov.
+ * Add a fractional count to *frac, which encodes
+ *   counts among its 8 bits:
+ *       000     00      000
+ *     tenths  sixths  eighths
+ *   Carry over is applied to *cov.
  */
-void addFrac(Diff* diff, uint32_t start, uint32_t end,
-    int count) {
-  for (int i = 0; i < 2; i++) {
-    uint32_t idx = i ? end : start;
+void addFrac(int16_t* cov, uint8_t* frac, int count) {
 
-    switch (count) {
-      case 2:
-        if (diff->frac[idx] & 0x1) {
-          diff->frac[idx]--;
-          if (! i)
-            diff->cov[idx]++;
+  switch (count) {
+    case 8:
+      if ((*frac & 0x7) == 0x7) {
+        (*cov)++;
+        *frac &= 0xF8;
+      } else
+        (*frac)++;
+      break;
+    case 4:
+      if ((*frac & 0x6) == 0x6) {
+        (*cov)++;
+        *frac &= 0xF9;
+      } else
+        *frac += 0x2;
+      break;
+    case 2:
+      if (*frac & 0x4) {
+        (*cov)++;
+        *frac &= 0xFB;
+      } else
+        *frac |= 0x4;
+      break;
+    case 6:
+      if (*frac & 0x10) {
+        if (*frac & 0x4) {
+          (*cov)++;
+          *frac &= 0xEB;
         } else {
-          diff->frac[idx]++;
-          if (i)
-            diff->cov[idx]--;
+          *frac |= 0x4;
+          *frac &= 0xEF;
         }
-        break;
-      case 3:
-        if (i) {
-          if (diff->frac[idx] & 0x6)
-            diff->frac[idx] -= 0x2;
-          else {
-            diff->cov[idx]--;
-            diff->frac[idx] += 0x4;
-          }
+      } else
+        *frac += 0x8;
+      break;
+    case 3:
+      if (*frac & 0x8) {
+        if (*frac & 0x4) {
+          (*cov)++;
+          *frac &= 0xF3;
         } else {
-          if (diff->frac[idx] & 0x4) {
-            diff->cov[idx]++;
-            diff->frac[idx] -= 0x4;
-          } else
-            diff->frac[idx] += 0x2;
+          *frac |= 0x4;
+          *frac &= 0xF7;
         }
-        break;
-      case 4:
-        if (i) {
-          if (diff->frac[idx] & 0x18)
-            diff->frac[idx] -= 0x8;
-          else {
-            diff->cov[idx]--;
-            diff->frac[idx] += 0x18;
-          }
+      } else if (*frac & 0x10) {
+        if (*frac & 0x4) {
+          (*cov)++;
+          *frac &= 0xEB;
         } else {
-          if ((diff->frac[idx] & 0x18) == 0x18) {
-            diff->cov[idx]++;
-            diff->frac[idx] -= 0x18;
-          } else
-            diff->frac[idx] += 0x8;
+          *frac |= 0x4;
+          *frac &= 0xEF;
         }
-        break;
-      case 5:
-        if (i) {
-          if (diff->frac[idx] & 0xE0)
-            diff->frac[idx] -= 0x20;
-          else {
-            diff->cov[idx]--;
-            diff->frac[idx] += 0x80;
-          }
+        *frac |= 0x8;
+      } else
+        *frac |= 0x10;
+      break;
+    case 10:
+      if (*frac & 0x80) {
+        if (*frac & 0x4) {
+          (*cov)++;
+          *frac &= 0x7B;
         } else {
-          if (diff->frac[idx] & 0x80) {
-            diff->cov[idx]++;
-            diff->frac[idx] -= 0x80;
-          } else
-            diff->frac[idx] += 0x20;
+          *frac |= 0x4;
+          *frac &= 0x7F;
         }
-        break;
-      default:
-        exit(error("", ERRCOUNT));
-    }
+      } else
+        *frac += 0x20;
+      break;
+    case 5:
+      if (*frac & 0x80) {
+        if (*frac & 0x4) {
+          (*cov)++;
+          *frac &= 0x7B;
+        } else {
+          *frac |= 0x4;
+          *frac &= 0x7F;
+        }
+        *frac += 0x20;
+      } else if ((*frac & 0x60) == 0x60) {
+        if (*frac & 0x4) {
+          (*cov)++;
+          *frac &= 0x9B;
+        } else {
+          *frac |= 0x4;
+          *frac &= 0x9F;
+        }
+      } else
+        *frac += 0x40;
+      break;
+
+    default:
+      exit(error("Disallowed num alns", ERRISSUE));
   }
+}
 
+/* void subFrac()
+ * Subtract a fractional count to *frac.
+ */
+void subFrac(int16_t* cov, uint8_t* frac, int count) {
+
+  switch (count) {
+    case 8:
+      if (*frac & 0x7)
+        (*frac)--;
+      else {
+        (*cov)--;
+        *frac |= 0x7;
+      }
+      break;
+    case 4:
+      if (*frac & 0x6)
+        *frac -= 0x2;
+      else {
+        (*cov)--;
+        *frac |= 0x6;
+      }
+      break;
+    case 2:
+      if (*frac & 0x4)
+        *frac &= 0xFB;
+      else {
+        (*cov)--;
+        *frac |= 0x4;
+      }
+      break;
+    case 6:
+      if (*frac & 0x18)
+        *frac -= 0x8;
+      else if (*frac & 0x4) {
+        *frac |= 0x10;
+        *frac &= 0xFB;
+      } else {
+        (*cov)--;
+        *frac |= 0x14;
+      }
+      break;
+    case 3:
+      if (*frac & 0x10)
+        *frac &= 0xEF;
+      else if (*frac & 0x4) {
+        *frac &= 0xFB;
+        *frac += 0x8;
+      } else {
+        (*cov)--;
+        *frac += 0xC;
+      }
+      break;
+    case 10:
+      if (*frac & 0xE0)
+        *frac -= 0x20;
+      else if (*frac & 0x4) {
+        *frac &= 0xFB;
+        *frac |= 0x80;
+      } else {
+        (*cov)--;
+        *frac |= 0x84;
+      }
+      break;
+    case 5:
+      if (*frac & 0xC0)
+        *frac -= 0x40;
+      else if (*frac & 0x4) {
+        *frac &= 0xFB;
+        *frac += 0x60;
+      } else {
+        (*cov)--;
+        *frac |= 0x4;
+        *frac += 0x60;
+      }
+      break;
+
+    default:
+      exit(error("Disallowed num alns", ERRISSUE));
+  }
 }
 
 /* uint32_t saveInterval()
@@ -993,26 +1174,12 @@ uint32_t saveInterval(Chrom* c, int64_t start,
   if (count == 1) {
     c->diff->cov[start]++;
     c->diff->cov[end]--;
-  } else
+  } else {
     // add fractional count
-    addFrac(c->diff, start, end, count);
-
-/*
-  // save ends of fragment to 'diff' array
-  for (int i = 0; i < 2; i++) {
-    uint32_t idx = i ? end : start;
-    float num = chrom->diff[idx];
-    num += i ? -val : val;
-
-    // reset value to nearest int if it's close
-    int numInt = num < 0.0f ? (int) (num - 0.5f)
-      : (int) (num + 0.5f);
-    if (fabsf(numInt - num) < epsilon)
-      num = (float) numInt;
-
-    chrom->diff[idx] = num;
+    addFrac(&c->diff->cov[start], &c->diff->frac[start], count);
+    subFrac(&c->diff->cov[end], &c->diff->frac[end], count);
+    //addFrac(c->diff, start, end, count);
   }
-*/
 
   return end - start;
 }
