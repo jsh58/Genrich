@@ -71,7 +71,7 @@ void usage(void) {
 /* int error()
  * Prints an error message.
  */
-int error(char* msg, enum errCode err) {
+int error(const char* msg, enum errCode err) {
   fprintf(stderr, "Error! %s%s\n", msg, errMsg[err]);
   return -1;
 }
@@ -281,7 +281,7 @@ float* collectPval(Hash** table, uint64_t** pEnd,
       idx++;
     }
   if (idx != pLen)
-    exit(error("Failure collecting p-values", ERRISSUE));
+    exit(error(errMsg[ERRPVAL], ERRISSUE));
   return pVal;
 }
 
@@ -639,7 +639,11 @@ void savePileupNoCtrl(Chrom* chrom, int chromLen,
   }
 }
 
-
+/* void updateVal()
+ * Update pileup value (int cov and 8-bit encoded
+ *   fractional part) by adding the given int (dCov)
+ *   and fractional part (dFrac) from the 'diff' arrays.
+ */
 void updateVal(int16_t dCov, uint8_t dFrac, int32_t* cov,
     uint8_t* frac) {
 
@@ -649,103 +653,58 @@ void updateVal(int16_t dCov, uint8_t dFrac, int32_t* cov,
 //fprintf(stderr, "  adding %d     -> %d / %02x", dCov, *cov, *frac);
 //while (!getchar()) ;
     if (*cov < 0)
-      exit(error("Pileup < 0", ERRISSUE));
+      exit(error(errMsg[ERRPILE], ERRISSUE));
     return;
   }
 
-  // collect eighths and halves
+  // sum eighths (and collect halves)
   int half = 0;
-  int sum8 = *frac & 0x7;
   if (dFrac & 0x7) {
-    sum8 += dFrac & 0x7;
-    if (sum8 > 7) {
-      (*cov)++;
-      sum8 -= 8;
-    }
-  }
-  if (sum8 > 3) {
+    int sum8 = (dFrac & 0x7) + (*frac & 0x7);
+    for (; sum8 > 3; sum8 -= 4)
+      half++;
+    *frac = (*frac & 0xF8) | sum8;
+  } else if (*frac & 0x4) {
     half++;
-    sum8 -= 4;
+    *frac &= 0xFB;
   }
 
-  // collect sixths
-  int sum6 = (*frac >> 3) & 0x3;
+  // sum sixths
   if (dFrac & 0x18) {
-    sum6 += (dFrac >> 3) & 0x3;
-    if (sum6 > 5) {
-      (*cov)++;
-      sum6 -= 6;
-    }
-    if (sum6 > 2) {
+    int sum6 = ((dFrac >> 3) & 0x3) + ((*frac >> 3) & 0x3);
+    for (; sum6 > 2; sum6 -= 3)
       half++;
-      sum6 -= 3;
-    }
+    *frac = (*frac & 0xE7) | (sum6 << 3);
   }
 
-  // collect tenths
-  int sum10 = (*frac >> 5) & 0x7;
+  // sum tenths
   if (dFrac & 0xE0) {
-    sum10 += (dFrac >> 5) & 0x7;
-    if (sum10 > 9) {
-      (*cov)++;
-      sum10 -= 10;
-    }
-    if (sum10 > 4) {
+    int sum10 = ((dFrac >> 5) & 0x7) + ((*frac >> 5) & 0x7);
+    for (; sum10 > 4; sum10 -= 5)
       half++;
-      sum10 -= 5;
-    }
+    *frac = (*frac & 0x1F) | (sum10 << 5);
   }
 
   // combine halves
-  if (half > 1) {
+  for (; half > 1; half -= 2)
     (*cov)++;
-    half -= 2;
-  }
+  if (half)
+    *frac |= 0x4;
 
   // reconstruct fraction
-  *frac = (sum10 << 5) | (sum6 << 3) | (half << 2) | sum8;
+  // *frac = (sum10 << 5) | (sum6 << 3) | (half << 2) | sum8;
 
   if (*cov < 0)
-    exit(error("Pileup < 0", ERRISSUE));
+    exit(error(errMsg[ERRPILE], ERRISSUE));
+
 //fprintf(stderr, "  adding %d / %02x -> %d / %02x", dCov, dFrac, *cov, *frac);
 //while (!getchar()) ;
-
-/*
-  uint8_t val = d->frac[idx];
-  if (val & 0x1) {
-    if (*frac & 0x1) {
-      (*cov)++;
-      *frac -= 0x1;
-    } else
-      *frac += 0x1;
-  }
-  if (val & 0x6) {
-    int x = ((val >> 1) & 0x3) + ((*frac >> 1) & 0x3);
-    if (x > 2) {
-      (*cov)++;
-      x -= 3;
-    }
-    *frac = (*frac & 0xF9) | (x << 1);
-  }
-  if (val & 0x18) {
-    int x = ((val >> 3) & 0x3) + ((*frac >> 3) & 0x3);
-    if (x > 3) {
-      (*cov)++;
-      x -= 4;
-    }
-    *frac = (*frac & 0xE7) | (x << 3);
-  }
-  if (val & 0xE0) {
-    int x = ((val >> 5) & 0x7) + ((*frac >> 5) & 0x7);
-    if (x > 4) {
-      (*cov)++;
-      x -= 5;
-    }
-    *frac = (*frac & 0x1F) | (x << 5);
-  }
-*/
 }
 
+/* float getVal()
+ * Reconstruct a float value from the given
+ *   int and 8-bit encoded fractional part.
+ */
 float getVal(int32_t cov, uint8_t frac) {
   return (float) cov
     + ((frac & 0x7) / 8.0f)
@@ -792,45 +751,31 @@ void savePileupCtrl(Chrom* chrom, int chromLen,
     // initialize pileup values
     int32_t cov = 0;          // current pileup value
     uint8_t frac = 0;         // current pileup value (fraction part)
-    //updateVal(d, 0, &cov, &frac);
-    updateVal(d->cov[0], d->frac[0], &cov, &frac);
+    updateVal(d->cov[0], d->frac[0], &cov, &frac);  // initialize
     float val = getVal(cov, frac);
 
     // save pileup values along the chrom
     uint32_t pos = 0;         // position in pileup arrays
     uint32_t j;
-    for (j = 1; j < chr->len; j++)
+    for (j = 1; j < chr->len; j++) {
       if (d->cov[j] || d->frac[j]) {
 
         chr->ctrl->end[pos] = j;
         chr->ctrl->cov[pos] = MAX(val, lambda);
+        pos++;
 
         // update pileup value
-        //updateVal(d, j, &cov, &frac);
         updateVal(d->cov[j], d->frac[j], &cov, &frac);
         val = getVal(cov, frac);
 
-/*
-        // update pileup value
-        val += chr->diff[j];
-        // reset val to nearest int if it's close
-        if (val < epsilon)
-          val = 0.0f;
-        else {
-          int valInt = (int) (val + 0.5f);
-          if (fabsf(valInt - val) < epsilon)
-            val = (float) valInt;
-        }
-*/
-        pos++;
       }
+    }
 
     // save final interval
     chr->ctrl->end[pos] = j;
     chr->ctrl->cov[pos] = MAX(val, lambda);
 
-    // check for val error
-    //updateVal(d, j, &cov, &frac);
+    // check for val error (should end at 0)
     updateVal(d->cov[j], d->frac[j], &cov, &frac);
     val = getVal(cov, frac);
     if (val)
@@ -878,67 +823,39 @@ double savePileupTreat(Chrom* chrom, int chromLen) {
     // intialize pileup values
     int32_t cov = 0;          // current pileup value
     uint8_t frac = 0;         // current pileup value (fraction part)
-    updateVal(d->cov[0], d->frac[0], &cov, &frac);
+    updateVal(d->cov[0], d->frac[0], &cov, &frac);  // initialize
     float val = getVal(cov, frac);
 
     // save pileup values along the chrom
-    uint32_t pos = 0;         // position in pileup arrays
     uint32_t start = 0;       // beginning coordinate of interval
+    uint32_t pos = 0;         // position in pileup arrays
     uint32_t j;
-    for (j = 1; j < chr->len; j++)
+    for (j = 1; j < chr->len; j++) {
       if (d->cov[j] || d->frac[j]) {
 
         chr->treat->end[pos] = j;
         chr->treat->cov[pos] = val;
+        pos++;
 
         // keep track of fragment length (weighted by val)
         fragLen += (j - start) * val;
         start = j;
 
         // update pileup value
-        //updateVal(d, j, &cov, &frac);
         updateVal(d->cov[j], d->frac[j], &cov, &frac);
         val = getVal(cov, frac);
 
-//fprintf(stderr, "pos %d: %.9f -> %.9f", j, getVal(d->cov[j], d->frac[j]), val);
+//fprintf(stderr, "  pos %d: %.9f -> %.9f", j, getVal(d->cov[j], d->frac[j]), val);
 //while(!getchar()) ;
-
-/*
-        // update pileup value
-        val += chr->diff[j];
-fprintf(stderr, "  pos %d: diff %.11f -> %.11f", j, chr->diff[j], val);
-        // reset val to nearest int if it's close
-        if (val < epsilon)
-          val = 0.0f;
-        else {
-//          for (int k = 1; k < 6; k++) {
-//            float valk = k * val;
-//            int valInt = (int) (valk + 0.5f);
-//            if (fabsf(valInt - valk) < epsilon) {
-//              val = (float) valInt / k;
-            int valInt = (int) (val + 0.5f);
-            //if (fabsf(valInt - val) < epsilon) {
-            if (fabs(valInt - val) < epsilon) {
-              val = (double) valInt;
-fprintf(stderr, " -> %.11f", val);
-//fprintf(stderr, " -> %.11f (%d)", val, k);
-//              break;
-            }
-//          }
-        }
-//fprintf(stderr, "%f", val);
-*/
-//while(!getchar()) ;
-        pos++;
       }
+    }
 
     // save final interval
     chr->treat->end[pos] = j;
     chr->treat->cov[pos] = val;
     fragLen += (j - start) * val;
 
-    // check for val error
-    //updateVal(d, j, &cov, &frac);
+    // check for val error (should end at 0)
     updateVal(d->cov[j], d->frac[j], &cov, &frac);
     val = getVal(cov, frac);
     if (val)
@@ -954,14 +871,15 @@ fprintf(stderr, " -> %.11f", val);
 /*** Convert alignments to intervals ***/
 
 /* void addFrac()
- * Add a fractional count to *frac, which encodes
- *   counts among its 8 bits:
+ * Add a fractional count (1/count) to *frac,
+ *   which has this 8-bit encoding:
  *       000     00      000
  *     tenths  sixths  eighths
  *   Carry over is applied to *cov.
+ * (apologies in advance to those attempting to
+ *   debug/maintain this code)
  */
 void addFrac(int16_t* cov, uint8_t* frac, int count) {
-
   switch (count) {
     case 8:
       if ((*frac & 0x7) == 0x7) {
@@ -1050,17 +968,19 @@ void addFrac(int16_t* cov, uint8_t* frac, int count) {
       } else
         *frac += 0x40;
       break;
-
-    default:
-      exit(error("Disallowed num alns", ERRISSUE));
+    default: ;
+      char* msg = (char*) memalloc(MAX_ALNS);
+      sprintf(msg, "%s (%d)", errMsg[ERRALNS], count);
+      exit(error(msg, ERRISSUE));
   }
 }
 
 /* void subFrac()
  * Subtract a fractional count to *frac.
+ *   See addFrac() above for a description of
+ *   the 8-bit encoding.
  */
 void subFrac(int16_t* cov, uint8_t* frac, int count) {
-
   switch (count) {
     case 8:
       if (*frac & 0x7)
@@ -1131,9 +1051,10 @@ void subFrac(int16_t* cov, uint8_t* frac, int count) {
         *frac += 0x60;
       }
       break;
-
-    default:
-      exit(error("Disallowed num alns", ERRISSUE));
+    default: ;
+      char* msg = (char*) memalloc(MAX_ALNS);
+      sprintf(msg, "%s (%d)", errMsg[ERRALNS], count);
+      exit(error(msg, ERRISSUE));
   }
 }
 
@@ -1171,6 +1092,7 @@ uint32_t saveInterval(Chrom* c, int64_t start,
     }
   }
 
+  // add counts to diff array(s)
   if (count == 1) {
     c->diff->cov[start]++;
     c->diff->cov[end]--;
@@ -1178,7 +1100,6 @@ uint32_t saveInterval(Chrom* c, int64_t start,
     // add fractional count
     addFrac(&c->diff->cov[start], &c->diff->frac[start], count);
     subFrac(&c->diff->cov[end], &c->diff->frac[end], count);
-    //addFrac(c->diff, start, end, count);
   }
 
   return end - start;
@@ -1281,6 +1202,29 @@ uint32_t saveFragment(char* qname, Aln* a, int count) {
   return saveInterval(a->chrom, start, end, qname, count);
 }
 
+/* void subsampleSingle()
+ * For sets of single alns at an invalid count (>10, 9, 7),
+ *   find a more stringent score.
+ */
+void subsampleSingle(Aln* aln, int alnLen, bool first,
+    int* count, float* score) {
+  float minScore = FLT_MAX;               // min score of alns to keep
+  *count = *count > 10 ? 10 : *count - 1; // update count of alns to keep
+  int j = 0;  // count of alns
+  for (int i = 0; i < alnLen; i++) {
+    Aln* a = aln + i;
+    if (! a->paired && a->first == first
+        && a->score >= *score && ! a->chrom->skip) {
+      if (j < *count && a->score < minScore)
+        minScore = a->score;
+      else if (a->score > minScore)
+        minScore = a->score;  // increase minScore
+      j++;
+    }
+  }
+  *score = minScore;
+}
+
 /* int processSingle()
  * Process a set of singleton alignments, weighted to
  *   1/n (number of valid alignments).
@@ -1295,7 +1239,7 @@ int processSingle(char* qname, Aln* aln, int alnLen,
   if (score != NOSCORE)
     score -= asDiff;
 
-  // determine number of valid alignments
+  // determine number of valid single alignments
   int count = 0;
   for (int i = 0; i < alnLen; i++) {
     Aln* a = aln + i;
@@ -1306,25 +1250,57 @@ int processSingle(char* qname, Aln* aln, int alnLen,
   if (! count)
     return 0;
 
-  // save singletons as fragments
+  // adjust score so that num alns is OK (1/2/3/4/5/6/8/10)
+  if (count > 10 || count == 7 || count == 9)
+    subsampleSingle(aln, alnLen, first, &count, &score);
+
+  // find singletons to save
+  int saved = 0;
   for (int i = 0; i < alnLen; i++) {
     Aln* a = aln + i;
     if (! a->paired && a->first == first
         && a->score >= score && ! a->chrom->skip) {
 
-      if (avgExtOpt)
+      if (avgExtOpt) {
         // for average-extension option, save alignment
         //   for later processing by processAvgExt()
         saveAvgExt(qname, a, count, unpair,
           unpairLen, unpairMem);
 
-      else
+      } else {
         // for other options, save singleton interval
         saveSingle(qname, a, count, extendOpt, extend);
+      }
 
+      if (++saved == count)
+        break;  // in case of AS ties
     }
   }
+
   return 1;
+}
+
+/* void subsamplePair()
+ * For sets of paired alns at an invalid count (>10, 9, 7),
+ *   find a more stringent score.
+ */
+void subsamplePair(Aln* aln, int alnLen, int* count,
+    float* score) {
+  float minScore = FLT_MAX;               // min score of alns to keep
+  *count = *count > 10 ? 10 : *count - 1; // update count of alns to keep
+  int j = 0;  // count of alns
+  for (int i = 0; i < alnLen; i++) {
+    Aln* a = aln + i;
+    if (a->paired && a->full && a->score >= *score
+        && ! a->chrom->skip) {
+      if (j < *count && a->score < minScore)
+        minScore = a->score;
+      else if (a->score > minScore)
+        minScore = a->score;  // increase minScore
+      j++;
+    }
+  }
+  *score = minScore;
 }
 
 /* int processPair()
@@ -1339,7 +1315,7 @@ int processPair(char* qname, Aln* aln, int alnLen,
   if (score != NOSCORE)
     score -= asDiff;
 
-  // determine number of valid alignments
+  // determine number of valid paired alignments
   int count = 0;
   for (int i = 0; i < alnLen; i++) {
     Aln* a = aln + i;
@@ -1350,13 +1326,24 @@ int processPair(char* qname, Aln* aln, int alnLen,
   if (! count)
     return 0;
 
-  // save full fragments
+  // adjust score so that num alns is OK (1/2/3/4/5/6/8/10)
+  if (count > 10 || count == 7 || count == 9)
+    subsamplePair(aln, alnLen, &count, &score);
+
+  // find full fragments to save
   uint64_t fragLen = 0;     // local sum of fragment lengths
+  int saved = 0;
   for (int i = 0; i < alnLen; i++) {
     Aln* a = aln + i;
     if (a->paired && a->full && a->score >= score
-        && ! a->chrom->skip)
+        && ! a->chrom->skip) {
+
+      // save full fragment
       fragLen += saveFragment(qname, a, count);
+
+      if (++saved == count)
+        break;  // in case of AS ties
+    }
   }
 
   *totalLen += (double) fragLen / count;
@@ -1374,12 +1361,7 @@ void processAlns(char* qname, Aln* aln, int alnLen,
     double* totalLen, int* pairedPr, int* singlePr,
     int* orphan, bool singleOpt, bool extendOpt,
     int extend, bool avgExtOpt, Aln** unpair,
-    int* unpairLen, int* unpairMem, float asDiff,
-    int* alnMem) {
-
-  // update max number of alns (*alnMem)
-  if (alnLen > *alnMem)
-    *alnMem = alnLen;
+    int* unpairLen, int* unpairMem, float asDiff) {
 
   // determine if paired alns are valid, and best score
   float scorePr = NOSCORE, scoreR1 = NOSCORE,
@@ -1407,20 +1389,21 @@ void processAlns(char* qname, Aln* aln, int alnLen,
 
 //int prevPr = *pairedPr, prevSn = *singlePr;
 
-  if (pair)
+  if (pair) {
     // process paired alignments
-    *pairedPr += processPair(qname, aln, alnLen, totalLen,
-      scorePr, asDiff);
+    *pairedPr += processPair(qname, aln, alnLen,
+      totalLen, scorePr, asDiff);
 
-  else if (singleOpt)
+  } else if (singleOpt) {
     // process singleton alignments (separately for R1, R2)
     for (int j = 0; j < 2; j++)
       *singlePr += processSingle(qname, aln, alnLen,
         extendOpt, extend, avgExtOpt,
         unpair, unpairLen, unpairMem,
         j ? scoreR2 : scoreR1, asDiff, ! j);
-
+  }
 /*
+if (!strcmp(qname, "SRR5427886.91")) {
 //if (scoreR1 != NOSCORE && scoreR2 != NOSCORE) {
   if (pair)
     fprintf(stderr, "paired; score %f\n", scorePr);
@@ -1428,7 +1411,7 @@ void processAlns(char* qname, Aln* aln, int alnLen,
     fprintf(stderr, "single; scoreR1 %f, scoreR2 %f\n", scoreR1, scoreR2);
   for (int i = 0; i < alnLen; i++) {
     Aln* a = aln + i;
-    fprintf(stderr, "Aln %d: %s%s%s; %s:%d-%d; AS=%f\n",
+    fprintf(stderr, "Aln %d: %s%s%s; %s:%d-%d; AS=%.0f\n",
       i, a->paired && a->full ? "paired" : "single",
       ! a->paired && a->first ? " R1" : "",
       ! a->paired && ! a->first ? " R2": "",
@@ -1437,8 +1420,8 @@ void processAlns(char* qname, Aln* aln, int alnLen,
   fprintf(stderr, "printed: %d paired, %d single\n",
     *pairedPr - prevPr, *singlePr - prevSn);
 while(!getchar()) ;
-//}
-*/
+}
+// */
 
 }
 
@@ -1808,10 +1791,10 @@ int calcDist(char* qname, char* seq, char* cigar) {
  * Parse the alignments in a SAM file.
  */
 int readSAM(File in, bool gz, char* line, Aln** aln,
-    int* alnMem, char* readName, double* totalLen,
-    int* unmapped, int* paired, int* single, int* pairedPr,
-    int* singlePr, int* supp, int* skipped, int* lowMapQ,
-    int minMapQ, int xcount, char** xchrList, int* secPair,
+    char* readName, double* totalLen, int* unmapped,
+    int* paired, int* single, int* pairedPr, int* singlePr,
+    int* supp, int* skipped, int* lowMapQ, int minMapQ,
+    int xcount, char** xchrList, int* secPair,
     int* secSingle, int* orphan, int* chromLen,
     Chrom** chrom, bool singleOpt, bool extendOpt,
     int extend, bool avgExtOpt, Aln** unpair,
@@ -1889,7 +1872,7 @@ int readSAM(File in, bool gz, char* line, Aln** aln,
         processAlns(readName, *aln, alnLen, totalLen,
           pairedPr, singlePr, orphan, singleOpt,
           extendOpt, extend, avgExtOpt, unpair,
-          &unpairLen, unpairMem, asDiff, alnMem);
+          &unpairLen, unpairMem, asDiff);
       alnLen = 0;
       strncpy(readName, qname, MAX_ALNS);
     }
@@ -1911,7 +1894,7 @@ int readSAM(File in, bool gz, char* line, Aln** aln,
     processAlns(readName, *aln, alnLen, totalLen,
       pairedPr, singlePr, orphan, singleOpt,
       extendOpt, extend, avgExtOpt, unpair,
-      &unpairLen, unpairMem, asDiff, alnMem);
+      &unpairLen, unpairMem, asDiff);
 
   // process single alignments w/ avgExtOpt
   if (avgExtOpt)
@@ -2121,7 +2104,7 @@ float getBAMscore(char* extra, int len) {
 /* int parseBAM()
  * Parse the alignments in a BAM file.
  */
-int parseBAM(gzFile in, char* line, Aln** aln, int* alnMem,
+int parseBAM(gzFile in, char* line, Aln** aln,
     char* readName, int chromLen, Chrom* chrom, int n_ref,
     int idx[], double* totalLen, int* unmapped,
     int* paired, int* single, int* pairedPr, int* singlePr,
@@ -2199,7 +2182,7 @@ int parseBAM(gzFile in, char* line, Aln** aln, int* alnMem,
         processAlns(readName, *aln, alnLen, totalLen,
           pairedPr, singlePr, orphan, singleOpt,
           extendOpt, extend, avgExtOpt, unpair,
-          &unpairLen, unpairMem, asDiff, alnMem);
+          &unpairLen, unpairMem, asDiff);
       alnLen = 0;
       strncpy(readName, read_name, MAX_ALNS);
     }
@@ -2221,7 +2204,7 @@ int parseBAM(gzFile in, char* line, Aln** aln, int* alnMem,
     processAlns(readName, *aln, alnLen, totalLen,
       pairedPr, singlePr, orphan, singleOpt,
       extendOpt, extend, avgExtOpt, unpair,
-      &unpairLen, unpairMem, asDiff, alnMem);
+      &unpairLen, unpairMem, asDiff);
 
   // process single alignments w/ avgExtOpt
   if (avgExtOpt)
@@ -2235,7 +2218,7 @@ int parseBAM(gzFile in, char* line, Aln** aln, int* alnMem,
  * Parse the header from a BAM file, then
  *   call parseBAM().
  */
-int readBAM(gzFile in, char* line, Aln** aln, int* alnMem,
+int readBAM(gzFile in, char* line, Aln** aln,
     char* readName, double* totalLen, int* unmapped,
     int* paired, int* single, int* pairedPr, int* singlePr,
     int* supp, int* skipped, int* lowMapQ, int minMapQ,
@@ -2294,7 +2277,7 @@ int readBAM(gzFile in, char* line, Aln** aln, int* alnMem,
       chromLen, chrom, xcount, xchrList, ctrl);
   }
 
-  return parseBAM(in, line, aln, alnMem, readName,
+  return parseBAM(in, line, aln, readName,
     *chromLen, *chrom, n_ref, idx, totalLen, unmapped,
     paired, single, pairedPr, singlePr, supp, skipped,
     lowMapQ, minMapQ, secPair, secSingle, orphan,
@@ -2535,7 +2518,6 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
       break;
     }
 
-    int alnMem = 1; // max. number of alignments per read
     char* end;
     char* filename = strtok_r(file, COM, &end);
     while (filename) {
@@ -2554,15 +2536,15 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
       double totalLen = 0.0;  // total weighted length of paired fragments
       int count;
       if (bam)
-        count = readBAM(in.gzf, line, &aln, &alnMem,
-          readName, &totalLen, &unmapped, &paired, &single,
+        count = readBAM(in.gzf, line, &aln, readName,
+          &totalLen, &unmapped, &paired, &single,
           &pairedPr, &singlePr, &supp, &skipped, &lowMapQ,
           minMapQ, xcount, xchrList, &secPair, &secSingle,
           &orphan, &chromLen, &chrom, singleOpt, extendOpt,
           extend, avgExtOpt, &unpair, &unpairMem, asDiff, i);
       else
-        count = readSAM(in, gz, line, &aln, &alnMem,
-          readName, &totalLen, &unmapped, &paired, &single,
+        count = readSAM(in, gz, line, &aln, readName,
+          &totalLen, &unmapped, &paired, &single,
           &pairedPr, &singlePr, &supp, &skipped, &lowMapQ,
           minMapQ, xcount, xchrList, &secPair, &secSingle,
           &orphan, &chromLen, &chrom, singleOpt, extendOpt,
@@ -2592,7 +2574,7 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
       for (int j = 0; j < chromLen; j++) {
         Chrom* c = chrom + j;
         if (c->diff != NULL)
-          for (int k = 0; k < c->len + 1; k++) {
+          for (int k = 0; k < 1 + c->len; k++) {
             c->diff->frac[k] = 0;
             c->diff->cov[k] = 0;
           }
