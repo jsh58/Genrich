@@ -639,12 +639,24 @@ void savePileupNoCtrl(Chrom* chrom, int chromLen,
   }
 }
 
-/* void updateVal()
+/* float getVal()
+ * Reconstruct a float value from the given
+ *   int and 8-bit encoded fractional part.
+ */
+float getVal(int32_t cov, uint8_t frac) {
+  return (float) cov
+    + ((frac & 0x7) / 8.0f)
+    + (((frac >> 3) & 0x3) / 6.0f)
+    + (((frac >> 5) & 0x7) / 10.0f);
+}
+
+/* float updateVal()
  * Update pileup value (int cov and 8-bit encoded
  *   fractional part) by adding the given int (dCov)
  *   and fractional part (dFrac) from the 'diff' arrays.
+ *   Return reconstructed value via getVal().
  */
-void updateVal(int16_t dCov, uint8_t dFrac, int32_t* cov,
+float updateVal(int16_t dCov, uint8_t dFrac, int32_t* cov,
     uint8_t* frac) {
 
   // add ints
@@ -654,7 +666,7 @@ void updateVal(int16_t dCov, uint8_t dFrac, int32_t* cov,
 //while (!getchar()) ;
     if (*cov < 0)
       exit(error(errMsg[ERRPILE], ERRISSUE));
-    return;
+    return getVal(*cov, *frac);
   }
 
   // sum eighths (and collect halves)
@@ -697,19 +709,9 @@ void updateVal(int16_t dCov, uint8_t dFrac, int32_t* cov,
   if (*cov < 0)
     exit(error(errMsg[ERRPILE], ERRISSUE));
 
+  return getVal(*cov, *frac);
 //fprintf(stderr, "  adding %d / %02x -> %d / %02x", dCov, dFrac, *cov, *frac);
 //while (!getchar()) ;
-}
-
-/* float getVal()
- * Reconstruct a float value from the given
- *   int and 8-bit encoded fractional part.
- */
-float getVal(int32_t cov, uint8_t frac) {
-  return (float) cov
-    + ((frac & 0x7) / 8.0f)
-    + (((frac >> 3) & 0x3) / 6.0f)
-    + (((frac >> 5) & 0x7) / 10.0f);
 }
 
 /* void savePileupCtrl()
@@ -735,24 +737,18 @@ void savePileupCtrl(Chrom* chrom, int chromLen,
       continue;
     }
 
-    // determine number of pileup intervals
-    Diff* d = chr->diff;
-    uint32_t num = 1;
-    for (uint32_t j = 1; j < chr->len; j++)
-      if (d->cov[j] || d->frac[j])
-        num++;
-
     // create pileup arrays
+    uint32_t ctrlMem = chr->treatLen; // guess of length (treatment value)
     chr->ctrl = (Pileup*) memalloc(sizeof(Pileup));
-    chr->ctrl->end = (uint32_t*) memalloc(num * sizeof(uint32_t));
-    chr->ctrl->cov = (float*) memalloc(num * sizeof(float));
-    chr->ctrlLen = num;
+    chr->ctrl->end = (uint32_t*) memalloc(ctrlMem * sizeof(uint32_t));
+    chr->ctrl->cov = (float*) memalloc(ctrlMem * sizeof(float));
 
     // initialize pileup values
+    Diff* d = chr->diff;
     int32_t cov = 0;          // current pileup value
     uint8_t frac = 0;         // current pileup value (fraction part)
-    updateVal(d->cov[0], d->frac[0], &cov, &frac);  // initialize
-    float val = getVal(cov, frac);
+    float val = updateVal(d->cov[0], d->frac[0], &cov, &frac);
+    float net = MAX(val, lambda);
 
     // save pileup values along the chrom
     uint32_t pos = 0;         // position in pileup arrays
@@ -760,27 +756,50 @@ void savePileupCtrl(Chrom* chrom, int chromLen,
     for (j = 1; j < chr->len; j++) {
       if (d->cov[j] || d->frac[j]) {
 
-        chr->ctrl->end[pos] = j;
-        chr->ctrl->cov[pos] = MAX(val, lambda);
-        pos++;
-
         // update pileup value
-        updateVal(d->cov[j], d->frac[j], &cov, &frac);
-        val = getVal(cov, frac);
+        val = updateVal(d->cov[j], d->frac[j], &cov, &frac);
 
+        // save interval if value has changed
+        if (net != MAX(val, lambda)) {
+          // expand arrays if necessary
+          if (pos == ctrlMem) {
+            ctrlMem *= 2; // double size
+            chr->ctrl->end = (uint32_t*) memrealloc(chr->ctrl->end,
+              ctrlMem * sizeof(uint32_t));
+            chr->ctrl->cov = (float*) memrealloc(chr->ctrl->cov,
+              ctrlMem * sizeof(float));
+          }
+
+          // save previous interval
+          chr->ctrl->end[pos] = j;
+          chr->ctrl->cov[pos] = net;
+          pos++;
+          net = MAX(val, lambda);
+        }
       }
     }
 
     // save final interval
+    if (pos == ctrlMem) {
+      // expand arrays if necessary
+      ctrlMem++;
+      chr->ctrl->end = (uint32_t*) memrealloc(chr->ctrl->end,
+        ctrlMem * sizeof(uint32_t));
+      chr->ctrl->cov = (float*) memrealloc(chr->ctrl->cov,
+        ctrlMem * sizeof(float));
+    }
     chr->ctrl->end[pos] = j;
-    chr->ctrl->cov[pos] = MAX(val, lambda);
+    chr->ctrl->cov[pos] = net;
+    chr->ctrlLen = pos + 1;
 
     // check for val error (should end at 0)
-    updateVal(d->cov[j], d->frac[j], &cov, &frac);
-    val = getVal(cov, frac);
-    if (val)
-      fprintf(stderr, "Warning! Control pileup for ref %s finishes at %f\n",
+    val = updateVal(d->cov[j], d->frac[j], &cov, &frac);
+    if (val) {
+      char* msg = (char*) memalloc(MAX_ALNS);
+      sprintf(msg, "Control pileup for ref %s finishes at %f (not 0.0)",
         chr->name, val);
+      exit(error(msg, ERRISSUE));
+    }
   }
 
 }
@@ -823,8 +842,7 @@ double savePileupTreat(Chrom* chrom, int chromLen) {
     // intialize pileup values
     int32_t cov = 0;          // current pileup value
     uint8_t frac = 0;         // current pileup value (fraction part)
-    updateVal(d->cov[0], d->frac[0], &cov, &frac);  // initialize
-    float val = getVal(cov, frac);
+    float val = updateVal(d->cov[0], d->frac[0], &cov, &frac);
 
     // save pileup values along the chrom
     uint32_t start = 0;       // beginning coordinate of interval
@@ -833,6 +851,7 @@ double savePileupTreat(Chrom* chrom, int chromLen) {
     for (j = 1; j < chr->len; j++) {
       if (d->cov[j] || d->frac[j]) {
 
+        // save end of interval and pileup value
         chr->treat->end[pos] = j;
         chr->treat->cov[pos] = val;
         pos++;
@@ -842,8 +861,7 @@ double savePileupTreat(Chrom* chrom, int chromLen) {
         start = j;
 
         // update pileup value
-        updateVal(d->cov[j], d->frac[j], &cov, &frac);
-        val = getVal(cov, frac);
+        val = updateVal(d->cov[j], d->frac[j], &cov, &frac);
 
 //fprintf(stderr, "  pos %d: %.9f -> %.9f", j, getVal(d->cov[j], d->frac[j]), val);
 //while(!getchar()) ;
@@ -855,12 +873,21 @@ double savePileupTreat(Chrom* chrom, int chromLen) {
     chr->treat->cov[pos] = val;
     fragLen += (j - start) * val;
 
+    // verify array length
+    if (pos + 1 != chr->treatLen) {
+      char* msg = (char*) memalloc(MAX_ALNS);
+      sprintf(msg, "%s (%s)", errMsg[ERRARR], chr->name);
+      exit(error(msg, ERRISSUE));
+    }
+
     // check for val error (should end at 0)
-    updateVal(d->cov[j], d->frac[j], &cov, &frac);
-    val = getVal(cov, frac);
-    if (val)
-      fprintf(stderr, "Warning! Treatment pileup for ref %s finishes at %f\n",
+    val = updateVal(d->cov[j], d->frac[j], &cov, &frac);
+    if (val) {
+      char* msg = (char*) memalloc(MAX_ALNS);
+      sprintf(msg, "Treatment pileup for ref %s finishes at %f (not 0.0)",
         chr->name, val);
+      exit(error(msg, ERRISSUE));
+    }
   }
 
   if (fragLen == 0.0)
@@ -2614,6 +2641,8 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
       free(chr->treat->end);
       free(chr->treat->cov);
       free(chr->treat);
+      free(chr->diff->frac);
+      free(chr->diff->cov);
       free(chr->diff);
     }
     free(chr->name);

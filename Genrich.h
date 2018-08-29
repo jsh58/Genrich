@@ -77,7 +77,7 @@ enum errCode { ERRFILE, ERROPEN, ERROPENW, ERRCLOSE, ERRMEM,
   ERREXTEND,
   ERRBAM, ERRGEN, ERRTREAT, ERRCHRLEN, ERRCTRL, ERRPOS,
   ERRSORT, ERRTYPE, ERRAUX, ERRASDIFF, ERRISSUE,
-  ERRALNS, ERRPILE, ERRPVAL,
+  ERRALNS, ERRPILE, ERRPVAL, ERRARR,
 ERRUNGET, ERRGZIP,
   ERRTHREAD, ERRNAME, ERRCIGAR, DEFERR
 };
@@ -105,10 +105,11 @@ const char* errMsg[] = { "Need input/output files",
   ": unknown value type in BAM auxiliary field",
   "Poorly formatted BAM auxiliary field",
   "Secondary alignment score threshold must be >= 0",
-  "; internal error, please open an Issue on https://github.com/jsh58/Genrich",
-  "Disallowed # alns",
-  "Pileup < 0",
+  "\n  (internal error: please open an Issue on https://github.com/jsh58/Genrich)",
+  "Disallowed number of alignments",
+  "Invalid pileup value (< 0)",
   "Failure collecting p-values",
+  "Failure creating treatment pileup",
 
   "Failure in ungetc() call",
   "Cannot pipe in gzip compressed file (use zcat instead)",
@@ -136,7 +137,7 @@ typedef struct pileup {
 } Pileup;
 
 typedef struct diff {
-  uint8_t* frac;  // fractions of a count
+  uint8_t* frac;  // fractions of a count (8-bit encoded)
   int16_t* cov;   // int counts
 } Diff;
 
