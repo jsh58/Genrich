@@ -71,14 +71,12 @@ static struct option long_options[] = {
 enum omp_locks { OUT, UN, LOG, DOVE, ALN, OMP_LOCKS };
 
 // error messages
-enum errCode { ERRFILE, ERROPEN, ERROPENW, ERRCLOSE, ERRMEM,
-  ERRINT, ERRFLOAT, ERRPARAM,
-  ERRMISM, ERRINFO, ERRSAM, ERRCHROM, ERRHEAD,
-  ERREXTEND,
+enum errCode { ERRFILE, ERROPEN, ERROPENW, ERRCLOSE,
+  ERRMEM, ERRINT, ERRFLOAT, ERRPARAM, ERREXTEND, ERRPQVAL,
+  ERRASDIFF, ERRMISM, ERRINFO, ERRSAM, ERRCHROM, ERRHEAD,
   ERRBAM, ERRGEN, ERRTREAT, ERRCHRLEN, ERRCTRL, ERRPOS,
-  ERRSORT, ERRTYPE, ERRAUX, ERRASDIFF, ERRISSUE,
-  ERRALNS, ERRPILE, ERRPVAL, ERRARR,
-ERRUNGET, ERRGZIP,
+  ERRSORT, ERRTYPE, ERRAUX, ERRISSUE, ERRALNS, ERRPILE,
+  ERRPVAL, ERRARR, ERRUNGET, ERRGZIP,
   ERRTHREAD, ERRNAME, ERRCIGAR, DEFERR
 };
 const char* errMsg[] = { "Need input/output files",
@@ -89,12 +87,15 @@ const char* errMsg[] = { "Need input/output files",
   ": cannot convert to int",
   ": cannot convert to float",
   ": unknown command-line argument",
+  "Extension length must be > 0",
+  "p-/q-value must be in (0,1]",
+  "Secondary alignment score threshold must be >= 0.0",
+
   ": mismatch between sequence length and CIGAR",
   ": no sequence information (SEQ or CIGAR)",
   ": poorly formatted SAM/BAM record",
   ": cannot find reference sequence name in SAM header",
   ": misplaced SAM header line",
-  "Extension length must be >= 0",
   "Cannot parse BAM file",
   "No analyzable genome (length=0)",
   "Treatment sample(s) have no analyzable fragments",
@@ -104,7 +105,6 @@ const char* errMsg[] = { "Need input/output files",
   "SAM/BAM file not sorted by queryname (samtools sort -n)",
   ": unknown value type in BAM auxiliary field",
   "Poorly formatted BAM auxiliary field",
-  "Secondary alignment score threshold must be >= 0",
   "\n  (internal error: please open an Issue on https://github.com/jsh58/Genrich)",
   "Disallowed number of alignments",
   "Invalid pileup value (< 0)",
@@ -157,14 +157,14 @@ typedef struct chrom {
 
 typedef struct aln {
   uint32_t pos[2];
-  float score;  // alignment score (sum of scores for paired alns)
-  bool primary; // primary alignment?
-  bool paired;  // properly paired alignment?
-  bool full;    // both parts of paired aln analyzed? (only for paired alns)
-  bool strand;  // which strand aln is on (only for singleton alignments)
-  bool first;   // which read of a pair this is (only for singleton alignments)
-  int count;    // value of aln (only for singletons with avg-ext option)
-  char* name;   // read name (only for singletons with avg-ext option)
+  float score;    // alignment score (sum of scores for paired alns)
+  bool primary;   // primary alignment?
+  bool paired;    // properly paired alignment?
+  bool full;      // both parts of paired aln analyzed? (only for paired alns)
+  bool strand;    // which strand aln is on (only for singleton alignments)
+  bool first;     // which read of a pair this is (only for singleton alignments)
+  uint8_t count;  // value of aln (only for singletons with avg-ext option)
+  char* name;     // read name (only for singletons with avg-ext option)
   Chrom* chrom;
 } Aln;
 

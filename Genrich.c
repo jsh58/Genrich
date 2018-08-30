@@ -100,9 +100,9 @@ void* memrealloc(void* ptr, int size) {
  * Converts the given char* to a float.
  */
 float getFloat(char* in) {
-  char** endptr = NULL;
-  float ans = strtof(in, endptr);
-  if (endptr != '\0')
+  char* endptr;
+  float ans = strtof(in, &endptr);
+  if (*endptr != '\0')
     exit(error(in, ERRFLOAT));
   return ans;
 }
@@ -111,9 +111,9 @@ float getFloat(char* in) {
  * Converts the given char* to an int.
  */
 int getInt(char* in) {
-  char** endptr = NULL;
-  int ans = (int) strtol(in, endptr, 10);
-  if (endptr != '\0')
+  char* endptr;
+  int ans = (int) strtol(in, &endptr, 10);
+  if (*endptr != '\0')
     exit(error(in, ERRINT));
   return ans;
 }
@@ -176,7 +176,7 @@ void quickSort(float* pVal, uint64_t* pEnd,
 
 /* float lookup()
  * Return the pre-computed q-value for a given p-value,
- *   using parallel arrays (p->cov and qval).
+ *   using parallel arrays (pVal and qVal).
  */
 float lookup(float* pVal, uint64_t low, uint64_t high,
     float* qVal, float p) {
@@ -703,9 +703,7 @@ float updateVal(int16_t dCov, uint8_t dFrac, int32_t* cov,
   if (half)
     *frac |= 0x4;
 
-  // reconstruct fraction
-  // *frac = (sum10 << 5) | (sum6 << 3) | (half << 2) | sum8;
-
+  // check for negative pileup
   if (*cov < 0)
     exit(error(errMsg[ERRPILE], ERRISSUE));
 
@@ -909,7 +907,7 @@ double savePileupTreat(Chrom* chrom, int chromLen) {
  *   and hence is nearly impossible to debug/maintain.
  *   Apologies in advance to those attempting to do so.
  */
-void addFrac(int16_t* cov, uint8_t* frac, int count) {
+void addFrac(int16_t* cov, uint8_t* frac, uint8_t count) {
   switch (count) {
     case 8:
       if ((*frac & 0x7) == 0x7) {
@@ -1010,7 +1008,7 @@ void addFrac(int16_t* cov, uint8_t* frac, int count) {
  *   See addFrac() above for a description of
  *   the 8-bit encoding.
  */
-void subFrac(int16_t* cov, uint8_t* frac, int count) {
+void subFrac(int16_t* cov, uint8_t* frac, uint8_t count) {
   switch (count) {
     case 8:
       if (*frac & 0x7)
@@ -1097,7 +1095,7 @@ void subFrac(int16_t* cov, uint8_t* frac, int count) {
  *   Return the fragment length.
  */
 uint32_t saveInterval(Chrom* c, int64_t start, int64_t end,
-    char* qname, int count, bool verbose) {
+    char* qname, uint8_t count, bool verbose) {
   // check validity of positions
   if (start < 0) {
     if (verbose)
@@ -1180,11 +1178,11 @@ void processAvgExt(Aln* unpair, int unpairLen,
  *   (for "extend to average length" option), for
  *   later processing by saveAvgExt().
  */
-void saveAvgExt(char* qname, Aln* b, int count,
+void saveAvgExt(char* qname, Aln* b, uint8_t count,
     Aln** unpair, int* unpairLen, int* unpairMem) {
 
   // alloc memory if necessary
-  if (*unpairLen + 1 > *unpairMem) {
+  if (*unpairLen == *unpairMem) {
     *unpairMem += MAX_ALNS;
     *unpair = (Aln*) memrealloc(*unpair,
       *unpairMem * sizeof(Aln));
@@ -1208,7 +1206,7 @@ void saveAvgExt(char* qname, Aln* b, int count,
  *   (either keeping them as is, or extending
  *   to a given length).
  */
-void saveSingle(char* qname, Aln* a, int count,
+void saveSingle(char* qname, Aln* a, uint8_t count,
     bool extendOpt, int extend, bool verbose) {
   if (extendOpt) {
     if (a->strand)
@@ -1225,7 +1223,7 @@ void saveSingle(char* qname, Aln* a, int count,
 /* uint32_t saveFragment()
  * Save full fragment for a proper pair. Return length.
  */
-uint32_t saveFragment(char* qname, Aln* a, int count,
+uint32_t saveFragment(char* qname, Aln* a, uint8_t count,
     bool verbose) {
   // ensure start < end
   uint32_t start, end;
@@ -1245,10 +1243,10 @@ uint32_t saveFragment(char* qname, Aln* a, int count,
  *   find a more stringent score.
  */
 void subsampleSingle(Aln* aln, int alnLen, bool first,
-    int* count, float* score) {
+    uint8_t* count, float* score) {
   float minScore = FLT_MAX;               // min score of alns to keep
   *count = *count > 10 ? 10 : *count - 1; // update count of alns to keep
-  int j = 0;  // count of alns
+  uint8_t j = 0;  // count of alns
   for (int i = 0; i < alnLen; i++) {
     Aln* a = aln + i;
     if (! a->paired && a->first == first
@@ -1279,7 +1277,7 @@ int processSingle(char* qname, Aln* aln, int alnLen,
     score -= asDiff;
 
   // determine number of valid single alignments
-  int count = 0;
+  uint8_t count = 0;
   for (int i = 0; i < alnLen; i++) {
     Aln* a = aln + i;
     if (! a->paired && a->first == first
@@ -1294,7 +1292,7 @@ int processSingle(char* qname, Aln* aln, int alnLen,
     subsampleSingle(aln, alnLen, first, &count, &score);
 
   // find singletons to save
-  int saved = 0;
+  uint8_t saved = 0;
   for (int i = 0; i < alnLen; i++) {
     Aln* a = aln + i;
     if (! a->paired && a->first == first
@@ -1308,8 +1306,8 @@ int processSingle(char* qname, Aln* aln, int alnLen,
 
       } else {
         // for other options, save singleton interval
-        saveSingle(qname, a, count, extendOpt, extend,
-          verbose);
+        saveSingle(qname, a, count, extendOpt,
+          extend, verbose);
       }
 
       if (++saved == count)
@@ -1324,11 +1322,11 @@ int processSingle(char* qname, Aln* aln, int alnLen,
  * For sets of paired alns at an invalid count (>10, 9, 7),
  *   find a more stringent score.
  */
-void subsamplePair(Aln* aln, int alnLen, int* count,
+void subsamplePair(Aln* aln, int alnLen, uint8_t* count,
     float* score) {
   float minScore = FLT_MAX;               // min score of alns to keep
   *count = *count > 10 ? 10 : *count - 1; // update count of alns to keep
-  int j = 0;  // count of alns
+  uint8_t j = 0;  // count of alns
   for (int i = 0; i < alnLen; i++) {
     Aln* a = aln + i;
     if (a->paired && a->full && a->score >= *score
@@ -1357,7 +1355,7 @@ int processPair(char* qname, Aln* aln, int alnLen,
     score -= asDiff;
 
   // determine number of valid paired alignments
-  int count = 0;
+  uint8_t count = 0;
   for (int i = 0; i < alnLen; i++) {
     Aln* a = aln + i;
     if (a->paired && a->full && a->score >= score
@@ -1373,7 +1371,7 @@ int processPair(char* qname, Aln* aln, int alnLen,
 
   // find full fragments to save
   uint64_t fragLen = 0;     // local sum of fragment lengths
-  int saved = 0;
+  uint8_t saved = 0;
   for (int i = 0; i < alnLen; i++) {
     Aln* a = aln + i;
     if (a->paired && a->full && a->score >= score
@@ -1665,6 +1663,13 @@ void loadChrom(char* line, int* chromLen, Chrom** chrom,
   if (name == NULL || len == NULL)
     return;
 
+  // remove trailing '\n'
+  int i;
+  for (i = 0; name[i] != '\n' && name[i] != '\0'; i++) ;
+  name[i] = '\0';
+  for (i = 0; len[i] != '\n' && len[i] != '\0'; i++) ;
+  len[i] = '\0';
+
   // save chrom info to array (*chrom)
   saveChrom(name, getInt(len), chromLen, chrom,
     xcount, xchrList, ctrl);
@@ -1692,9 +1697,11 @@ void checkHeader(char* line, int* chromLen, Chrom** chrom,
       field = strtok(NULL, TAB);
     }
     // removing trailing '\n'
-    int i = 0;
-    for (; order[i] != '\n' && order[i] != '\0'; i++) ;
+    int i;
+    for (i = 0; order[i] != '\n' && order[i] != '\0'; i++) ;
     order[i] = '\0';
+
+    // sort order not unknown or coordinate
     if (order == NULL || ! strcmp(order, "unknown")
         || ! strcmp(order, "coordinate"))
       exit(error("", ERRSORT));
@@ -2205,7 +2212,6 @@ int parseBAM(gzFile in, char* line, Aln** aln,
       (*lowMapQ)++;
       continue;
     }
-    Chrom* ref = chrom + idx[refID];
 
     // process previous set of alns
     if (readName[0] == '\0' || strcmp(read_name, readName)) {
@@ -2221,9 +2227,9 @@ int parseBAM(gzFile in, char* line, Aln** aln,
     // save alignment information
     int length = calcDistBAM(l_seq, n_cigar_op, cigar); // distance to 3' end
     float score = getBAMscore(extra, block_size - (int) (extra - line));
-    if (! parseAlign(aln, &alnLen, flag, ref, pos, length,
-        next_pos, paired, single, secPair, secSingle, skipped,
-        singleOpt, score) && verbose)
+    if (! parseAlign(aln, &alnLen, flag, chrom + idx[refID],
+        pos, length, next_pos, paired, single, secPair,
+        secSingle, skipped, singleOpt, score) && verbose)
       fprintf(stderr, "Warning! Read %s has more than %d alignments\n",
         read_name, MAX_ALNS);
     // NOTE: the following BAM fields are ignored:
@@ -2696,8 +2702,8 @@ void getArgs(int argc, char** argv) {
     *ctrlFile = NULL, *logFile = NULL;
   char* xchrom = NULL;
   int extend = 0, minMapQ = 0, minLen = DEFMINLEN,
-    maxGap = DEFMAXGAP, asDiff = 0.0f, threads = DEFTHR;
-  float pqvalue = DEFQVAL;
+    maxGap = DEFMAXGAP, threads = DEFTHR;
+  float asDiff = 0.0f, pqvalue = DEFQVAL;
   bool singleOpt = false, extendOpt = false,
     avgExtOpt = false, gzOut = false, qvalOpt = true;
   bool verbose = false;
@@ -2758,7 +2764,9 @@ void getArgs(int argc, char** argv) {
     xcount = saveXChrom(xchrom, &xchrList);
 
   // adjust significance level to -log scale
-  pqvalue = -1 * log10f(pqvalue);
+  if (pqvalue <= 0.0f || pqvalue > 1.0f)
+    exit(error("", ERRPQVAL));
+  pqvalue = -1.0f * log10f(pqvalue);
 
   // send arguments to runProgram()
   runProgram(inFile, ctrlFile, outFile, logFile, gzOut,
