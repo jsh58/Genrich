@@ -1150,8 +1150,9 @@ uint32_t saveInterval(Chrom* c, int64_t start, int64_t end,
  *   with "extend to average length" option, after
  *   calculating average length from paired alns.
  */
-void processAvgExt(Aln* unpair, int unpairLen,
-    double totalLen, int pairedPr, bool verbose) {
+void processAvgExt(Aln** unpair, int unpairIdx,
+    int unpairLen, double totalLen, int pairedPr,
+    bool verbose) {
   // determine average fragment length
   int avgLen = 0;
   if (! pairedPr && verbose) {
@@ -1161,22 +1162,27 @@ void processAvgExt(Aln* unpair, int unpairLen,
     avgLen = (int) (totalLen / pairedPr + 0.5);
 
   // process each alignment
-  for (int i = 0; i < unpairLen; i++) {
-    Aln* a = unpair + i;
-    if (! avgLen)
-      saveInterval(a->chrom, a->pos[0], a->pos[1], a->name,
-        a->count, verbose);
-    else if (a->strand)
-      saveInterval(a->chrom, a->pos[0], a->pos[0] + avgLen,
-        a->name, a->count, verbose);
-    else
-      saveInterval(a->chrom, (signed) (a->pos[1] - avgLen),
-        a->pos[1], a->name, a->count, verbose);
+  for (int i = 0; i <= unpairIdx; i++) {
 
-    // free memory
-    free(a->name);
+    int end = (i == unpairIdx ? unpairLen : MAX_SIZE);
+    for (int j = 0; j < end; j++) {
+
+      Aln* a = unpair[i] + j;
+      if (! avgLen)
+        saveInterval(a->chrom, a->pos[0], a->pos[1], a->name,
+          a->count, verbose);
+      else if (a->strand)
+        saveInterval(a->chrom, a->pos[0], a->pos[0] + avgLen,
+          a->name, a->count, verbose);
+      else
+        saveInterval(a->chrom, (signed) (a->pos[1] - avgLen),
+          a->pos[1], a->name, a->count, verbose);
+
+      // free memory
+      free(a->name);
+    }
+
   }
-
 }
 
 /* void saveAvgExt()
@@ -1185,17 +1191,20 @@ void processAvgExt(Aln* unpair, int unpairLen,
  *   later processing by saveAvgExt().
  */
 void saveAvgExt(char* qname, Aln* b, uint8_t count,
-    Aln** unpair, int* unpairLen, int* unpairMem) {
+    Aln*** unpair, int* unpairIdx, int* unpairLen,
+    int* unpairMem) {
 
   // alloc memory if necessary
-  if (*unpairLen == *unpairMem) {
-    *unpairMem += MAX_ALNS;
-    *unpair = (Aln*) memrealloc(*unpair,
-      *unpairMem * sizeof(Aln));
+  if (*unpairLen == 0 && *unpairIdx == *unpairMem) {
+    *unpair = (Aln**) memrealloc(*unpair,
+      (*unpairMem + 1) * sizeof(Aln*));
+    (*unpair)[*unpairMem] = (Aln*) memalloc(MAX_SIZE
+      * sizeof(Aln));
+    (*unpairMem)++;
   }
 
   // copy alignment info
-  Aln* a = *unpair + *unpairLen;
+  Aln* a = (*unpair)[*unpairIdx] + *unpairLen;
   a->name = (char*) memalloc(1 + strlen(qname));
   strcpy(a->name, qname);
   a->chrom = b->chrom;
@@ -1205,6 +1214,10 @@ void saveAvgExt(char* qname, Aln* b, uint8_t count,
   a->count = count;
 
   (*unpairLen)++;
+  if (*unpairLen == MAX_SIZE) {
+    *unpairLen = 0;
+    (*unpairIdx)++;
+  }
 }
 
 /* void saveSingle()
@@ -1274,9 +1287,9 @@ void subsampleSingle(Aln* aln, int alnLen, bool first,
  */
 int processSingle(char* qname, Aln* aln, int alnLen,
     bool extendOpt, int extend, bool avgExtOpt,
-    Aln** unpair, int* unpairLen, int* unpairMem,
-    float score, float asDiff, bool first,
-    bool verbose) {
+    Aln*** unpair, int* unpairIdx, int* unpairLen,
+    int* unpairMem, float score, float asDiff,
+    bool first, bool verbose) {
 
   // adjust AS tolerance for secondary alns
   if (score != NOSCORE)
@@ -1308,7 +1321,7 @@ int processSingle(char* qname, Aln* aln, int alnLen,
         // for average-extension option, save alignment
         //   for later processing by processAvgExt()
         saveAvgExt(qname, a, count, unpair,
-          unpairLen, unpairMem);
+          unpairIdx, unpairLen, unpairMem);
 
       } else {
         // for other options, save singleton interval
@@ -1405,9 +1418,9 @@ int processPair(char* qname, Aln* aln, int alnLen,
 void processAlns(char* qname, Aln* aln, int alnLen,
     double* totalLen, int* pairedPr, int* singlePr,
     int* orphan, bool singleOpt, bool extendOpt,
-    int extend, bool avgExtOpt, Aln** unpair,
-    int* unpairLen, int* unpairMem, float asDiff,
-    bool verbose) {
+    int extend, bool avgExtOpt, Aln*** unpair,
+    int* unpairIdx, int* unpairLen, int* unpairMem,
+    float asDiff, bool verbose) {
 
   // determine if paired alns are valid, and best score
   float scorePr = NOSCORE, scoreR1 = NOSCORE,
@@ -1443,7 +1456,7 @@ void processAlns(char* qname, Aln* aln, int alnLen,
     for (int j = 0; j < 2; j++)
       *singlePr += processSingle(qname, aln, alnLen,
         extendOpt, extend, avgExtOpt,
-        unpair, unpairLen, unpairMem,
+        unpair, unpairIdx, unpairLen, unpairMem,
         j ? scoreR2 : scoreR1, asDiff,
         ! j, verbose);
   }
@@ -1850,7 +1863,7 @@ int readSAM(File in, bool gz, char* line, Aln** aln,
     int xcount, char** xchrList, int* secPair,
     int* secSingle, int* orphan, int* chromLen,
     Chrom** chrom, bool singleOpt, bool extendOpt,
-    int extend, bool avgExtOpt, Aln** unpair,
+    int extend, bool avgExtOpt, Aln*** unpair,
     int* unpairMem, float asDiff, bool ctrl,
     bool verbose) {
 
@@ -1862,7 +1875,8 @@ int readSAM(File in, bool gz, char* line, Aln** aln,
   uint8_t mapq;
 
   int alnLen = 0;     // number of alignments for this read
-  int unpairLen = 0;  // number of singletons (with avgExtOpt)
+  int unpairIdx = 0;  // \ indexes into singleton array(s)
+  int unpairLen = 0;  // /   (with avgExtOpt)
   bool pastHeader = false;  // to check for misplaced header lines
   int count = 0;
   while (getLine(line, MAX_SIZE, in, gz) != NULL) {
@@ -1921,7 +1935,8 @@ int readSAM(File in, bool gz, char* line, Aln** aln,
         processAlns(readName, *aln, alnLen, totalLen,
           pairedPr, singlePr, orphan, singleOpt,
           extendOpt, extend, avgExtOpt, unpair,
-          &unpairLen, unpairMem, asDiff, verbose);
+          &unpairIdx, &unpairLen, unpairMem, asDiff,
+          verbose);
       alnLen = 0;
       strncpy(readName, qname, MAX_ALNS);
     }
@@ -1943,12 +1958,13 @@ int readSAM(File in, bool gz, char* line, Aln** aln,
     processAlns(readName, *aln, alnLen, totalLen,
       pairedPr, singlePr, orphan, singleOpt,
       extendOpt, extend, avgExtOpt, unpair,
-      &unpairLen, unpairMem, asDiff, verbose);
+      &unpairIdx, &unpairLen, unpairMem, asDiff,
+      verbose);
 
   // process single alignments w/ avgExtOpt
   if (avgExtOpt)
-    processAvgExt(*unpair, unpairLen, *totalLen,
-      *pairedPr, verbose);
+    processAvgExt(*unpair, unpairIdx, unpairLen,
+      *totalLen, *pairedPr, verbose);
 
   return count;
 }
@@ -2160,7 +2176,7 @@ int parseBAM(gzFile in, char* line, Aln** aln,
     int* supp, int* skipped, int* lowMapQ, int minMapQ,
     int* secPair, int* secSingle, int* orphan,
     bool singleOpt, bool extendOpt, int extend,
-    bool avgExtOpt, Aln** unpair, int* unpairMem,
+    bool avgExtOpt, Aln*** unpair, int* unpairMem,
     float asDiff, bool verbose) {
 
   // BAM fields to save
@@ -2172,7 +2188,8 @@ int parseBAM(gzFile in, char* line, Aln** aln,
   char* read_name, *qual, *extra;
 
   int alnLen = 0;     // number of alignments for this read
-  int unpairLen = 0;  // number of singletons (with avgExtOpt)
+  int unpairIdx = 0;  // \ indexes into singleton array(s)
+  int unpairLen = 0;  // /   (with avgExtOpt)
   int count = 0;
   int32_t block_size;
   while ((block_size = readInt32(in, false)) != EOF) {
@@ -2225,7 +2242,8 @@ int parseBAM(gzFile in, char* line, Aln** aln,
         processAlns(readName, *aln, alnLen, totalLen,
           pairedPr, singlePr, orphan, singleOpt,
           extendOpt, extend, avgExtOpt, unpair,
-          &unpairLen, unpairMem, asDiff, verbose);
+          &unpairIdx, &unpairLen, unpairMem, asDiff,
+          verbose);
       alnLen = 0;
       strncpy(readName, read_name, MAX_ALNS);
     }
@@ -2247,12 +2265,13 @@ int parseBAM(gzFile in, char* line, Aln** aln,
     processAlns(readName, *aln, alnLen, totalLen,
       pairedPr, singlePr, orphan, singleOpt,
       extendOpt, extend, avgExtOpt, unpair,
-      &unpairLen, unpairMem, asDiff, verbose);
+      &unpairIdx, &unpairLen, unpairMem, asDiff,
+      verbose);
 
   // process single alignments w/ avgExtOpt
   if (avgExtOpt)
-    processAvgExt(*unpair, unpairLen, *totalLen,
-      *pairedPr, verbose);
+    processAvgExt(*unpair, unpairIdx, unpairLen,
+      *totalLen, *pairedPr, verbose);
 
   return count;
 }
@@ -2268,7 +2287,7 @@ int readBAM(gzFile in, char* line, Aln** aln,
     int xcount, char** xchrList, int* secPair,
     int* secSingle, int* orphan, int* chromLen,
     Chrom** chrom, bool singleOpt, bool extendOpt,
-    int extend, bool avgExtOpt, Aln** unpair,
+    int extend, bool avgExtOpt, Aln*** unpair,
     int* unpairMem, float asDiff, bool ctrl,
     bool verbose) {
 
@@ -2544,7 +2563,7 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
   Chrom* chrom = NULL;    // array of reference sequences
   Aln* aln = (Aln*) memalloc(MAX_ALNS * sizeof(Aln)); // array of saved alns
   int unpairMem = 0;      // number of unpaired alns (for avg-ext option)
-  Aln* unpair = NULL;     // array of unpaired alns (for avg-ext option)
+  Aln** unpair = NULL;    // array of unpaired alns (for avg-ext option)
   char* readName = memalloc(MAX_ALNS + 1);  // name of read being analyzed
   readName[0] = readName[MAX_ALNS] = '\0';
   double fragLen = 0.0;   // total weighted length of all treatment fragments
@@ -2643,6 +2662,11 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
       free(xchrList[i]);
     free(xchrList);
   }
+  if (avgExtOpt) {
+    for (int i = 0; i < unpairMem; i++)
+      free(unpair[i]);
+    free(unpair);
+  }
   for (int i = 0; i < chromLen; i++) {
     Chrom* chr = chrom + i;
     if (! chr->skip) {
@@ -2668,13 +2692,12 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
   }
   free(chrom);
   free(aln);
-  free(unpair);
   free(readName);
   free(line);
 
   // close files
-  if ( ( gzOut && gzclose(out.gzf) != Z_OK ) ||
-      ( ! gzOut && fclose(out.f) ) )
+  if ( ( gzOut && gzclose(out.gzf) != Z_OK )
+      || ( ! gzOut && fclose(out.f) ) )
     exit(error(outFile, ERRCLOSE));
   if (logFile != NULL && ( ( gzOut && gzclose(log.gzf) != Z_OK )
       || ( ! gzOut && fclose(log.f) ) ) )
