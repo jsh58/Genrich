@@ -229,17 +229,23 @@ void saveQval(Chrom* chrom, int chromLen,
 
 /*** Save p-values in hashtable ***/
 
-/* unsigned int hash()
- * djb2 hash function
- * Modified to take a float (p-value) as input.
+/* uint32_t jenkins_one_at_a_time_hash()
+ * Taken from http://www.burtleburtle.net/bob/hash/doobs.html
+ *   Modified to take a float (p-value) as input.
  *   Returns index into hashtable.
  */
-unsigned int hash(float f) {
-  unsigned long val = 5381;
+uint32_t jenkins_one_at_a_time_hash(float f) {
+  uint32_t hash = 0;
   unsigned char* p = (unsigned char*) &f;
-  for (int i = 0; i < sizeof(float); i++)
-    val = (val << 5) + val + p[i];
-  return (unsigned int) (val % HASH_SIZE);
+  for (int i = 0; i < sizeof(float); i++) {
+    hash += p[i];
+    hash += hash << 10;
+    hash ^= hash >> 6;
+  }
+  hash += hash << 3;
+  hash ^= hash >> 11;
+  hash += hash << 15;
+  return hash % HASH_SIZE;
 }
 
 /* int recordPval()
@@ -249,7 +255,7 @@ unsigned int hash(float f) {
 int recordPval(Hash** table, float p, uint32_t length) {
 
   // check hashtable for matching p-value
-  unsigned int idx = hash(p);
+  uint32_t idx = jenkins_one_at_a_time_hash(p);
   for (Hash* h = table[idx]; h != NULL; h = h->next)
     if (p == h->val) {
       // match: add length to bucket

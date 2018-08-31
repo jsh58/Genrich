@@ -17,7 +17,7 @@
 #define MAX_ALNS    128     // maximum number of alignments per read/pair
                             //   - also used as max. read name length,
                             //     and for various dynamic memory allocs
-#define HASH_SIZE   131041  // size of hashtable for p-values
+#define HASH_SIZE   1310417 // size of hashtable for p-values
 #define TAB         "\t"    // separator for SAM fields
 #define COL         ":"     // separator for SAM optional fields (TAG:TYPE:VALUE)
 #define COM         ", "    // separator for input file names / ref. names
