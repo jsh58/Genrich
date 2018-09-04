@@ -128,7 +128,7 @@ char* getLine(char* line, int size, File in, bool gz) {
     return fgets(line, size, in.f);
 }
 
-/*** Quicksort ***/
+/*** Quicksort (of p-values, for q-value calculation) ***/
 // adapted from https://www.geeksforgeeks.org/quick-sort/
 
 /* void swapFloat(): Swap two float values (pileup->cov)
@@ -230,7 +230,7 @@ void saveQval(Chrom* chrom, int chromLen,
 /*** Save p-values in hashtable ***/
 
 /* uint32_t jenkins_one_at_a_time_hash()
- * Taken from http://www.burtleburtle.net/bob/hash/doobs.html
+ * Adapted from http://www.burtleburtle.net/bob/hash/doobs.html
  *   Modified to take a float (p-value) as input.
  *   Returns index into hashtable.
  */
@@ -1257,27 +1257,38 @@ uint32_t saveFragment(char* qname, Aln* a, uint8_t count,
     count, verbose);
 }
 
+/*** Process a set of alignments ***/
+
 /* void subsampleSingle()
  * For sets of single alns at an invalid count (>10, 9, 7),
  *   find a more stringent score.
  */
 void subsampleSingle(Aln* aln, int alnLen, bool first,
     uint8_t* count, float* score) {
-  float minScore = FLT_MAX;               // min score of alns to keep
-  *count = *count > 10 ? 10 : *count - 1; // update count of alns to keep
-  uint8_t j = 0;  // count of alns
+
+  // insertion sort of aln scores
+  float arr[*count];  // sorted array of aln scores
+  int k = 0;          // count of valid alns analyzed
   for (int i = 0; i < alnLen; i++) {
     Aln* a = aln + i;
     if (! a->paired && a->first == first
         && a->score >= *score && ! a->chrom->skip) {
-      if (j < *count && a->score < minScore)
-        minScore = a->score;
-      else if (a->score > minScore)
-        minScore = a->score;  // increase minScore
-      j++;
+
+      // insert a->score into array
+      int j;
+      for (j = 0; j < k; j++)
+        if (a->score > arr[j])
+          break;
+      for (int m = k; m > j; m--)
+        arr[m] = arr[m - 1];
+      arr[j] = a->score;
+      k++;
+
     }
   }
-  *score = minScore;
+
+  *count = *count > 10 ? 10 : *count - 1; // update count of alns to keep
+  *score = arr[*count - 1];               // save new min. score
 }
 
 /* int processSingle()
@@ -1343,21 +1354,30 @@ int processSingle(char* qname, Aln* aln, int alnLen,
  */
 void subsamplePair(Aln* aln, int alnLen, uint8_t* count,
     float* score) {
-  float minScore = FLT_MAX;               // min score of alns to keep
-  *count = *count > 10 ? 10 : *count - 1; // update count of alns to keep
-  uint8_t j = 0;  // count of alns
+
+  // insertion sort of aln scores
+  float arr[*count];  // sorted array of aln scores
+  int k = 0;          // count of valid alns analyzed
   for (int i = 0; i < alnLen; i++) {
     Aln* a = aln + i;
     if (a->paired && a->full && a->score >= *score
         && ! a->chrom->skip) {
-      if (j < *count && a->score < minScore)
-        minScore = a->score;
-      else if (a->score > minScore)
-        minScore = a->score;  // increase minScore
-      j++;
+
+      // insert a->score into array
+      int j;
+      for (j = 0; j < k; j++)
+        if (a->score > arr[j])
+          break;
+      for (int m = k; m > j; m--)
+        arr[m] = arr[m - 1];
+      arr[j] = a->score;
+      k++;
+
     }
   }
-  *score = minScore;
+
+  *count = *count > 10 ? 10 : *count - 1; // update count of alns to keep
+  *score = arr[*count - 1];               // save new min. score
 }
 
 /* int processPair()
@@ -2489,6 +2509,8 @@ bool openRead(char* inFile, File* in) {
 
   return gzip;
 }
+
+/*** Main ***/
 
 /* void logCounts()
  * Log alignment counts to stderr.
