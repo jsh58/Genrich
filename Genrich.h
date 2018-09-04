@@ -76,7 +76,7 @@ enum errCode { ERRFILE, ERROPEN, ERROPENW, ERRCLOSE,
   ERRASDIFF, ERRMISM, ERRINFO, ERRSAM, ERRCHROM, ERRHEAD,
   ERRBAM, ERRGEN, ERRTREAT, ERRCHRLEN, ERRCTRL, ERRPOS,
   ERRSORT, ERRTYPE, ERRAUX, ERRISSUE, ERRALNS, ERRPILE,
-  ERRPVAL, ERRARR, ERRUNGET, ERRGZIP,
+  ERRPVAL, ERRARR, ERRARRC, ERRUNGET, ERRGZIP,
   ERRTHREAD, ERRNAME, ERRCIGAR, DEFERR
 };
 const char* errMsg[] = { "Need input/output files",
@@ -110,6 +110,7 @@ const char* errMsg[] = { "Need input/output files",
   "Invalid pileup value (< 0)",
   "Failure collecting p-values",
   "Failure creating treatment pileup",
+  "Failure creating control pileup",
 
   "Failure in ungetc() call",
   "Cannot pipe in gzip compressed file (use zcat instead)",
