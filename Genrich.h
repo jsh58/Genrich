@@ -75,11 +75,11 @@ enum omp_locks { OUT, UN, LOG, DOVE, ALN, OMP_LOCKS };
 
 // error messages
 enum errCode { ERRFILE, ERROPEN, ERROPENW, ERRCLOSE,
-  ERRMEM, ERRINT, ERRFLOAT, ERRPARAM, ERREXTEND, ERRPQVAL,
-  ERRASDIFF, ERRMISM, ERRINFO, ERRSAM, ERRCHROM, ERRHEAD,
-  ERRBAM, ERRGEN, ERRTREAT, ERRCHRLEN, ERRCTRL, ERRPOS,
-  ERRSORT, ERRTYPE, ERRAUX, ERRISSUE, ERRALNS, ERRPILE,
-  ERRPVAL, ERRARR, ERRARRC, ERRUNGET, ERRGZIP,
+  ERRMEM, ERRINT, ERRFLOAT, ERRPARAM, ERREXTEND, ERRATAC,
+  ERRPQVAL, ERRASDIFF, ERRMISM, ERRINFO, ERRSAM, ERRCHROM,
+  ERRHEAD, ERRBAM, ERRGEN, ERRTREAT, ERRCHRLEN, ERRCTRL,
+  ERRPOS, ERRSORT, ERRTYPE, ERRAUX, ERRISSUE, ERRALNS,
+  ERRPILE, ERRPVAL, ERRARR, ERRARRC, ERRUNGET, ERRGZIP,
   ERRTHREAD, ERRNAME, ERRCIGAR, DEFERR
 };
 const char* errMsg[] = { "Need input/output files",
@@ -91,6 +91,7 @@ const char* errMsg[] = { "Need input/output files",
   ": cannot convert to float",
   ": unknown command-line argument",
   "Extension length must be > 0",
+  "ATAC-seq interval length must be > 0",
   "p-/q-value must be in (0,1]",
   "Secondary alignment score threshold must be >= 0.0",
 
