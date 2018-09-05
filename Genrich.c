@@ -51,6 +51,9 @@ void usage(void) {
   fprintf(stderr, "                     increased to specified value\n");
   fprintf(stderr, "  -%c               Keep unpaired alignments, with fragment length\n", AVGEXTOPT);
   fprintf(stderr, "                     increased to average value of paired alignments\n");
+  fprintf(stderr, "Options for ATAC-seq:\n");
+  fprintf(stderr, "  -%c               Use ATAC-seq mode (def. false)\n", ATACOPT);
+  fprintf(stderr, "  -%c  <int>        Create intervals of this length, in bp (def. %d)\n", ATACLEN, DEFATAC);
   fprintf(stderr, "Options for peak calling:\n");
   fprintf(stderr, "  -%c  <float>      Maximum q-value (FDR-adjusted p-value; def. %.2f)\n", QVALUE, DEFQVAL);
   fprintf(stderr, "  -%c  <float>      Maximum p-value (mutually exclusive with -%c)\n", PVALUE, QVALUE);
@@ -1177,6 +1180,20 @@ uint32_t saveInterval(Chrom* c, int64_t start, int64_t end,
       c->diff->frac[i] = 0;
       c->diff->cov[i] = 0;
     }
+  }
+
+  // check for overflow/underflow (c->diff->cov is int16_t)
+  if (c->diff->cov[start] == SHRT_MAX) {
+    if (verbose)
+      fprintf(stderr, "Warning! Read %s, alignment at (%s, %ld-%ld) skipped due to overflow\n",
+        qname, c->name, start, end);
+    return 0;
+  }
+  if (c->diff->cov[end] == SHRT_MIN) {
+    if (verbose)
+      fprintf(stderr, "Warning! Read %s, alignment at (%s, %ld-%ld) skipped due to underflow\n",
+        qname, c->name, start, end);
+    return 0;
   }
 
   // add counts to diff array(s)
@@ -2639,8 +2656,8 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
     char* logFile, bool gzOut, bool singleOpt, bool extendOpt,
     int extend, bool avgExtOpt, int minMapQ, int xcount,
     char** xchrList, float pqvalue, bool qvalOpt,
-    int minLen, int maxGap, float asDiff, bool verbose,
-    int threads) {
+    int minLen, int maxGap, float asDiff, bool atacOpt,
+    int atacLen, bool verbose, int threads) {
 
   // initialize variables
   char* line = (char*) memalloc(MAX_SIZE);
@@ -2819,10 +2836,12 @@ void getArgs(int argc, char** argv) {
     *ctrlFile = NULL, *logFile = NULL;
   char* xchrom = NULL;
   int extend = 0, minMapQ = 0, minLen = DEFMINLEN,
-    maxGap = DEFMAXGAP, threads = DEFTHR;
+    maxGap = DEFMAXGAP, atacLen = DEFATAC,
+    threads = DEFTHR;
   float asDiff = 0.0f, pqvalue = DEFQVAL;
   bool singleOpt = false, extendOpt = false,
-    avgExtOpt = false, gzOut = false, qvalOpt = true;
+    avgExtOpt = false, atacOpt = false, gzOut = false,
+    qvalOpt = true;
   bool verbose = false;
 
   // parse argv
@@ -2837,6 +2856,8 @@ void getArgs(int argc, char** argv) {
       case SINGLEOPT: singleOpt = true; break;
       case EXTENDOPT: extend = getInt(optarg); extendOpt = true; break;
       case AVGEXTOPT: avgExtOpt = true; break;
+      case ATACOPT: atacOpt = true; break;
+      case ATACLEN: atacLen = getInt(optarg); break;
       case XCHROM: xchrom = optarg; break;
       case MINMAPQ: minMapQ = getInt(optarg); break;
       case ASDIFF: asDiff = getFloat(optarg); break;
@@ -2869,6 +2890,8 @@ void getArgs(int argc, char** argv) {
     if (extend <= 0)
       exit(error("", ERREXTEND));
   }
+  if (atacOpt)
+    avgExtOpt = extendOpt = false;  // no singleton extensions in ATAC-seq mode
   if (asDiff < 0.0f)
     exit(error("", ERRASDIFF));
   if (threads < 1)
@@ -2889,7 +2912,7 @@ void getArgs(int argc, char** argv) {
   runProgram(inFile, ctrlFile, outFile, logFile, gzOut,
     singleOpt, extendOpt, extend, avgExtOpt, minMapQ,
     xcount, xchrList, pqvalue, qvalOpt, minLen, maxGap,
-    asDiff, verbose, threads);
+    asDiff, atacOpt, atacLen, verbose, threads);
 }
 
 /* int main()

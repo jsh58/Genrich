@@ -26,6 +26,7 @@
 #define DEFQVAL     0.05    // default q-value
 #define DEFMINLEN   100     // minimum length of a peak
 #define DEFMAXGAP   100     // maximum gap between significant sites
+#define DEFATAC     100     // interval length for ATAC-seq mode
 #define DEFTHR      1       // number of threads
 
 // SAM fields
@@ -35,7 +36,7 @@ enum sam { NIL, QNAME, FLAG, RNAME, POS, MAPQ, CIGAR, RNEXT,
 #define NOSCORE     -FLT_MAX  // for alignments with no alignment score(s)
 
 // command-line options
-#define OPTIONS     "ht:c:o:b:zya:xe:m:s:p:q:g:l:n:vV"
+#define OPTIONS     "ht:c:o:b:zya:xjd:e:m:s:p:q:g:l:n:vV"
 #define HELP        'h'
 #define INFILE      't'
 #define CTRLFILE    'c'
@@ -45,6 +46,8 @@ enum sam { NIL, QNAME, FLAG, RNAME, POS, MAPQ, CIGAR, RNEXT,
 #define SINGLEOPT   'y'
 #define EXTENDOPT   'a'
 #define AVGEXTOPT   'x'
+#define ATACOPT     'j'
+#define ATACLEN     'd'
 #define XCHROM      'e'
 #define MINMAPQ     'm'
 #define ASDIFF      's'
@@ -127,14 +130,14 @@ typedef union file {
 } File;
 
 typedef struct hash {
-  float val;
-  uint64_t len;
+  float val;      // p-value
+  uint64_t len;   // length of genome with that p-value
   struct hash* next;
 } Hash;
 
 typedef struct pileup {
-  uint32_t* end;
-  float* cov;
+  uint32_t* end;  // array of end coordinates
+  float* cov;     // array of pileup values
 } Pileup;
 
 typedef struct diff {
@@ -143,30 +146,30 @@ typedef struct diff {
 } Diff;
 
 typedef struct chrom {
-  char* name;
+  char* name;         // name of chromosome (reference sequence)
   uint32_t len;       // length of chromosome
-  bool skip;
-  Diff* diff;
-  Pileup* treat;
+  bool skip;          // chromosome to be skipped?
+  Diff* diff;         // arrays for keeping track of pileup changes
+  Pileup* treat;      // pileup arrays for treatment sample(s)
   uint32_t treatLen;  // length of pileup arrays for treatment sample(s)
-  Pileup* ctrl;
+  Pileup* ctrl;       // pileup arrays for control sample(s)
   uint32_t ctrlLen;   // length of pileup arrays for control sample(s)
-  Pileup* pval;
-  Pileup* qval;
-  uint32_t pvalLen;   // length of pileup arrays for p- and q-values
+  Pileup* pval;       // "pileup" arrays for p-values
+  Pileup* qval;       // "pileup" arrays for q-values
+  uint32_t pvalLen;   // length of "pileup" arrays for p- and q-values
 } Chrom;
 
 typedef struct aln {
-  uint32_t pos[2];
-  float score;    // alignment score (sum of scores for paired alns)
-  bool primary;   // primary alignment?
-  bool paired;    // properly paired alignment?
-  bool full;      // both parts of paired aln analyzed? (only for paired alns)
-  bool strand;    // which strand aln is on (only for singleton alignments)
-  bool first;     // which read of a pair this is (only for singleton alignments)
-  uint8_t count;  // value of aln (only for singletons with avg-ext option)
-  char* name;     // read name (only for singletons with avg-ext option)
-  Chrom* chrom;
+  uint32_t pos[2];  // positions of the alignment
+  float score;      // alignment score (sum of scores for paired alns)
+  bool primary;     // primary alignment?
+  bool paired;      // properly paired alignment?
+  bool full;        // both parts of paired aln analyzed? (only for paired alns)
+  bool strand;      // which strand aln is on (only for singleton alignments)
+  bool first;       // which read of a pair this is (only for singleton alignments)
+  uint8_t count;    // value of aln (only for singletons with avg-ext option)
+  char* name;       // read name (only for singletons with avg-ext option)
+  Chrom* chrom;     // reference sequence
 } Aln;
 
 /*
