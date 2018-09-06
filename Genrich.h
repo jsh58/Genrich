@@ -4,9 +4,9 @@
 
   Finding sites of enrichment from genome-wide assays.
 
-  Version 0.1
+  Version 0.2
 */
-#define VERSION     "0.1"
+#define VERSION     "0.2"
 
 // macros
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
@@ -36,12 +36,13 @@ enum sam { NIL, QNAME, FLAG, RNAME, POS, MAPQ, CIGAR, RNEXT,
 #define NOSCORE     -FLT_MAX  // for alignments with no alignment score(s)
 
 // command-line options
-#define OPTIONS     "ht:c:o:b:zya:xjd:e:m:s:p:q:g:l:n:vV"
+#define OPTIONS     "ht:c:o:f:b:zya:xjd:e:m:s:p:q:g:l:n:vV"
 #define HELP        'h'
 #define INFILE      't'
 #define CTRLFILE    'c'
 #define OUTFILE     'o'
-#define LOGFILE     'b'
+#define LOGFILE     'f'
+#define BEDFILE     'b'
 #define GZOPT       'z'
 #define SINGLEOPT   'y'
 #define EXTENDOPT   'a'

@@ -4,7 +4,7 @@
 
   Finding sites of enrichment from genome-wide assays.
 
-  Version 0.1
+  Version 0.2
 */
 
 #include <stdio.h>
@@ -40,6 +40,7 @@ void usage(void) {
   fprintf(stderr, "Optional arguments:\n");
   fprintf(stderr, "  -%c  <file>       Input SAM/BAM file(s) for control sample(s)\n", CTRLFILE);
   fprintf(stderr, "  -%c  <file>       Output bedgraph file for pileups and p/q values\n", LOGFILE);
+  fprintf(stderr, "  -%c  <file>       Output BED file for reads/fragments/intervals\n", BEDFILE);
   fprintf(stderr, "Filtering options:\n");
   fprintf(stderr, "  -%c  <arg>        Comma-separated list of chromosomes to ignore\n", XCHROM);
   fprintf(stderr, "  -%c  <int>        Minimum MAPQ to keep an alignment (def. 0)\n", MINMAPQ);
@@ -1144,6 +1145,22 @@ void subFrac(int16_t* cov, uint8_t* frac, uint8_t count) {
 
 /*** Convert alignments to intervals ***/
 
+/* void printBED()
+ * Print a BED interval for a read/fragment.
+ *   Append the count and 'C'ontrol/'T'reatment
+ *   to the read name (4th column).
+ */
+void printBED(File bed, bool gzOut, char* chr,
+    int64_t start, int64_t end, char* qname,
+    uint8_t count, bool ctrl) {
+  if (gzOut)
+    gzprintf(bed.gzf, "%s\t%ld\t%ld\t%s_%d_%c\n",
+      chr, start, end, qname, count, ctrl ? 'C' : 'T');
+  else
+    fprintf(bed.f, "%s\t%ld\t%ld\t%s_%d_%c\n",
+      chr, start, end, qname, count, ctrl ? 'C' : 'T');
+}
+
 /* uint32_t saveInterval()
  * Check the validity of the start/end coordinates
  *   of a read/fragment. Save the ends to the 'diff'
@@ -1151,7 +1168,9 @@ void subFrac(int16_t* cov, uint8_t* frac, uint8_t count) {
  *   Return the fragment length.
  */
 uint32_t saveInterval(Chrom* c, int64_t start, int64_t end,
-    char* qname, uint8_t count, bool verbose) {
+    char* qname, uint8_t count, File bed, bool bedOpt,
+    bool gzOut, bool ctrl, bool verbose) {
+
   // check validity of positions
   if (start < 0) {
     if (verbose)
@@ -1206,6 +1225,11 @@ uint32_t saveInterval(Chrom* c, int64_t start, int64_t end,
     subFrac(&c->diff->cov[end], &c->diff->frac[end], count);
   }
 
+  // print BED interval
+  if (bedOpt)
+    printBED(bed, gzOut, c->name, start, end, qname,
+      count, ctrl);
+
   return end - start;
 }
 
@@ -1216,7 +1240,9 @@ uint32_t saveInterval(Chrom* c, int64_t start, int64_t end,
  */
 void processAvgExt(Aln** unpair, int unpairIdx,
     int unpairLen, double totalLen, int pairedPr,
+    File bed, bool bedOpt, bool gzOut, bool ctrl,
     bool verbose) {
+
   // determine average fragment length
   int avgLen = 0;
   if (! pairedPr && verbose) {
@@ -1234,13 +1260,15 @@ void processAvgExt(Aln** unpair, int unpairIdx,
       Aln* a = unpair[i] + j;
       if (! avgLen)
         saveInterval(a->chrom, a->pos[0], a->pos[1], a->name,
-          a->count, verbose);
+          a->count, bed, bedOpt, gzOut, ctrl, verbose);
       else if (a->strand)
         saveInterval(a->chrom, a->pos[0], a->pos[0] + avgLen,
-          a->name, a->count, verbose);
+          a->name, a->count, bed, bedOpt, gzOut, ctrl,
+          verbose);
       else
         saveInterval(a->chrom, (signed) (a->pos[1] - avgLen),
-          a->pos[1], a->name, a->count, verbose);
+          a->pos[1], a->name, a->count, bed, bedOpt, gzOut,
+          ctrl, verbose);
 
       // free memory
       free(a->name);
@@ -1291,24 +1319,28 @@ void saveAvgExt(char* qname, Aln* b, uint8_t count,
  */
 void saveSingle(char* qname, Aln* a, uint8_t count,
     bool extendOpt, int extend, bool atacOpt,
-    int atacLen5, int atacLen3, bool verbose) {
+    int atacLen5, int atacLen3, File bed, bool bedOpt,
+    bool gzOut, bool ctrl, bool verbose) {
   if (extendOpt) {
     if (a->strand)
       saveInterval(a->chrom, a->pos[0], a->pos[0] + extend,
-        qname, count, verbose);
+        qname, count, bed, bedOpt, gzOut, ctrl, verbose);
     else
       saveInterval(a->chrom, (signed) (a->pos[1] - extend),
-        a->pos[1], qname, count, verbose);
+        a->pos[1], qname, count, bed, bedOpt, gzOut, ctrl,
+        verbose);
   } else if (atacOpt) {
     if (a->strand)
       saveInterval(a->chrom, (signed) (a->pos[0] - atacLen5),
-        a->pos[0] + atacLen3, qname, count, verbose);
+        a->pos[0] + atacLen3, qname, count, bed, bedOpt,
+        gzOut, ctrl, verbose);
     else
       saveInterval(a->chrom, (signed) (a->pos[1] - atacLen3),
-        a->pos[1] + atacLen5, qname, count, verbose);
+        a->pos[1] + atacLen5, qname, count, bed, bedOpt,
+        gzOut, ctrl, verbose);
   } else
     saveInterval(a->chrom, a->pos[0], a->pos[1], qname,
-      count, verbose);
+      count, bed, bedOpt, gzOut, ctrl, verbose);
 }
 
 /* uint32_t saveFragAtac()
@@ -1318,16 +1350,20 @@ void saveSingle(char* qname, Aln* a, uint8_t count,
  */
 uint32_t saveFragAtac(Chrom* c, uint32_t start,
     uint32_t end, int atacLen5, int atacLen3,
-    char* qname, uint8_t count, bool verbose) {
+    char* qname, uint8_t count, File bed, bool bedOpt,
+    bool gzOut, bool ctrl, bool verbose) {
   if (start + atacLen3 >= (signed) (end - atacLen3))
     // expanded intervals overlap: just save one
     return saveInterval(c, (signed) (start - atacLen5),
-      end + atacLen5, qname, count, verbose);
+      end + atacLen5, qname, count, bed, bedOpt, gzOut,
+      ctrl, verbose);
   // save two intervals
   return saveInterval(c, (signed) (start - atacLen5),
-      start + atacLen3, qname, count, verbose)
+      start + atacLen3, qname, count, bed, bedOpt,
+      gzOut, ctrl, verbose)
     + saveInterval(c, (signed) (end - atacLen3),
-      end + atacLen5, qname, count, verbose);
+      end + atacLen5, qname, count, bed, bedOpt,
+      gzOut, ctrl, verbose);
 }
 
 /* uint32_t saveFragment()
@@ -1335,6 +1371,7 @@ uint32_t saveFragAtac(Chrom* c, uint32_t start,
  */
 uint32_t saveFragment(char* qname, Aln* a, uint8_t count,
     bool atacOpt, int atacLen5, int atacLen3,
+    File bed, bool bedOpt, bool gzOut, bool ctrl,
     bool verbose) {
   // ensure start < end
   uint32_t start, end;
@@ -1347,9 +1384,10 @@ uint32_t saveFragment(char* qname, Aln* a, uint8_t count,
   }
   if (atacOpt)
     return saveFragAtac(a->chrom, start, end, atacLen5,
-      atacLen3, qname, count, verbose);
+      atacLen3, qname, count, bed, bedOpt, gzOut, ctrl,
+      verbose);
   return saveInterval(a->chrom, start, end, qname,
-    count, verbose);
+    count, bed, bedOpt, gzOut, ctrl, verbose);
 }
 
 /*** Process a set of alignments ***/
@@ -1396,7 +1434,8 @@ int processSingle(char* qname, Aln* aln, int alnLen,
     Aln*** unpair, int* unpairIdx, int* unpairLen,
     int* unpairMem, float score, float asDiff,
     bool first, bool atacOpt, int atacLen5,
-    int atacLen3, bool verbose) {
+    int atacLen3, File bed, bool bedOpt, bool gzOut,
+    bool ctrl, bool verbose) {
 
   // adjust AS tolerance for secondary alns
   if (score != NOSCORE)
@@ -1433,7 +1472,8 @@ int processSingle(char* qname, Aln* aln, int alnLen,
       else
         // for other options, save singleton interval
         saveSingle(qname, a, count, extendOpt, extend,
-          atacOpt, atacLen5, atacLen3, verbose);
+          atacOpt, atacLen5, atacLen3, bed, bedOpt,
+          gzOut, ctrl, verbose);
 
       if (++saved == count)
         break;  // in case of AS ties
@@ -1491,6 +1531,7 @@ void subsamplePair(Aln* aln, int alnLen, uint8_t* count,
 int processPair(char* qname, Aln* aln, int alnLen,
     double* totalLen, float score, float asDiff,
     bool atacOpt, int atacLen5, int atacLen3,
+    File bed, bool bedOpt, bool gzOut, bool ctrl,
     bool verbose) {
 
   // adjust AS tolerance for secondary alns
@@ -1522,7 +1563,8 @@ int processPair(char* qname, Aln* aln, int alnLen,
 
       // save full fragment
       fragLen += saveFragment(qname, a, count,
-        atacOpt, atacLen5, atacLen3, verbose);
+        atacOpt, atacLen5, atacLen3, bed, bedOpt,
+        gzOut, ctrl, verbose);
 
       if (++saved == count)
         break;  // in case of AS ties
@@ -1554,7 +1596,8 @@ void processAlns(char* qname, Aln* aln, int alnLen,
     int extend, bool avgExtOpt, Aln*** unpair,
     int* unpairIdx, int* unpairLen, int* unpairMem,
     float asDiff, bool atacOpt, int atacLen5,
-    int atacLen3, bool verbose) {
+    int atacLen3, File bed, bool bedOpt, bool gzOut,
+    bool ctrl, bool verbose) {
 
   // determine if paired alns are valid, and best score
   float scorePr = NOSCORE, scoreR1 = NOSCORE,
@@ -1584,7 +1627,7 @@ void processAlns(char* qname, Aln* aln, int alnLen,
     // process paired alignments
     *pairedPr += processPair(qname, aln, alnLen,
       totalLen, scorePr, asDiff, atacOpt, atacLen5,
-      atacLen3, verbose);
+      atacLen3, bed, bedOpt, gzOut, ctrl, verbose);
 
   else if (singleOpt)
     // process singleton alignments (separately for R1, R2)
@@ -1593,7 +1636,8 @@ void processAlns(char* qname, Aln* aln, int alnLen,
         extendOpt, extend, avgExtOpt,
         unpair, unpairIdx, unpairLen, unpairMem,
         j ? scoreR2 : scoreR1, asDiff, ! j,
-        atacOpt, atacLen5, atacLen3, verbose);
+        atacOpt, atacLen5, atacLen3, bed, bedOpt,
+        gzOut, ctrl, verbose);
 
 /*
 //if (scoreR1 != NOSCORE && scoreR2 != NOSCORE) {
@@ -2000,8 +2044,8 @@ int readSAM(File in, bool gz, char* line, Aln** aln,
     Chrom** chrom, bool singleOpt, bool extendOpt,
     int extend, bool avgExtOpt, Aln*** unpair,
     int* unpairMem, float asDiff, bool atacOpt,
-    int atacLen5, int atacLen3, bool ctrl,
-    bool verbose) {
+    int atacLen5, int atacLen3, File bed, bool bedOpt,
+    bool gzOut, bool ctrl, bool verbose) {
 
   // SAM fields to save
   char* qname, *rname, *cigar, *rnext, *seq, *qual, *extra;
@@ -2072,7 +2116,8 @@ int readSAM(File in, bool gz, char* line, Aln** aln,
           pairedPr, singlePr, orphan, singleOpt,
           extendOpt, extend, avgExtOpt, unpair,
           &unpairIdx, &unpairLen, unpairMem, asDiff,
-          atacOpt, atacLen5, atacLen3, verbose);
+          atacOpt, atacLen5, atacLen3, bed, bedOpt,
+          gzOut, ctrl, verbose);
       alnLen = 0;
       strncpy(readName, qname, MAX_ALNS);
     }
@@ -2095,12 +2140,14 @@ int readSAM(File in, bool gz, char* line, Aln** aln,
       pairedPr, singlePr, orphan, singleOpt,
       extendOpt, extend, avgExtOpt, unpair,
       &unpairIdx, &unpairLen, unpairMem, asDiff,
-      atacOpt, atacLen5, atacLen3, verbose);
+      atacOpt, atacLen5, atacLen3, bed, bedOpt,
+      gzOut, ctrl, verbose);
 
   // process single alignments w/ avgExtOpt
   if (avgExtOpt)
     processAvgExt(*unpair, unpairIdx, unpairLen,
-      *totalLen, *pairedPr, verbose);
+      *totalLen, *pairedPr, bed, bedOpt, gzOut,
+      ctrl, verbose);
 
   return count;
 }
@@ -2314,7 +2361,8 @@ int parseBAM(gzFile in, char* line, Aln** aln,
     bool singleOpt, bool extendOpt, int extend,
     bool avgExtOpt, Aln*** unpair, int* unpairMem,
     float asDiff, bool atacOpt, int atacLen5,
-    int atacLen3, bool verbose) {
+    int atacLen3, File bed, bool bedOpt, bool gzOut,
+    bool ctrl, bool verbose) {
 
   // BAM fields to save
   int32_t refID, pos, l_seq, next_refID, next_pos, tlen;
@@ -2380,7 +2428,8 @@ int parseBAM(gzFile in, char* line, Aln** aln,
           pairedPr, singlePr, orphan, singleOpt,
           extendOpt, extend, avgExtOpt, unpair,
           &unpairIdx, &unpairLen, unpairMem, asDiff,
-          atacOpt, atacLen5, atacLen3, verbose);
+          atacOpt, atacLen5, atacLen3, bed, bedOpt,
+          gzOut, ctrl, verbose);
       alnLen = 0;
       strncpy(readName, read_name, MAX_ALNS);
     }
@@ -2403,12 +2452,14 @@ int parseBAM(gzFile in, char* line, Aln** aln,
       pairedPr, singlePr, orphan, singleOpt,
       extendOpt, extend, avgExtOpt, unpair,
       &unpairIdx, &unpairLen, unpairMem, asDiff,
-      atacOpt, atacLen5, atacLen3, verbose);
+      atacOpt, atacLen5, atacLen3, bed, bedOpt,
+      gzOut, ctrl, verbose);
 
   // process single alignments w/ avgExtOpt
   if (avgExtOpt)
     processAvgExt(*unpair, unpairIdx, unpairLen,
-      *totalLen, *pairedPr, verbose);
+      *totalLen, *pairedPr, bed, bedOpt, gzOut,
+      ctrl, verbose);
 
   return count;
 }
@@ -2426,7 +2477,8 @@ int readBAM(gzFile in, char* line, Aln** aln,
     Chrom** chrom, bool singleOpt, bool extendOpt,
     int extend, bool avgExtOpt, Aln*** unpair,
     int* unpairMem, float asDiff, bool atacOpt,
-    int atacLen5, int atacLen3, bool ctrl, bool verbose) {
+    int atacLen5, int atacLen3, File bed, bool bedOpt,
+    bool gzOut, bool ctrl, bool verbose) {
 
   // load first line from header
   int32_t l_text = readInt32(in, true);
@@ -2483,7 +2535,7 @@ int readBAM(gzFile in, char* line, Aln** aln,
     lowMapQ, minMapQ, secPair, secSingle, orphan,
     singleOpt, extendOpt, extend, avgExtOpt,
     unpair, unpairMem, asDiff, atacOpt, atacLen5,
-    atacLen3, verbose);
+    atacLen3, bed, bedOpt, gzOut, ctrl, verbose);
 }
 
 /*** File I/O ***/
@@ -2523,13 +2575,13 @@ void openWrite(char* outFile, File* out, bool gz) {
  * Opens output files for the program,
  *   adjusting file names/extensions as needed.
  */
-void openFiles(char* outFile, File* out,
-    char* logFile, File* log, bool gz, bool qvalOpt) {
+void openFiles(char* outFile, File* out, char* logFile,
+    File* log, bool gz, bool qvalOpt) {
 
   // open peak file
   openWrite(outFile, out, gz);
 
-  // open bedgraph file
+  // open bedgraph-ish log file
   if (logFile != NULL) {
     openWrite(logFile, log, gz);
 
@@ -2695,11 +2747,16 @@ void logCounts(int count, int unmapped, int supp,
  *   Passes results to findPeaks().
  */
 void runProgram(char* inFile, char* ctrlFile, char* outFile,
-    char* logFile, bool gzOut, bool singleOpt, bool extendOpt,
-    int extend, bool avgExtOpt, int minMapQ, int xcount,
-    char** xchrList, float pqvalue, bool qvalOpt,
+    char* logFile, char* bedFile, bool gzOut, bool singleOpt,
+    bool extendOpt, int extend, bool avgExtOpt, int minMapQ,
+    int xcount, char** xchrList, float pqvalue, bool qvalOpt,
     int minLen, int maxGap, float asDiff, bool atacOpt,
     int atacLen5, int atacLen3, bool verbose, int threads) {
+
+  // open optional BED file
+  File bed;
+  if (bedFile != NULL)
+    openWrite(bedFile, &bed, gzOut);
 
   // initialize variables
   char* line = (char*) memalloc(MAX_SIZE);
@@ -2749,7 +2806,8 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
           minMapQ, xcount, xchrList, &secPair, &secSingle,
           &orphan, &chromLen, &chrom, singleOpt, extendOpt,
           extend, avgExtOpt, &unpair, &unpairMem, asDiff,
-          atacOpt, atacLen5, atacLen3, i, verbose);
+          atacOpt, atacLen5, atacLen3, bed, bedFile != NULL,
+          gzOut, i, verbose);
       else
         count = readSAM(in, gz, line, &aln, readName,
           &totalLen, &unmapped, &paired, &single,
@@ -2757,7 +2815,8 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
           minMapQ, xcount, xchrList, &secPair, &secSingle,
           &orphan, &chromLen, &chrom, singleOpt, extendOpt,
           extend, avgExtOpt, &unpair, &unpairMem, asDiff,
-          atacOpt, atacLen5, atacLen3, i, verbose);
+          atacOpt, atacLen5, atacLen3, bed, bedFile != NULL,
+          gzOut, i, verbose);
 
       // log counts
       if (verbose)
@@ -2849,6 +2908,9 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
   if (logFile != NULL && ( ( gzOut && gzclose(log.gzf) != Z_OK )
       || ( ! gzOut && fclose(log.f) ) ) )
     exit(error(logFile, ERRCLOSE));
+  if (bedFile != NULL && ( ( gzOut && gzclose(bed.gzf) != Z_OK )
+      || ( ! gzOut && fclose(bed.f) ) ) )
+    exit(error(bedFile, ERRCLOSE));
 }
 
 /* int saveXChrom()
@@ -2874,8 +2936,8 @@ int saveXChrom(char* xchrom, char*** xchrList) {
 void getArgs(int argc, char** argv) {
 
   // default parameters/filenames
-  char* outFile = NULL, *inFile = NULL,
-    *ctrlFile = NULL, *logFile = NULL;
+  char* outFile = NULL, *inFile = NULL, *ctrlFile = NULL,
+    *logFile = NULL, *bedFile = NULL;
   char* xchrom = NULL;
   int extend = 0, minMapQ = 0, minLen = DEFMINLEN,
     maxGap = DEFMAXGAP, atacLen5 = DEFATAC, atacLen3 = 0,
@@ -2894,6 +2956,7 @@ void getArgs(int argc, char** argv) {
       case CTRLFILE: ctrlFile = optarg; break;
       case OUTFILE: outFile = optarg; break;
       case LOGFILE: logFile = optarg; break;
+      case BEDFILE: bedFile = optarg; break;
       case GZOPT: gzOut = true; break;
       case SINGLEOPT: singleOpt = true; break;
       case EXTENDOPT: extend = getInt(optarg); extendOpt = true; break;
@@ -2936,6 +2999,7 @@ void getArgs(int argc, char** argv) {
     avgExtOpt = extendOpt = false;  // no singleton extensions in ATAC-seq mode
     if (atacLen5 <= 0)
       exit(error("", ERRATAC));
+    // split atacLen into atacLen5 and atacLen3
     atacLen3 = (int) (atacLen5 / 2.0f + 0.5f);  // round up for 3' end
     atacLen5 /= 2;
   }
@@ -2956,10 +3020,11 @@ void getArgs(int argc, char** argv) {
   pqvalue = -1.0f * log10f(pqvalue);
 
   // send arguments to runProgram()
-  runProgram(inFile, ctrlFile, outFile, logFile, gzOut,
-    singleOpt, extendOpt, extend, avgExtOpt, minMapQ,
-    xcount, xchrList, pqvalue, qvalOpt, minLen, maxGap,
-    asDiff, atacOpt, atacLen5, atacLen3, verbose, threads);
+  runProgram(inFile, ctrlFile, outFile, logFile, bedFile,
+    gzOut, singleOpt, extendOpt, extend, avgExtOpt,
+    minMapQ, xcount, xchrList, pqvalue, qvalOpt, minLen,
+    maxGap, asDiff, atacOpt, atacLen5, atacLen3, verbose,
+    threads);
 }
 
 /* int main()
