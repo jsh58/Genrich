@@ -36,12 +36,13 @@ enum sam { NIL, QNAME, FLAG, RNAME, POS, MAPQ, CIGAR, RNEXT,
 #define NOSCORE     -FLT_MAX  // for alignments with no alignment score(s)
 
 // command-line options
-#define OPTIONS     "ht:c:o:f:b:zya:xjd:e:m:s:p:q:g:l:n:vV"
+#define OPTIONS     "ht:c:o:f:k:b:zya:xjd:e:m:s:p:q:g:l:n:vV"
 #define HELP        'h'
 #define INFILE      't'
 #define CTRLFILE    'c'
 #define OUTFILE     'o'
 #define LOGFILE     'f'
+#define PILEFILE    'k'
 #define BEDFILE     'b'
 #define GZOPT       'z'
 #define SINGLEOPT   'y'
@@ -156,9 +157,9 @@ typedef struct chrom {
   uint32_t treatLen;  // length of pileup arrays for treatment sample(s)
   Pileup* ctrl;       // pileup arrays for control sample(s)
   uint32_t ctrlLen;   // length of pileup arrays for control sample(s)
-  Pileup* pval;       // "pileup" arrays for p-values
+  Pileup** pval;      // "pileup" arrays for p-values
+  uint32_t* pvalLen;  // lengths of "pileup" arrays for p-values
   Pileup* qval;       // "pileup" arrays for q-values
-  uint32_t pvalLen;   // length of "pileup" arrays for p- and q-values
 } Chrom;
 
 typedef struct aln {

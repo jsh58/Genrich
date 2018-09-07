@@ -39,7 +39,8 @@ void usage(void) {
   fprintf(stderr, "  -%c  <file>       Output peak file\n", OUTFILE);
   fprintf(stderr, "Optional arguments:\n");
   fprintf(stderr, "  -%c  <file>       Input SAM/BAM file(s) for control sample(s)\n", CTRLFILE);
-  fprintf(stderr, "  -%c  <file>       Output bedgraph file for pileups and p/q values\n", LOGFILE);
+  fprintf(stderr, "  -%c  <file>       Output bedgraph-ish file for p/q values\n", LOGFILE);
+  fprintf(stderr, "  -%c  <file>       Output bedgraph-ish file for pileups and p-values\n", PILEFILE);
   fprintf(stderr, "  -%c  <file>       Output BED file for reads/fragments/intervals\n", BEDFILE);
   fprintf(stderr, "Filtering options:\n");
   fprintf(stderr, "  -%c  <arg>        Comma-separated list of chromosomes to ignore\n", XCHROM);
@@ -295,121 +296,112 @@ float* collectPval(Hash** table, uint64_t** pEnd,
   return pVal;
 }
 
-/*** Calculate p-values ***/
-
-/* void saveConst()
- * Save a given value as pileup for a full chromosome.
+/* Hash** hashPval()
+ * Collect p-values in a hashtable.
  */
-void saveConst(Pileup** p, uint32_t* size, uint32_t len,
-    float val) {
-  *p = (Pileup*) memalloc(sizeof(Pileup));
-  (*p)->end = (uint32_t*) memalloc(sizeof(uint32_t));
-  (*p)->end[0] = len;
-  (*p)->cov = (float*) memalloc(sizeof(float));
-  (*p)->cov[0] = val;
-  *size = 1;
-}
-
-/* uint32_t countIntervals()
- * Count the number of pileup intervals to create
- *   for a composite.
- */
-uint32_t countIntervals(Chrom* chr) {
-  uint32_t num = 0;
-  uint32_t k = 0;
-  for (uint32_t j = 0; j < chr->treatLen; j++) {
-    while (k < chr->ctrlLen
-        && chr->ctrl->end[k] < chr->treat->end[j]) {
-      num++;
-      k++;
-    }
-    if (chr->ctrl->end[k] == chr->treat->end[j])
-      k++;
-    num++;
-  }
-  return num;
-}
-
-/* float calcPval()
- * Calculate -log10(p) using an exponential distribution
- *   with parameter beta (ctrlVal) and observation treatVal.
- */
-float calcPval(float treatVal, float ctrlVal) {
-  if (ctrlVal == 0.0f)
-    return treatVal == 0.0f ? 0.0f : FLT_MAX;
-  return treatVal / ctrlVal * M_LOG10E;
-}
-
-/* Hash* savePval()
- * Create and save p-values as pileups for each chrom.
- *   Return a hash of all p-values to be used in
- *   q-value calculations.
- */
-Hash** savePval(Chrom* chrom, int chromLen, bool qvalOpt,
+Hash** hashPval(Chrom* chrom, int chromLen, int n,
     int64_t* pLen) {
 
   // create hashtable for conversion of p-values to q-values
-  Hash** table = NULL;
-  if (qvalOpt) {
-    table = (Hash**) memalloc(HASH_SIZE * sizeof(Hash*));
-    for (int i = 0; i < HASH_SIZE; i++)
-      table[i] = NULL;
-  }
+  Hash** table = (Hash**) memalloc(HASH_SIZE * sizeof(Hash*));
+  for (int i = 0; i < HASH_SIZE; i++)
+    table[i] = NULL;
 
-  // create pileups for each chrom
+  // loop through chroms
   for (int i = 0; i < chromLen; i++) {
     Chrom* chr = chrom + i;
     if (chr->skip)
       continue;
 
-    // check pileups for missing values
-    if (chr->treat == NULL)
-      saveConst(&chr->treat, &chr->treatLen, chr->len, 0.0f);
-    if (chr->ctrl == NULL)
-      exit(error(chr->name, ERRCTRL));
-
-    // create 'pileup' arrays for p-values
-    uint32_t num = countIntervals(chr);
-    chr->pval = (Pileup*) memalloc(sizeof(Pileup));
-    chr->pval->end = (uint32_t*) memalloc(num * sizeof(uint32_t));
-    chr->pval->cov = (float*) memalloc(num * sizeof(float));
-    if (qvalOpt) {
-      // create pileups arrays for q-values (to be populated later)
-      chr->qval = (Pileup*) memalloc(sizeof(Pileup));
-      chr->qval->end = (uint32_t*) memalloc(num * sizeof(uint32_t));
-      chr->qval->cov = (float*) memalloc(num * sizeof(float));
-    }
-    chr->pvalLen = num;
-
-    // save p-values to arrays
+    // populate hashtable
+    Pileup* p = chr->pval[n];
     uint32_t start = 0;
-    uint32_t j = 0, k = 0;
-    for (uint32_t m = 0; m < num; m++) {
-      if (chr->ctrl->end[k] < chr->treat->end[j]) {
-        chr->pval->end[m] = chr->ctrl->end[k];
-        chr->pval->cov[m] = calcPval(chr->treat->cov[j],
-          chr->ctrl->cov[k]);
-        k++;
-      } else {
-        chr->pval->end[m] = chr->treat->end[j];
-        chr->pval->cov[m] = calcPval(chr->treat->cov[j],
-          chr->ctrl->cov[k]);
-        if (chr->ctrl->end[k] == chr->treat->end[j])
-          k++;
-        j++;
-      }
-      if (qvalOpt) {
-        // save p-value to hashtable
-        *pLen += recordPval(table, chr->pval->cov[m],
-          chr->pval->end[m] - start);
-        start = chr->pval->end[m];
-      }
+    for (uint32_t m = 0; m < chr->pvalLen[n]; m++) {
+      // record p-value and length in hashtable
+      *pLen += recordPval(table, p->cov[m],
+        p->end[m] - start);
+      start = p->end[m];
     }
 
   }
 
   return table;
 }
+
+
+/*********************************/
+
+/* uint32_t countIntervals2()
+ * Count the number of pileup intervals to create
+ *   for the combined p-values.
+ */
+uint32_t countIntervals2(Chrom* c, int n) {
+  uint32_t num = 1;
+  uint32_t idx[n];  // indexes into each pval array
+  for (int j = 0; j < n; j++)
+    idx[j] = 0;
+  for (uint32_t k = 1; k < c->len; k++) {
+    bool add = false;
+    for (int j = 0; j < n; j++)
+      if (c->pval[j]->end[idx[j]] == k) {
+        if (! add) {
+          num++;
+          add = true;
+        }
+        idx[j]++;
+      }
+  }
+  return num;
+}
+
+/* void combinePval()
+ * Combine p-values for multiple replicates.
+ */
+void combinePval(Chrom* chrom, int chromLen, int n) {
+
+  // combine p-value "pileups" for each chrom
+  for (int i = 0; i < chromLen; i++) {
+    Chrom* chr = chrom + i;
+    if (chr->skip)
+      continue;
+
+    // create additional 'pileup' array for combined p-values
+    uint32_t num = countIntervals2(chr, n);
+    chr->pval = (Pileup**) memrealloc(chr->pval,
+      (n + 1) * sizeof(Pileup*));
+    chr->pval[n] = (Pileup*) memalloc(sizeof(Pileup));
+    chr->pval[n]->end = (uint32_t*) memalloc(num * sizeof(uint32_t));
+    chr->pval[n]->cov = (float*) memalloc(num * sizeof(float));
+    chr->pvalLen = (uint32_t*) memrealloc(chr->pvalLen,
+      (n + 1) * sizeof(uint32_t));
+    chr->pvalLen[n] = num;
+
+    //  
+    uint32_t idx[n + 1];  // indexes into each pval array
+    for (int j = 0; j <= n; j++)
+      idx[j] = 0;
+    for (uint32_t k = 1; k < chr->len; k++) {
+      bool add = false;
+      for (int j = 0; j < n; j++)
+        if (chr->pval[j]->end[idx[j]] == k) {
+          if (! add) {
+            chr->pval[n]->end[idx[n]] = k;
+            ////    
+            chr->pval[n]->cov[idx[n]] = chr->pval[j]->cov[idx[j]];  // calculate real value
+            ////    
+            idx[n]++;
+            add = true;
+          }
+          idx[j]++;
+        }
+
+    }
+
+  }
+}
+
+/*********************************/
+
 
 /*** Call peaks ***/
 
@@ -570,8 +562,8 @@ int callPeaks(File out, File log, bool logOpt, bool gzOut,
  */
 void findPeaks(File out, File log, bool logOpt, bool gzOut,
     uint64_t genomeLen, Chrom* chrom, int chromLen,
-    float pqvalue, bool qvalOpt, int minLen, int maxGap,
-    bool verbose) {
+    int* sample, float pqvalue, bool qvalOpt, int minLen,
+    int maxGap, bool verbose) {
 
   if (verbose) {
     fprintf(stderr, "Peak-calling parameters:\n");
@@ -582,10 +574,18 @@ void findPeaks(File out, File log, bool logOpt, bool gzOut,
     fprintf(stderr, "  Min. peak length: %dbp\n", minLen);
   }
 
-  // compute p- and q-values
-  int64_t pLen = 0;
-  Hash** table = savePval(chrom, chromLen, qvalOpt, &pLen);
+  // calculate combined p-values
+  if (*sample) {
+    combinePval(chrom, chromLen, *sample);
+    (*sample)++;
+  }
+
+  // compute q-values
   if (qvalOpt) {
+
+    // save p-values to hashtable
+    int64_t pLen = 0;
+    Hash** table = hashPval(chrom, chromLen, qvalOpt, &pLen);
 
     // collect p-values from hashtable
     uint64_t* pEnd = memalloc(pLen * sizeof(uint64_t));
@@ -615,6 +615,163 @@ void findPeaks(File out, File log, bool logOpt, bool gzOut,
   if (verbose)
     fprintf(stderr, "Peaks identified: %d\n", count);
 
+}
+
+/*** Calculate p-values ***/
+
+/* void saveConst()
+ * Save a given value as pileup for a full chromosome.
+ */
+void saveConst(Pileup** p, uint32_t* size, uint32_t len,
+    float val) {
+  *p = (Pileup*) memalloc(sizeof(Pileup));
+  (*p)->end = (uint32_t*) memalloc(sizeof(uint32_t));
+  (*p)->end[0] = len;
+  (*p)->cov = (float*) memalloc(sizeof(float));
+  (*p)->cov[0] = val;
+  *size = 1;
+}
+
+/* uint32_t countIntervals()
+ * Count the number of pileup intervals to create
+ *   for a composite.
+ */
+uint32_t countIntervals(Chrom* chr) {
+  uint32_t num = 0;
+  uint32_t k = 0;
+  for (uint32_t j = 0; j < chr->treatLen; j++) {
+    while (k < chr->ctrlLen
+        && chr->ctrl->end[k] < chr->treat->end[j]) {
+      num++;
+      k++;
+    }
+    if (chr->ctrl->end[k] == chr->treat->end[j])
+      k++;
+    num++;
+  }
+  return num;
+}
+
+/* void printPileHeader()
+ * Print header of the bedgraph-ish pileup log file.
+ */
+void printPileHeader(File pile, char* treatName,
+    char* ctrlName, bool gzOut) {
+  if (gzOut) {
+    gzprintf(pile.gzf, "# treatment file: %s; control file: %s\n",
+      treatName, ctrlName ? ctrlName : "n/a");
+    gzprintf(pile.gzf, "chr\tstart\tend\ttreatment\tcontrol\t-log(p)\n");
+  } else {
+    fprintf(pile.f, "# treatment file: %s; control file: %s\n",
+      treatName, ctrlName ? ctrlName : "n/a");
+    fprintf(pile.f, "chr\tstart\tend\ttreatment\tcontrol\t-log(p)\n");
+  }
+}
+
+/* void printPile()
+ * Print bedgraph-ish interval of treatment/control
+ *   pileup values and p-value.
+ */
+void printPile(File pile, char* name, uint32_t start,
+    uint32_t end, float treat, float ctrl, float pval,
+    bool gzOut) {
+  if (gzOut)
+    gzprintf(pile.gzf, "%s\t%d\t%d\t%f\t%f\t%f\n",
+      name, start, end, treat, ctrl, pval);
+  else
+    fprintf(pile.f, "%s\t%d\t%d\t%f\t%f\t%f\n",
+      name, start, end, treat, ctrl, pval);
+}
+
+/* float calcPval()
+ * Calculate -log10(p) using an exponential distribution
+ *   with parameter beta (ctrlVal) and observation treatVal.
+ */
+float calcPval(float treatVal, float ctrlVal) {
+  if (ctrlVal == 0.0f)
+    return treatVal == 0.0f ? 0.0f : FLT_MAX;
+  return treatVal / ctrlVal * M_LOG10E;
+}
+
+/* void savePval()
+ * Create and save p-values as pileups for each chrom.
+ */
+void savePval(Chrom* chrom, int chromLen, int n,
+    File pile, bool pileOpt, char* treatName,
+    char* ctrlName, bool gzOut) {
+
+  // print log header
+  if (pileOpt)
+    printPileHeader(pile, treatName, ctrlName, gzOut);
+
+  // create pileups for each chrom
+  for (int i = 0; i < chromLen; i++) {
+    Chrom* chr = chrom + i;
+    if (chr->skip)
+      continue;
+
+    // check pileups for missing values
+    if (chr->treat == NULL)
+      saveConst(&chr->treat, &chr->treatLen, chr->len, 0.0f);
+    if (chr->ctrl == NULL)
+      exit(error(chr->name, ERRCTRL));
+
+    // create 'pileup' arrays for p-values
+    uint32_t num = countIntervals(chr);
+    chr->pval = (Pileup**) memrealloc(chr->pval,
+      (n + 1) * sizeof(Pileup*));
+    chr->pval[n] = (Pileup*) memalloc(sizeof(Pileup));
+    chr->pval[n]->end = (uint32_t*) memalloc(num * sizeof(uint32_t));
+    chr->pval[n]->cov = (float*) memalloc(num * sizeof(float));
+    chr->pvalLen = (uint32_t*) memrealloc(chr->pvalLen,
+      (n + 1) * sizeof(uint32_t));
+    chr->pvalLen[n] = num;
+
+    // save p-values to arrays
+    Pileup* p = chr->pval[n];
+    uint32_t start = 0;    // start of interval
+    uint32_t j = 0, k = 0;
+    for (uint32_t m = 0; m < num; m++) {
+      if (chr->ctrl->end[k] < chr->treat->end[j]) {
+        p->end[m] = chr->ctrl->end[k];
+        p->cov[m] = calcPval(chr->treat->cov[j],
+          chr->ctrl->cov[k]);
+        if (pileOpt)
+          printPile(pile, chr->name, start, p->end[m],
+            chr->treat->cov[j], chr->ctrl->cov[k],
+            p->cov[m], gzOut);
+/*        chr->pval[n]->end[m] = chr->ctrl->end[k];
+        chr->pval[n]->cov[m] = calcPval(chr->treat->cov[j],
+          chr->ctrl->cov[k]);
+        if (pileOpt)
+          printPile(pile, chr->name, start,
+            chr->pval[n]->end[m], chr->treat->cov[j],
+            chr->ctrl->cov[k], chr->pval[n]->cov[m], gzOut);
+        start = chr->pval[n]->end[m];*/
+        k++;
+      } else {
+        p->end[m] = chr->treat->end[j];
+        p->cov[m] = calcPval(chr->treat->cov[j],
+          chr->ctrl->cov[k]);
+        if (pileOpt)
+          printPile(pile, chr->name, start, p->end[m],
+            chr->treat->cov[j], chr->ctrl->cov[k],
+            p->cov[m], gzOut);
+/*        chr->pval[n]->end[m] = chr->treat->end[j];
+        chr->pval[n]->cov[m] = calcPval(chr->treat->cov[j],
+          chr->ctrl->cov[k]);
+        if (pileOpt)
+          printPile(pile, chr->name, start,
+            chr->pval[n]->end[m], chr->treat->cov[j],
+            chr->ctrl->cov[k], chr->pval[n]->cov[m], gzOut);*/
+        if (chr->ctrl->end[k] == chr->treat->end[j])
+          k++;
+        j++;
+      }
+      start = p->end[m];
+    }
+
+  }
 }
 
 /*** Save treatment/control pileup values ***/
@@ -683,8 +840,10 @@ float updateVal(int16_t dCov, uint8_t dFrac, int32_t* cov,
   int half = 0;
   if (dFrac & 0x7) {
     int sum8 = (dFrac & 0x7) + (*frac & 0x7);
-    for (; sum8 > 3; sum8 -= 4)
+    while (sum8 > 3) {
       half++;
+      sum8 -= 4;
+    }
     *frac = (*frac & 0xF8) | sum8;
   } else if (*frac & 0x4) {
     half++;
@@ -694,22 +853,28 @@ float updateVal(int16_t dCov, uint8_t dFrac, int32_t* cov,
   // sum sixths
   if (dFrac & 0x18) {
     int sum6 = ((dFrac >> 3) & 0x3) + ((*frac >> 3) & 0x3);
-    for (; sum6 > 2; sum6 -= 3)
+    if (sum6 > 2) {
       half++;
+      sum6 -= 3;
+    }
     *frac = (*frac & 0xE7) | (sum6 << 3);
   }
 
   // sum tenths
   if (dFrac & 0xE0) {
     int sum10 = ((dFrac >> 5) & 0x7) + ((*frac >> 5) & 0x7);
-    for (; sum10 > 4; sum10 -= 5)
+    if (sum10 > 4) {
       half++;
+      sum10 -= 5;
+    }
     *frac = (*frac & 0x1F) | (sum10 << 5);
   }
 
   // combine halves
-  for (; half > 1; half -= 2)
+  while (half > 1) {
     (*cov)++;
+    half -= 2;
+  }
   if (half)
     *frac |= 0x4;
 
@@ -785,9 +950,11 @@ void savePileupCtrl(Chrom* chrom, int chromLen,
 
   // calculate scale factor (treatment / control)
   float factor = calcFactor(chrom, chromLen, fragLen);
-  if (verbose)
-    fprintf(stderr, "Scaling factor for control pileup: %f\n",
-      factor);
+  if (verbose) {
+    fprintf(stderr, "Scaling factor for control pileup: %f\n", factor);
+    if (factor > 5.0f)
+      fprintf(stderr, "  ** Warning! Large scaling may mask true signal **\n");
+  }
 
   // create pileup for each chrom
   for (int i = 0; i < chromLen; i++) {
@@ -1152,13 +1319,15 @@ void subFrac(int16_t* cov, uint8_t* frac, uint8_t count) {
  */
 void printBED(File bed, bool gzOut, char* chr,
     int64_t start, int64_t end, char* qname,
-    uint8_t count, bool ctrl) {
+    uint8_t count, bool ctrl, int sample) {
   if (gzOut)
-    gzprintf(bed.gzf, "%s\t%ld\t%ld\t%s_%d_%c\n",
-      chr, start, end, qname, count, ctrl ? 'C' : 'T');
+    gzprintf(bed.gzf, "%s\t%ld\t%ld\t%s_%d_%c_%d\n",
+      chr, start, end, qname, count, ctrl ? 'C' : 'T',
+      sample);
   else
-    fprintf(bed.f, "%s\t%ld\t%ld\t%s_%d_%c\n",
-      chr, start, end, qname, count, ctrl ? 'C' : 'T');
+    fprintf(bed.f, "%s\t%ld\t%ld\t%s_%d_%c_%d\n",
+      chr, start, end, qname, count, ctrl ? 'C' : 'T',
+      sample);
 }
 
 /* uint32_t saveInterval()
@@ -1169,7 +1338,7 @@ void printBED(File bed, bool gzOut, char* chr,
  */
 uint32_t saveInterval(Chrom* c, int64_t start, int64_t end,
     char* qname, uint8_t count, File bed, bool bedOpt,
-    bool gzOut, bool ctrl, bool verbose) {
+    bool gzOut, bool ctrl, int sample, bool verbose) {
 
   // check validity of positions
   if (start < 0) {
@@ -1228,7 +1397,7 @@ uint32_t saveInterval(Chrom* c, int64_t start, int64_t end,
   // print BED interval
   if (bedOpt)
     printBED(bed, gzOut, c->name, start, end, qname,
-      count, ctrl);
+      count, ctrl, sample);
 
   return end - start;
 }
@@ -1241,7 +1410,7 @@ uint32_t saveInterval(Chrom* c, int64_t start, int64_t end,
 void processAvgExt(Aln** unpair, int unpairIdx,
     int unpairLen, double totalLen, int pairedPr,
     File bed, bool bedOpt, bool gzOut, bool ctrl,
-    bool verbose) {
+    int sample, bool verbose) {
 
   // determine average fragment length
   int avgLen = 0;
@@ -1260,15 +1429,16 @@ void processAvgExt(Aln** unpair, int unpairIdx,
       Aln* a = unpair[i] + j;
       if (! avgLen)
         saveInterval(a->chrom, a->pos[0], a->pos[1], a->name,
-          a->count, bed, bedOpt, gzOut, ctrl, verbose);
+          a->count, bed, bedOpt, gzOut, ctrl, sample,
+          verbose);
       else if (a->strand)
         saveInterval(a->chrom, a->pos[0], a->pos[0] + avgLen,
           a->name, a->count, bed, bedOpt, gzOut, ctrl,
-          verbose);
+          sample, verbose);
       else
         saveInterval(a->chrom, (signed) (a->pos[1] - avgLen),
           a->pos[1], a->name, a->count, bed, bedOpt, gzOut,
-          ctrl, verbose);
+          ctrl, sample, verbose);
 
       // free memory
       free(a->name);
@@ -1320,27 +1490,28 @@ void saveAvgExt(char* qname, Aln* b, uint8_t count,
 void saveSingle(char* qname, Aln* a, uint8_t count,
     bool extendOpt, int extend, bool atacOpt,
     int atacLen5, int atacLen3, File bed, bool bedOpt,
-    bool gzOut, bool ctrl, bool verbose) {
+    bool gzOut, bool ctrl, int sample, bool verbose) {
   if (extendOpt) {
     if (a->strand)
       saveInterval(a->chrom, a->pos[0], a->pos[0] + extend,
-        qname, count, bed, bedOpt, gzOut, ctrl, verbose);
+        qname, count, bed, bedOpt, gzOut, ctrl, sample,
+        verbose);
     else
       saveInterval(a->chrom, (signed) (a->pos[1] - extend),
         a->pos[1], qname, count, bed, bedOpt, gzOut, ctrl,
-        verbose);
+        sample, verbose);
   } else if (atacOpt) {
     if (a->strand)
       saveInterval(a->chrom, (signed) (a->pos[0] - atacLen5),
         a->pos[0] + atacLen3, qname, count, bed, bedOpt,
-        gzOut, ctrl, verbose);
+        gzOut, ctrl, sample, verbose);
     else
       saveInterval(a->chrom, (signed) (a->pos[1] - atacLen3),
         a->pos[1] + atacLen5, qname, count, bed, bedOpt,
-        gzOut, ctrl, verbose);
+        gzOut, ctrl, sample, verbose);
   } else
     saveInterval(a->chrom, a->pos[0], a->pos[1], qname,
-      count, bed, bedOpt, gzOut, ctrl, verbose);
+      count, bed, bedOpt, gzOut, ctrl, sample, verbose);
 }
 
 /* uint32_t saveFragAtac()
@@ -1351,19 +1522,19 @@ void saveSingle(char* qname, Aln* a, uint8_t count,
 uint32_t saveFragAtac(Chrom* c, uint32_t start,
     uint32_t end, int atacLen5, int atacLen3,
     char* qname, uint8_t count, File bed, bool bedOpt,
-    bool gzOut, bool ctrl, bool verbose) {
+    bool gzOut, bool ctrl, int sample, bool verbose) {
   if (start + atacLen3 >= (signed) (end - atacLen3))
     // expanded intervals overlap: just save one
     return saveInterval(c, (signed) (start - atacLen5),
       end + atacLen5, qname, count, bed, bedOpt, gzOut,
-      ctrl, verbose);
+      ctrl, sample, verbose);
   // save two intervals
   return saveInterval(c, (signed) (start - atacLen5),
       start + atacLen3, qname, count, bed, bedOpt,
-      gzOut, ctrl, verbose)
+      gzOut, ctrl, sample, verbose)
     + saveInterval(c, (signed) (end - atacLen3),
       end + atacLen5, qname, count, bed, bedOpt,
-      gzOut, ctrl, verbose);
+      gzOut, ctrl, sample, verbose);
 }
 
 /* uint32_t saveFragment()
@@ -1372,7 +1543,7 @@ uint32_t saveFragAtac(Chrom* c, uint32_t start,
 uint32_t saveFragment(char* qname, Aln* a, uint8_t count,
     bool atacOpt, int atacLen5, int atacLen3,
     File bed, bool bedOpt, bool gzOut, bool ctrl,
-    bool verbose) {
+    int sample, bool verbose) {
   // ensure start < end
   uint32_t start, end;
   if (a->pos[0] > a->pos[1]) {
@@ -1385,9 +1556,9 @@ uint32_t saveFragment(char* qname, Aln* a, uint8_t count,
   if (atacOpt)
     return saveFragAtac(a->chrom, start, end, atacLen5,
       atacLen3, qname, count, bed, bedOpt, gzOut, ctrl,
-      verbose);
+      sample, verbose);
   return saveInterval(a->chrom, start, end, qname,
-    count, bed, bedOpt, gzOut, ctrl, verbose);
+    count, bed, bedOpt, gzOut, ctrl, sample, verbose);
 }
 
 /*** Process a set of alignments ***/
@@ -1435,7 +1606,7 @@ int processSingle(char* qname, Aln* aln, int alnLen,
     int* unpairMem, float score, float asDiff,
     bool first, bool atacOpt, int atacLen5,
     int atacLen3, File bed, bool bedOpt, bool gzOut,
-    bool ctrl, bool verbose) {
+    bool ctrl, int sample, bool verbose) {
 
   // adjust AS tolerance for secondary alns
   if (score != NOSCORE)
@@ -1473,7 +1644,7 @@ int processSingle(char* qname, Aln* aln, int alnLen,
         // for other options, save singleton interval
         saveSingle(qname, a, count, extendOpt, extend,
           atacOpt, atacLen5, atacLen3, bed, bedOpt,
-          gzOut, ctrl, verbose);
+          gzOut, ctrl, sample, verbose);
 
       if (++saved == count)
         break;  // in case of AS ties
@@ -1532,7 +1703,7 @@ int processPair(char* qname, Aln* aln, int alnLen,
     double* totalLen, float score, float asDiff,
     bool atacOpt, int atacLen5, int atacLen3,
     File bed, bool bedOpt, bool gzOut, bool ctrl,
-    bool verbose) {
+    int sample, bool verbose) {
 
   // adjust AS tolerance for secondary alns
   if (score != NOSCORE)
@@ -1564,7 +1735,7 @@ int processPair(char* qname, Aln* aln, int alnLen,
       // save full fragment
       fragLen += saveFragment(qname, a, count,
         atacOpt, atacLen5, atacLen3, bed, bedOpt,
-        gzOut, ctrl, verbose);
+        gzOut, ctrl, sample, verbose);
 
       if (++saved == count)
         break;  // in case of AS ties
@@ -1597,7 +1768,7 @@ void processAlns(char* qname, Aln* aln, int alnLen,
     int* unpairIdx, int* unpairLen, int* unpairMem,
     float asDiff, bool atacOpt, int atacLen5,
     int atacLen3, File bed, bool bedOpt, bool gzOut,
-    bool ctrl, bool verbose) {
+    bool ctrl, int sample, bool verbose) {
 
   // determine if paired alns are valid, and best score
   float scorePr = NOSCORE, scoreR1 = NOSCORE,
@@ -1627,7 +1798,8 @@ void processAlns(char* qname, Aln* aln, int alnLen,
     // process paired alignments
     *pairedPr += processPair(qname, aln, alnLen,
       totalLen, scorePr, asDiff, atacOpt, atacLen5,
-      atacLen3, bed, bedOpt, gzOut, ctrl, verbose);
+      atacLen3, bed, bedOpt, gzOut, ctrl, sample,
+      verbose);
 
   else if (singleOpt)
     // process singleton alignments (separately for R1, R2)
@@ -1637,7 +1809,7 @@ void processAlns(char* qname, Aln* aln, int alnLen,
         unpair, unpairIdx, unpairLen, unpairMem,
         j ? scoreR2 : scoreR1, asDiff, ! j,
         atacOpt, atacLen5, atacLen3, bed, bedOpt,
-        gzOut, ctrl, verbose);
+        gzOut, ctrl, sample, verbose);
 
 /*
 //if (scoreR1 != NOSCORE && scoreR2 != NOSCORE) {
@@ -2045,7 +2217,7 @@ int readSAM(File in, bool gz, char* line, Aln** aln,
     int extend, bool avgExtOpt, Aln*** unpair,
     int* unpairMem, float asDiff, bool atacOpt,
     int atacLen5, int atacLen3, File bed, bool bedOpt,
-    bool gzOut, bool ctrl, bool verbose) {
+    bool gzOut, bool ctrl, int sample, bool verbose) {
 
   // SAM fields to save
   char* qname, *rname, *cigar, *rnext, *seq, *qual, *extra;
@@ -2117,7 +2289,7 @@ int readSAM(File in, bool gz, char* line, Aln** aln,
           extendOpt, extend, avgExtOpt, unpair,
           &unpairIdx, &unpairLen, unpairMem, asDiff,
           atacOpt, atacLen5, atacLen3, bed, bedOpt,
-          gzOut, ctrl, verbose);
+          gzOut, ctrl, sample, verbose);
       alnLen = 0;
       strncpy(readName, qname, MAX_ALNS);
     }
@@ -2141,13 +2313,13 @@ int readSAM(File in, bool gz, char* line, Aln** aln,
       extendOpt, extend, avgExtOpt, unpair,
       &unpairIdx, &unpairLen, unpairMem, asDiff,
       atacOpt, atacLen5, atacLen3, bed, bedOpt,
-      gzOut, ctrl, verbose);
+      gzOut, ctrl, sample, verbose);
 
   // process single alignments w/ avgExtOpt
   if (avgExtOpt)
     processAvgExt(*unpair, unpairIdx, unpairLen,
       *totalLen, *pairedPr, bed, bedOpt, gzOut,
-      ctrl, verbose);
+      ctrl, sample, verbose);
 
   return count;
 }
@@ -2362,7 +2534,7 @@ int parseBAM(gzFile in, char* line, Aln** aln,
     bool avgExtOpt, Aln*** unpair, int* unpairMem,
     float asDiff, bool atacOpt, int atacLen5,
     int atacLen3, File bed, bool bedOpt, bool gzOut,
-    bool ctrl, bool verbose) {
+    bool ctrl, int sample, bool verbose) {
 
   // BAM fields to save
   int32_t refID, pos, l_seq, next_refID, next_pos, tlen;
@@ -2429,7 +2601,7 @@ int parseBAM(gzFile in, char* line, Aln** aln,
           extendOpt, extend, avgExtOpt, unpair,
           &unpairIdx, &unpairLen, unpairMem, asDiff,
           atacOpt, atacLen5, atacLen3, bed, bedOpt,
-          gzOut, ctrl, verbose);
+          gzOut, ctrl, sample, verbose);
       alnLen = 0;
       strncpy(readName, read_name, MAX_ALNS);
     }
@@ -2453,13 +2625,13 @@ int parseBAM(gzFile in, char* line, Aln** aln,
       extendOpt, extend, avgExtOpt, unpair,
       &unpairIdx, &unpairLen, unpairMem, asDiff,
       atacOpt, atacLen5, atacLen3, bed, bedOpt,
-      gzOut, ctrl, verbose);
+      gzOut, ctrl, sample, verbose);
 
   // process single alignments w/ avgExtOpt
   if (avgExtOpt)
     processAvgExt(*unpair, unpairIdx, unpairLen,
       *totalLen, *pairedPr, bed, bedOpt, gzOut,
-      ctrl, verbose);
+      ctrl, sample, verbose);
 
   return count;
 }
@@ -2478,7 +2650,7 @@ int readBAM(gzFile in, char* line, Aln** aln,
     int extend, bool avgExtOpt, Aln*** unpair,
     int* unpairMem, float asDiff, bool atacOpt,
     int atacLen5, int atacLen3, File bed, bool bedOpt,
-    bool gzOut, bool ctrl, bool verbose) {
+    bool gzOut, bool ctrl, int sample, bool verbose) {
 
   // load first line from header
   int32_t l_text = readInt32(in, true);
@@ -2535,7 +2707,7 @@ int readBAM(gzFile in, char* line, Aln** aln,
     lowMapQ, minMapQ, secPair, secSingle, orphan,
     singleOpt, extendOpt, extend, avgExtOpt,
     unpair, unpairMem, asDiff, atacOpt, atacLen5,
-    atacLen3, bed, bedOpt, gzOut, ctrl, verbose);
+    atacLen3, bed, bedOpt, gzOut, ctrl, sample, verbose);
 }
 
 /*** File I/O ***/
@@ -2747,16 +2919,20 @@ void logCounts(int count, int unmapped, int supp,
  *   Passes results to findPeaks().
  */
 void runProgram(char* inFile, char* ctrlFile, char* outFile,
-    char* logFile, char* bedFile, bool gzOut, bool singleOpt,
-    bool extendOpt, int extend, bool avgExtOpt, int minMapQ,
-    int xcount, char** xchrList, float pqvalue, bool qvalOpt,
+    char* logFile, char* pileFile, char* bedFile,
+    bool gzOut, bool singleOpt, bool extendOpt, int extend,
+    bool avgExtOpt, int minMapQ, int xcount,
+    char** xchrList, float pqvalue, bool qvalOpt,
     int minLen, int maxGap, float asDiff, bool atacOpt,
-    int atacLen5, int atacLen3, bool verbose, int threads) {
+    int atacLen5, int atacLen3, bool verbose,
+    int threads) {
 
-  // open optional BED file
-  File bed;
+  // open optional output files
+  File bed, pile;
   if (bedFile != NULL)
     openWrite(bedFile, &bed, gzOut);
+  if (pileFile != NULL)
+    openWrite(pileFile, &pile, gzOut);
 
   // initialize variables
   char* line = (char*) memalloc(MAX_SIZE);
@@ -2767,33 +2943,51 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
   Aln** unpair = NULL;    // array of unpaired alns (for avg-ext option)
   char* readName = memalloc(MAX_ALNS + 1);  // name of read being analyzed
   readName[0] = readName[MAX_ALNS] = '\0';
-  double fragLen = 0.0;   // total weighted length of all treatment fragments
   uint64_t genomeLen = 0; // total length of genome
+  int sample = 0;         // number of sample pairs analyzed
 
   // loop through input files (treatment and control)
-  for (int i = 0; i < 2; i++) {
+  char* end1, *end2;
+  char* treatName = strtok_r(inFile, COM, &end1);
+  char* ctrlName = strtok_r(ctrlFile, COM, &end2);
+  while (treatName) {
 
-    // get treat/ctrl file name(s)
-    char* file = (i ? ctrlFile : inFile);
-    if (file == NULL) {
-      if (verbose)
-        fprintf(stderr, "No control file provided\n");
-      savePileupNoCtrl(chrom, chromLen, fragLen, &genomeLen);
-      break;
-    }
+    // initialize variables
+    double fragLen = 0.0; // total weighted length of all treatment fragments
+    genomeLen = 0;        // reset genome length (could be dynamic)
 
-    char* end;
-    char* filename = strtok_r(file, COM, &end);
-    while (filename) {
+    // process matching treatment/control files
+    for (int i = 0; i < 2; i++) {
+
+      // get treat/ctrl filename
+      char* filename = i ? ctrlName : treatName;
+      if (filename == NULL) {
+        if (verbose)
+          fprintf(stderr, "No control file provided\n");
+        savePileupNoCtrl(chrom, chromLen, fragLen,
+          &genomeLen);
+        break;
+      }
+
       // open input file
       File in;
       bool gz = openRead(filename, &in);
       bool bam = checkBAM(in, gz);
-
-      // process files
       if (verbose)
-        fprintf(stderr, "Processing %s file: %s\n",
-          i ? "control" : "treatment", filename);
+        fprintf(stderr, "Processing %s file #%d: %s\n",
+          i ? "control" : "treatment", sample, filename);
+
+      // reset 'diff' array for each Chrom
+      for (int j = 0; j < chromLen; j++) {
+        Chrom* c = chrom + j;
+        if (c->diff != NULL)
+          for (int k = 0; k < 1 + c->len; k++) {
+            c->diff->frac[k] = 0;
+            c->diff->cov[k] = 0;
+          }
+      }
+
+      // load and process alignments
       int unmapped = 0, paired = 0, single = 0, orphan = 0,
         pairedPr = 0, singlePr = 0, supp = 0, skipped = 0,
         lowMapQ = 0, secPair = 0, secSingle = 0;  // counting variables
@@ -2807,7 +3001,7 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
           &orphan, &chromLen, &chrom, singleOpt, extendOpt,
           extend, avgExtOpt, &unpair, &unpairMem, asDiff,
           atacOpt, atacLen5, atacLen3, bed, bedFile != NULL,
-          gzOut, i, verbose);
+          gzOut, i, sample, verbose);
       else
         count = readSAM(in, gz, line, &aln, readName,
           &totalLen, &unmapped, &paired, &single,
@@ -2816,7 +3010,7 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
           &orphan, &chromLen, &chrom, singleOpt, extendOpt,
           extend, avgExtOpt, &unpair, &unpairMem, asDiff,
           atacOpt, atacLen5, atacLen3, bed, bedFile != NULL,
-          gzOut, i, verbose);
+          gzOut, i, sample, verbose);
 
       // log counts
       if (verbose)
@@ -2826,29 +3020,26 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
           totalLen, singleOpt, extendOpt, extend,
           avgExtOpt, bam, atacOpt, atacLen5 + atacLen3);
 
+      // save pileup values
+      if (i)
+        savePileupCtrl(chrom, chromLen, fragLen,
+          &genomeLen, verbose);
+      else
+        fragLen = savePileupTreat(chrom, chromLen);
+
       // close input files
-      if ( (gz && gzclose(in.gzf) != Z_OK) || (! gz && fclose(in.f)) )
+      if ( (gz && gzclose(in.gzf) != Z_OK)
+          || (! gz && fclose(in.f)) )
         exit(error(filename, ERRCLOSE));
-
-      filename = strtok_r(NULL, COM, &end);
     }
 
-    // save pileup values
-    if (i)
-      savePileupCtrl(chrom, chromLen, fragLen, &genomeLen,
-        verbose);
-    else {
-      fragLen = savePileupTreat(chrom, chromLen);
-      // reset 'diff' array for each Chrom
-      for (int j = 0; j < chromLen; j++) {
-        Chrom* c = chrom + j;
-        if (c->diff != NULL)
-          for (int k = 0; k < 1 + c->len; k++) {
-            c->diff->frac[k] = 0;
-            c->diff->cov[k] = 0;
-          }
-      }
-    }
+    // calculate p-values
+    savePval(chrom, chromLen, sample, pile,
+      pileFile != NULL, treatName, ctrlName, gzOut);
+
+    treatName = strtok_r(NULL, COM, &end1);
+    ctrlName = strtok_r(NULL, COM, &end2);
+    sample++;
   }
 
   // open output files
@@ -2857,8 +3048,8 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
 
   // find peaks
   findPeaks(out, log, logFile != NULL, gzOut, genomeLen,
-    chrom, chromLen, pqvalue, qvalOpt, minLen, maxGap,
-    verbose);
+    chrom, chromLen, &sample, pqvalue, qvalOpt, minLen,
+    maxGap, verbose);
 
   // free memory
   if (xcount) {
@@ -2879,9 +3070,13 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
         free(chr->qval->cov);
         free(chr->qval);
       }
-      free(chr->pval->end);
-      free(chr->pval->cov);
+      for (int j = 0; j < sample; j++) {
+        free(chr->pval[j]->end);
+        free(chr->pval[j]->cov);
+        free(chr->pval[j]);
+      }
       free(chr->pval);
+      free(chr->pvalLen);
       free(chr->ctrl->end);
       free(chr->ctrl->cov);
       free(chr->ctrl);
@@ -2905,11 +3100,14 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
   if ( ( gzOut && gzclose(out.gzf) != Z_OK )
       || ( ! gzOut && fclose(out.f) ) )
     exit(error(outFile, ERRCLOSE));
-  if (logFile != NULL && ( ( gzOut && gzclose(log.gzf) != Z_OK )
-      || ( ! gzOut && fclose(log.f) ) ) )
+  if (logFile != NULL && ( ( ! gzOut && fclose(log.f) )
+      || ( gzOut && gzclose(log.gzf) != Z_OK ) ) )
     exit(error(logFile, ERRCLOSE));
-  if (bedFile != NULL && ( ( gzOut && gzclose(bed.gzf) != Z_OK )
-      || ( ! gzOut && fclose(bed.f) ) ) )
+  if (pileFile != NULL && ( ( ! gzOut && fclose(pile.f) )
+      || ( gzOut && gzclose(pile.gzf) != Z_OK ) ) )
+    exit(error(pileFile, ERRCLOSE));
+  if (bedFile != NULL && ( ( ! gzOut && fclose(bed.f) )
+      || ( gzOut && gzclose(bed.gzf) != Z_OK ) ) )
     exit(error(bedFile, ERRCLOSE));
 }
 
@@ -2921,7 +3119,8 @@ int saveXChrom(char* xchrom, char*** xchrList) {
   int i = 0;
   char* chrom = strtok(xchrom, COM);
   while (chrom != NULL) {
-    *xchrList = (char**) memrealloc(*xchrList, (i+1) * sizeof(char*));
+    *xchrList = (char**) memrealloc(*xchrList,
+      (i + 1) * sizeof(char*));
     (*xchrList)[i] = (char*) memalloc(1 + strlen(chrom));
     strcpy((*xchrList)[i], chrom);
     i++;
@@ -2937,7 +3136,7 @@ void getArgs(int argc, char** argv) {
 
   // default parameters/filenames
   char* outFile = NULL, *inFile = NULL, *ctrlFile = NULL,
-    *logFile = NULL, *bedFile = NULL;
+    *logFile = NULL, *pileFile = NULL, *bedFile = NULL;
   char* xchrom = NULL;
   int extend = 0, minMapQ = 0, minLen = DEFMINLEN,
     maxGap = DEFMAXGAP, atacLen5 = DEFATAC, atacLen3 = 0,
@@ -2956,6 +3155,7 @@ void getArgs(int argc, char** argv) {
       case CTRLFILE: ctrlFile = optarg; break;
       case OUTFILE: outFile = optarg; break;
       case LOGFILE: logFile = optarg; break;
+      case PILEFILE: pileFile = optarg; break;
       case BEDFILE: bedFile = optarg; break;
       case GZOPT: gzOut = true; break;
       case SINGLEOPT: singleOpt = true; break;
@@ -3020,11 +3220,11 @@ void getArgs(int argc, char** argv) {
   pqvalue = -1.0f * log10f(pqvalue);
 
   // send arguments to runProgram()
-  runProgram(inFile, ctrlFile, outFile, logFile, bedFile,
-    gzOut, singleOpt, extendOpt, extend, avgExtOpt,
-    minMapQ, xcount, xchrList, pqvalue, qvalOpt, minLen,
-    maxGap, asDiff, atacOpt, atacLen5, atacLen3, verbose,
-    threads);
+  runProgram(inFile, ctrlFile, outFile, logFile, pileFile,
+    bedFile, gzOut, singleOpt, extendOpt, extend,
+    avgExtOpt, minMapQ, xcount, xchrList, pqvalue, qvalOpt,
+    minLen, maxGap, asDiff, atacOpt, atacLen5, atacLen3,
+    verbose, threads);
 }
 
 /* int main()
