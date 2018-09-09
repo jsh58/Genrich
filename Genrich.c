@@ -199,7 +199,7 @@ float lookup(float* pVal, uint64_t low, uint64_t high,
  * Calculate and save q-values, given the pre-compiled
  *   arrays of p-values (pVal) and lengths (pEnd).
  */
-void saveQval(Chrom* chrom, int chromLen,
+void saveQval(Chrom* chrom, int chromLen, int n,
     uint64_t genomeLen, float* pVal,
     uint64_t* pEnd, int64_t pLen) {
 
@@ -223,9 +223,9 @@ void saveQval(Chrom* chrom, int chromLen,
     Chrom* chr = chrom + i;
     if (chr->skip)
       continue;
-    for (uint32_t j = 0; j < chr->pvalLen; j++)
+    for (uint32_t j = 0; j < chr->pvalLen[n]; j++)
       chr->qval->cov[j] = lookup(pVal, 0, pLen, qVal,
-        chr->pval->cov[j]);
+        chr->pval[n]->cov[j]);
   }
 
   // free memory
@@ -314,7 +314,7 @@ Hash** hashPval(Chrom* chrom, int chromLen, int n,
       continue;
 
     // populate hashtable
-    Pileup* p = chr->pval[n];
+    Pileup* p = chr->pval[n]; // use the last p-value array
     uint32_t start = 0;
     for (uint32_t m = 0; m < chr->pvalLen[n]; m++) {
       // record p-value and length in hashtable
@@ -328,8 +328,47 @@ Hash** hashPval(Chrom* chrom, int chromLen, int n,
   return table;
 }
 
+void computeQval(Chrom* chrom, int chromLen,
+    uint64_t genomeLen, int n) {
 
-/*********************************/
+  // create "pileup" arrays for q-values
+  for (int i = 0; i < chromLen; i++) {
+    Chrom* chr = chrom + i;
+    uint32_t num = chr->pvalLen[n];
+    chr->qval = (Pileup*) memalloc(sizeof(Pileup));
+    chr->qval->end = (uint32_t*) memalloc(num * sizeof(uint32_t));
+    chr->qval->cov = (float*) memalloc(num * sizeof(float));
+  }
+
+  // save all p-values (genome-wide) to hashtable
+  int64_t pLen = 0;
+  Hash** table = hashPval(chrom, chromLen, n, &pLen);
+
+  // collect p-values from hashtable
+  uint64_t* pEnd = memalloc(pLen * sizeof(uint64_t));
+  float* pVal = collectPval(table, &pEnd, pLen);
+
+  // convert p-values to q-values
+  saveQval(chrom, chromLen, n, genomeLen, pVal, pEnd,
+    pLen);
+
+  // free memory
+  free(pEnd);
+  free(pVal);
+  for (int i = 0; i < HASH_SIZE; i++) {
+    Hash* tmp;
+    Hash* h = table[i];
+    while (h != NULL) {
+      tmp = h->next;
+      free(h);
+      h = tmp;
+    }
+  }
+  free(table);
+}
+
+
+/*** Combine p-values from multiple replicates ***/
 
 /* uint32_t countIntervals2()
  * Count the number of pileup intervals to create
@@ -354,6 +393,15 @@ uint32_t countIntervals2(Chrom* c, int n) {
   return num;
 }
 
+// combine multiple p-values
+// (just a simple average)
+float multPval(Pileup** p, int n, uint32_t idx[]) {
+  float ans = 0.0f;
+  for (int j = 0; j < n; j++)
+    ans += p[j]->cov[idx[j]];
+  return ans / n;
+}
+
 /* void combinePval()
  * Combine p-values for multiple replicates.
  */
@@ -376,7 +424,7 @@ void combinePval(Chrom* chrom, int chromLen, int n) {
       (n + 1) * sizeof(uint32_t));
     chr->pvalLen[n] = num;
 
-    //  
+    // save combined p-values
     uint32_t idx[n + 1];  // indexes into each pval array
     for (int j = 0; j <= n; j++)
       idx[j] = 0;
@@ -387,7 +435,8 @@ void combinePval(Chrom* chrom, int chromLen, int n) {
           if (! add) {
             chr->pval[n]->end[idx[n]] = k;
             ////    
-            chr->pval[n]->cov[idx[n]] = chr->pval[j]->cov[idx[j]];  // calculate real value
+            //chr->pval[n]->cov[idx[n]] = chr->pval[j]->cov[idx[j]];  // calculate real value
+            chr->pval[n]->cov[idx[n]] = multPval(chr->pval, n, idx);
             ////    
             idx[n]++;
             add = true;
@@ -451,7 +500,7 @@ void printPeak(File out, bool gzOut, char* name,
  *   Return number of peaks.
  */
 int callPeaks(File out, File log, bool logOpt, bool gzOut,
-    Chrom* chrom, int chromLen, float pqvalue,
+    Chrom* chrom, int chromLen, int n, float pqvalue,
     bool qvalOpt, int minLen, int maxGap) {
 
   // loop through chroms
@@ -469,36 +518,38 @@ int callPeaks(File out, File log, bool logOpt, bool gzOut,
     float summitPval = -1.0f, summitQval = -1.0f; // summit p- and q-values
     float summitFE = -1.0f;               // summit fold enrichment
 
-    // loop through intervals (defined by chr->pval)
+    // loop through intervals (defined by chr->pval[n])
     uint32_t start = 0;    // start of interval
     uint32_t j = 0, k = 0; // indexes into chr->treat, chr->ctrl
-    for (uint32_t m = 0; m < chr->pvalLen; m++) {
+    for (uint32_t m = 0; m < chr->pvalLen[n]; m++) {
 
       bool sig = false;
-      float val = qvalOpt ? chr->qval->cov[m] : chr->pval->cov[m];
+      float val = qvalOpt ? chr->qval->cov[m] : chr->pval[n]->cov[m];
       if ( val > pqvalue ) {
 
         // interval reaches significance
         sig = true;
         if (peakStart == -1)
           peakStart = start;  // start new potential peak
-        peakEnd = chr->pval->end[m];  // end of potential peak
+        peakEnd = chr->pval[n]->end[m];  // end of potential peak
 
         // check if interval is summit for this peak
         if (val > summitVal) {
           summitVal = val;
-          summitFE = chr->ctrl->cov[k] ?
-            chr->treat->cov[j] / chr->ctrl->cov[k] : FLT_MAX;
-          summitPval = chr->pval->cov[m];
+          if (! n)
+            summitFE = chr->ctrl->cov[k] ?
+              chr->treat->cov[j] / chr->ctrl->cov[k] : FLT_MAX;
+          summitPval = chr->pval[n]->cov[m];
           summitQval = qvalOpt ? chr->qval->cov[m] : -1.0f;
-          summitPos = (peakEnd + (m ? chr->pval->end[m-1] : 0) ) / 2
+          summitPos = (peakEnd + (m ? chr->pval[n]->end[m-1] : 0) ) / 2
             - peakStart;  // midpoint of interval
-          summitLen = peakEnd - (m ? chr->pval->end[m-1] : 0);
+          summitLen = peakEnd - (m ? chr->pval[n]->end[m-1] : 0);
         } else if (val == summitVal) {
           // update summitPos only if interval is longer
-          uint32_t len = chr->pval->end[m] - (m ? chr->pval->end[m-1] : 0);
+          uint32_t len = chr->pval[n]->end[m]
+            - (m ? chr->pval[n]->end[m-1] : 0);
           if (len > summitLen) {
-            summitPos = (peakEnd + (m ? chr->pval->end[m-1] : 0) ) / 2
+            summitPos = (peakEnd + (m ? chr->pval[n]->end[m-1] : 0) ) / 2
               - peakStart;  // midpoint of interval
             summitLen = len;
           }
@@ -508,7 +559,7 @@ int callPeaks(File out, File log, bool logOpt, bool gzOut,
 
         // interval does not reach significance
         if (peakStart != -1
-            && chr->pval->end[m] - peakEnd > maxGap) {
+            && chr->pval[n]->end[m] - peakEnd > maxGap) {
           // determine if prior peak meets length threshold
           if (peakEnd - peakStart >= minLen) {
             printPeak(out, gzOut, chr->name, peakStart,
@@ -525,9 +576,9 @@ int callPeaks(File out, File log, bool logOpt, bool gzOut,
       if (logOpt)
         // print all stats for interval
         printInterval(log, gzOut, chr->name,
-          start, chr->pval->end[m],
+          start, chr->pval[n]->end[m],
           chr->treat->cov[j], chr->ctrl->cov[k],
-          chr->pval->cov[m],
+          chr->pval[n]->cov[m],
           qvalOpt ? chr->qval->cov[m] : -1.0f, sig);
 
       // update chr->treat and chr->ctrl indexes
@@ -539,7 +590,7 @@ int callPeaks(File out, File log, bool logOpt, bool gzOut,
         j++;
       }
 
-      start = chr->pval->end[m];
+      start = chr->pval[n]->end[m];
     }
 
     // determine if last peak meets length threshold
@@ -575,43 +626,19 @@ void findPeaks(File out, File log, bool logOpt, bool gzOut,
   }
 
   // calculate combined p-values
-  if (*sample) {
+  if (*sample > 1) {
     combinePval(chrom, chromLen, *sample);
     (*sample)++;
   }
 
   // compute q-values
-  if (qvalOpt) {
-
-    // save p-values to hashtable
-    int64_t pLen = 0;
-    Hash** table = hashPval(chrom, chromLen, qvalOpt, &pLen);
-
-    // collect p-values from hashtable
-    uint64_t* pEnd = memalloc(pLen * sizeof(uint64_t));
-    float* pVal = collectPval(table, &pEnd, pLen);
-
-    // convert p-values to q-values
-    saveQval(chrom, chromLen, genomeLen, pVal, pEnd, pLen);
-
-    // free memory
-    free(pEnd);
-    free(pVal);
-    for (int i = 0; i < HASH_SIZE; i++) {
-      Hash* tmp;
-      Hash* h = table[i];
-      while (h != NULL) {
-        tmp = h->next;
-        free(h);
-        h = tmp;
-      }
-    }
-    free(table);
-  }
+  if (qvalOpt)
+    computeQval(chrom, chromLen, genomeLen, *sample - 1);
 
   // identify peaks
   int count = callPeaks(out, log, logOpt, gzOut, chrom,
-    chromLen, pqvalue, qvalOpt, minLen, maxGap);
+    chromLen, *sample - 1, pqvalue, qvalOpt, minLen,
+    maxGap);
   if (verbose)
     fprintf(stderr, "Peaks identified: %d\n", count);
 
