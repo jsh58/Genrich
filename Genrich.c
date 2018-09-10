@@ -334,6 +334,8 @@ void computeQval(Chrom* chrom, int chromLen,
   // create "pileup" arrays for q-values
   for (int i = 0; i < chromLen; i++) {
     Chrom* chr = chrom + i;
+    if (chr->skip)
+      continue;
     uint32_t num = chr->pvalLen[n];
     chr->qval = (Pileup*) memalloc(sizeof(Pileup));
     chr->qval->end = (uint32_t*) memalloc(num * sizeof(uint32_t));
@@ -349,8 +351,7 @@ void computeQval(Chrom* chrom, int chromLen,
   float* pVal = collectPval(table, &pEnd, pLen);
 
   // convert p-values to q-values
-  saveQval(chrom, chromLen, n, genomeLen, pVal, pEnd,
-    pLen);
+  saveQval(chrom, chromLen, n, genomeLen, pVal, pEnd, pLen);
 
   // free memory
   free(pEnd);
@@ -428,14 +429,13 @@ void combinePval(Chrom* chrom, int chromLen, int n) {
     uint32_t idx[n + 1];  // indexes into each pval array
     for (int j = 0; j <= n; j++)
       idx[j] = 0;
-    for (uint32_t k = 1; k < chr->len; k++) {
+    for (uint32_t k = 1; k <= chr->len; k++) {
       bool add = false;
       for (int j = 0; j < n; j++)
         if (chr->pval[j]->end[idx[j]] == k) {
           if (! add) {
             chr->pval[n]->end[idx[n]] = k;
             ////    
-            //chr->pval[n]->cov[idx[n]] = chr->pval[j]->cov[idx[j]];  // calculate real value
             chr->pval[n]->cov[idx[n]] = multPval(chr->pval, n, idx);
             ////    
             idx[n]++;
@@ -454,9 +454,76 @@ void combinePval(Chrom* chrom, int chromLen, int n) {
 
 /*** Call peaks ***/
 
+/* void printLogHeader()
+ * Print header of logfile.
+ */
+void printLogHeader(File log, bool gzOut, int n,
+    bool qvalOpt) {
+  if (n) {
+    // multiple samples: logfile has multiple p-values, no pileups
+    if (gzOut) {
+      gzprintf(log.gzf, "chr\tstart\tend");
+      for (int i = 0; i < n; i++)
+        gzprintf(log.gzf, "\t-log(p)_%d", i);
+      gzprintf(log.gzf, "\t-log(p)_comb");
+      if (qvalOpt)
+        gzprintf(log.gzf, "\t-log(q)");
+      gzprintf(log.gzf, "\tsignif\n");
+    } else {
+      fprintf(log.f, "chr\tstart\tend");
+      for (int i = 0; i < n; i++)
+        fprintf(log.f, "\t-log(p)_%d", i);
+      fprintf(log.f, "\t-log(p)_comb");
+      if (qvalOpt)
+        fprintf(log.f, "\t-log(q)");
+      fprintf(log.f, "\tsignif\n");
+    }
+  } else {
+    // single sample: logfile has pileups and p-/q-values
+    if (gzOut) {
+      gzprintf(log.gzf, "chr\tstart\tend\ttreatment\tcontrol\t-log(p)");
+      if (qvalOpt)
+        gzprintf(log.gzf, "\t-log(q)");
+      gzprintf(log.gzf, "\tsignif\n");
+    } else {
+      fprintf(log.f, "chr\tstart\tend\ttreatment\tcontrol\t-log(p)");
+      if (qvalOpt)
+        fprintf(log.f, "\t-log(q)");
+      fprintf(log.f, "\tsignif\n");
+    }
+  }
+}
+
+/* void printIntervalN()
+ * Print bedgraph(ish) interval for multiple replicates.
+ *   Values: -log(p) for each replicate, combined -log(p),
+ *   -log(q), and significance ('*') for each.
+ */
+void printIntervalN(File out, bool gzOut, char* name,
+    uint32_t start, uint32_t end, Pileup** p, int n,
+    uint32_t idx[], float pval, float qval, bool sig) {
+  if (gzOut) {
+    gzprintf(out.gzf, "%s\t%d\t%d", name, start, end);
+    for (int i = 0; i < n; i++)
+      gzprintf(out.gzf, "\t%.5f", p[i]->cov[idx[i]]);
+    gzprintf(out.gzf, "\t%.5f", pval);
+    if (qval != -1.0f)
+      gzprintf(out.gzf, "\t%.5f", qval);
+    gzprintf(out.gzf, "%s\n", sig ? "\t*" : "");
+  } else {
+    fprintf(out.f, "%s\t%d\t%d", name, start, end);
+    for (int i = 0; i < n; i++)
+      fprintf(out.f, "\t%.5f", p[i]->cov[idx[i]]);
+    fprintf(out.f, "\t%.5f", pval);
+    if (qval != -1.0f)
+      fprintf(out.f, "\t%.5f", qval);
+    fprintf(out.f, "%s\n", sig ? "\t*" : "");
+  }
+}
+
 /* void printInterval()
- * Print bedgraph(ish) interval, with values of:
- *   pileups (treatment and control), -log(p),
+ * Print bedgraph(ish) interval for a single replicate.
+ *   Values: pileups (treatment and control), -log(p),
  *   -log(q), and significance ('*') for each.
  */
 void printInterval(File out, bool gzOut, char* name,
@@ -475,6 +542,42 @@ void printInterval(File out, bool gzOut, char* name,
       fprintf(out.f, "\t%.5f", qval);
     fprintf(out.f, "%s\n", sig ? "\t*" : "");
   }
+}
+
+/* void printLog()
+ * Control printing of stats for an interval.
+ */
+void printLog(File log, bool gzOut, Chrom* chr,
+    uint32_t* start, int n, uint32_t m, uint32_t* j,
+    uint32_t* k, uint32_t idx[], bool qvalOpt,
+    bool sig) {
+  if (! n) {
+    // single replicate
+    printInterval(log, gzOut, chr->name,
+      *start, chr->pval[n]->end[m],
+      chr->treat->cov[*j], chr->ctrl->cov[*k],
+      chr->pval[n]->cov[m],
+      qvalOpt ? chr->qval->cov[m] : -1.0f, sig);
+    // update chr->treat and chr->ctrl indexes
+    if (chr->ctrl->end[*k] < chr->treat->end[*j])
+      (*k)++;
+    else {
+      if (chr->ctrl->end[*k] == chr->treat->end[*j])
+        (*k)++;
+      (*j)++;
+    }
+  } else {
+    // multiple replicates
+    printIntervalN(log, gzOut, chr->name,
+      *start, chr->pval[n]->end[m],
+      chr->pval, n, idx, chr->pval[n]->cov[m],
+      qvalOpt ? chr->qval->cov[m] : -1.0f, sig);
+    // update indexes into pval arrays
+    for (int r = 0; r < n; r++)
+      if (chr->pval[r]->end[idx[r]] == chr->pval[n]->end[m])
+        idx[r]++;
+  }
+  *start = chr->pval[n]->end[m];
 }
 
 /* void printPeak()
@@ -503,12 +606,22 @@ int callPeaks(File out, File log, bool logOpt, bool gzOut,
     Chrom* chrom, int chromLen, int n, float pqvalue,
     bool qvalOpt, int minLen, int maxGap) {
 
+  if (logOpt)
+    printLogHeader(log, gzOut, n, qvalOpt);
+
   // loop through chroms
   int count = 0;      // count of peaks
   for (int i = 0; i < chromLen; i++) {
     Chrom* chr = chrom + i;
     if (chr->skip)
       continue;
+
+    // create indexes into arrays (treat/ctrl pileup [if n == 0]
+    //   and p-value arrays [if n > 0])
+    uint32_t j = 0, k = 0;  // indexes into chr->treat, chr->ctrl
+    uint32_t idx[n];        // indexes into each pval array
+    for (int r = 0; r < n; r++)
+      idx[r] = 0;
 
     // reset peak variables
     int64_t peakStart = -1, peakEnd = -1; // ends of potential peak
@@ -520,7 +633,6 @@ int callPeaks(File out, File log, bool logOpt, bool gzOut,
 
     // loop through intervals (defined by chr->pval[n])
     uint32_t start = 0;    // start of interval
-    uint32_t j = 0, k = 0; // indexes into chr->treat, chr->ctrl
     for (uint32_t m = 0; m < chr->pvalLen[n]; m++) {
 
       bool sig = false;
@@ -573,24 +685,10 @@ int callPeaks(File out, File log, bool logOpt, bool gzOut,
         }
       }
 
+      // print stats for interval
       if (logOpt)
-        // print all stats for interval
-        printInterval(log, gzOut, chr->name,
-          start, chr->pval[n]->end[m],
-          chr->treat->cov[j], chr->ctrl->cov[k],
-          chr->pval[n]->cov[m],
-          qvalOpt ? chr->qval->cov[m] : -1.0f, sig);
-
-      // update chr->treat and chr->ctrl indexes
-      if (chr->ctrl->end[k] < chr->treat->end[j])
-        k++;
-      else {
-        if (chr->ctrl->end[k] == chr->treat->end[j])
-          k++;
-        j++;
-      }
-
-      start = chr->pval[n]->end[m];
+        printLog(log, gzOut, chr, &start, n, m, &j, &k,
+          idx, qvalOpt, sig);
     }
 
     // determine if last peak meets length threshold
@@ -641,7 +739,6 @@ void findPeaks(File out, File log, bool logOpt, bool gzOut,
     maxGap);
   if (verbose)
     fprintf(stderr, "Peaks identified: %d\n", count);
-
 }
 
 /*** Calculate p-values ***/
@@ -686,11 +783,11 @@ void printPileHeader(File pile, char* treatName,
     char* ctrlName, bool gzOut) {
   if (gzOut) {
     gzprintf(pile.gzf, "# treatment file: %s; control file: %s\n",
-      treatName, ctrlName ? ctrlName : "n/a");
+      treatName, ctrlName && strcmp(ctrlName, "null") ? ctrlName : "n/a");
     gzprintf(pile.gzf, "chr\tstart\tend\ttreatment\tcontrol\t-log(p)\n");
   } else {
     fprintf(pile.f, "# treatment file: %s; control file: %s\n",
-      treatName, ctrlName ? ctrlName : "n/a");
+      treatName, ctrlName && strcmp(ctrlName, "null") ? ctrlName : "n/a");
     fprintf(pile.f, "chr\tstart\tend\ttreatment\tcontrol\t-log(p)\n");
   }
 }
@@ -703,10 +800,10 @@ void printPile(File pile, char* name, uint32_t start,
     uint32_t end, float treat, float ctrl, float pval,
     bool gzOut) {
   if (gzOut)
-    gzprintf(pile.gzf, "%s\t%d\t%d\t%f\t%f\t%f\n",
+    gzprintf(pile.gzf, "%s\t%d\t%d\t%.5f\t%.5f\t%.5f\n",
       name, start, end, treat, ctrl, pval);
   else
-    fprintf(pile.f, "%s\t%d\t%d\t%f\t%f\t%f\n",
+    fprintf(pile.f, "%s\t%d\t%d\t%.5f\t%.5f\t%.5f\n",
       name, start, end, treat, ctrl, pval);
 }
 
@@ -737,7 +834,24 @@ void savePval(Chrom* chrom, int chromLen, int n,
     if (chr->skip)
       continue;
 
-    // check pileups for missing values
+    // fill in missing pval arrays from previous samples
+    if (n && (chr->pval == NULL
+        || sizeof(chr->pval) / sizeof(chr->pval[0]) < n - 1) ) {
+      if (chr->pval == NULL)
+        fprintf(stderr, "chr %s null\n", chr->name);
+      else
+        fprintf(stderr, "chr %s elts %d\n", chr->name,
+          sizeof(chr->pval) / sizeof(chr->pval[0]));
+      chr->pval = (Pileup**) memrealloc(chr->pval,
+        n * sizeof(Pileup*));
+      chr->pvalLen = (uint32_t*) memrealloc(chr->pvalLen,
+        n * sizeof(uint32_t));
+//    chr->pval[n] = (Pileup*) memalloc(sizeof(Pileup));
+//    chr->pval[n]->end = (uint32_t*) memalloc(num * sizeof(uint32_t));
+//    chr->pval[n]->cov = (float*) memalloc(num * sizeof(float));
+    }
+
+    // check treat/ctrl pileups for missing values
     if (chr->treat == NULL)
       saveConst(&chr->treat, &chr->treatLen, chr->len, 0.0f);
     if (chr->ctrl == NULL)
@@ -767,14 +881,6 @@ void savePval(Chrom* chrom, int chromLen, int n,
           printPile(pile, chr->name, start, p->end[m],
             chr->treat->cov[j], chr->ctrl->cov[k],
             p->cov[m], gzOut);
-/*        chr->pval[n]->end[m] = chr->ctrl->end[k];
-        chr->pval[n]->cov[m] = calcPval(chr->treat->cov[j],
-          chr->ctrl->cov[k]);
-        if (pileOpt)
-          printPile(pile, chr->name, start,
-            chr->pval[n]->end[m], chr->treat->cov[j],
-            chr->ctrl->cov[k], chr->pval[n]->cov[m], gzOut);
-        start = chr->pval[n]->end[m];*/
         k++;
       } else {
         p->end[m] = chr->treat->end[j];
@@ -784,13 +890,6 @@ void savePval(Chrom* chrom, int chromLen, int n,
           printPile(pile, chr->name, start, p->end[m],
             chr->treat->cov[j], chr->ctrl->cov[k],
             p->cov[m], gzOut);
-/*        chr->pval[n]->end[m] = chr->treat->end[j];
-        chr->pval[n]->cov[m] = calcPval(chr->treat->cov[j],
-          chr->ctrl->cov[k]);
-        if (pileOpt)
-          printPile(pile, chr->name, start,
-            chr->pval[n]->end[m], chr->treat->cov[j],
-            chr->ctrl->cov[k], chr->pval[n]->cov[m], gzOut);*/
         if (chr->ctrl->end[k] == chr->treat->end[j])
           k++;
         j++;
@@ -2036,8 +2135,8 @@ int saveChrom(char* name, int len, int* chromLen,
   c->ctrl = NULL;
   c->ctrlLen = 0;
   c->pval = NULL;
+  c->pvalLen = NULL;
   c->qval = NULL;
-  c->pvalLen = 0;
   (*chromLen)++;
   return *chromLen - 1;
 }
@@ -2740,7 +2839,8 @@ int readBAM(gzFile in, char* line, Aln** aln,
 /*** File I/O ***/
 
 /* void openWrite()
- * Open a file for writing (stdout if file is '-').
+ * Open a file for writing (stdout if file is '-'),
+ *   adjusting filenames/extensions as needed.
  */
 void openWrite(char* outFile, File* out, bool gz) {
   if (outFile[0] == '-' && strlen(outFile) > 1)
@@ -2768,36 +2868,6 @@ void openWrite(char* outFile, File* out, bool gz) {
     if (out->f == NULL)
       exit(error(outFile, ERROPENW));
   }
-}
-
-/* void openFiles()
- * Opens output files for the program,
- *   adjusting file names/extensions as needed.
- */
-void openFiles(char* outFile, File* out, char* logFile,
-    File* log, bool gz, bool qvalOpt) {
-
-  // open peak file
-  openWrite(outFile, out, gz);
-
-  // open bedgraph-ish log file
-  if (logFile != NULL) {
-    openWrite(logFile, log, gz);
-
-    // print header
-    if (gz) {
-      gzprintf(log->gzf, "chr\tstart\tend\ttreatment\tcontrol\t-log(p)");
-      if (qvalOpt)
-        gzprintf(log->gzf, "\t-log(q)");
-      gzprintf(log->gzf, "\tsignif\n");
-    } else {
-      fprintf(log->f, "chr\tstart\tend\ttreatment\tcontrol\t-log(p)");
-      if (qvalOpt)
-        fprintf(log->f, "\t-log(q)");
-      fprintf(log->f, "\tsignif\n");
-    }
-  }
-
 }
 
 /* bool checkBAM()
@@ -2976,7 +3046,8 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
   // loop through input files (treatment and control)
   char* end1, *end2;
   char* treatName = strtok_r(inFile, COM, &end1);
-  char* ctrlName = strtok_r(ctrlFile, COM, &end2);
+  char* ctrlName = ctrlFile == NULL ? NULL
+    : strtok_r(ctrlFile, COM, &end2);
   while (treatName) {
 
     // initialize variables
@@ -2987,10 +3058,16 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
     for (int i = 0; i < 2; i++) {
 
       // get treat/ctrl filename
-      char* filename = i ? ctrlName : treatName;
+      char* filename = treatName;
+      if (i) {
+        filename = ctrlName;
+        if (ctrlName != NULL && ! strcmp(ctrlName, "null"))
+          filename = NULL;
+      }
       if (filename == NULL) {
         if (verbose)
-          fprintf(stderr, "No control file provided\n");
+          fprintf(stderr, "- control file #%d not provided -\n",
+            sample + 1);
         savePileupNoCtrl(chrom, chromLen, fragLen,
           &genomeLen);
         break;
@@ -3002,7 +3079,8 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
       bool bam = checkBAM(in, gz);
       if (verbose)
         fprintf(stderr, "Processing %s file #%d: %s\n",
-          i ? "control" : "treatment", sample, filename);
+          i ? "control" : "treatment", sample + 1,
+          filename);
 
       // reset 'diff' array for each Chrom
       for (int j = 0; j < chromLen; j++) {
@@ -3065,13 +3143,16 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
       pileFile != NULL, treatName, ctrlName, gzOut);
 
     treatName = strtok_r(NULL, COM, &end1);
-    ctrlName = strtok_r(NULL, COM, &end2);
+    ctrlName = ctrlFile == NULL ? NULL
+      : strtok_r(NULL, COM, &end2);
     sample++;
   }
 
   // open output files
   File out, log;
-  openFiles(outFile, &out, logFile, &log, gzOut, qvalOpt);
+  openWrite(outFile, &out, gzOut);
+  if (logFile != NULL)
+    openWrite(logFile, &log, gzOut);
 
   // find peaks
   findPeaks(out, log, logFile != NULL, gzOut, genomeLen,
