@@ -383,7 +383,8 @@ uint32_t countIntervals2(Chrom* c, int n) {
   for (uint32_t k = 1; k < c->len; k++) {
     bool add = false;
     for (int j = 0; j < n; j++)
-      if (c->pval[j]->end[idx[j]] == k) {
+      if (c->pval[j] != NULL
+          && c->pval[j]->end[idx[j]] == k) {
         if (! add) {
           num++;
           add = true;
@@ -396,11 +397,15 @@ uint32_t countIntervals2(Chrom* c, int n) {
 
 // combine multiple p-values
 // (just a simple average)
-float multPval(Pileup** p, int n, uint32_t idx[]) {
+float multPval(Pileup** pval, int n, uint32_t idx[]) {
   float ans = 0.0f;
+  int count = 0;
   for (int j = 0; j < n; j++)
-    ans += p[j]->cov[idx[j]];
-  return ans / n;
+    if (pval[j] != NULL) {
+      ans += pval[j]->cov[idx[j]];
+      count++;
+    }
+  return ans / count;
 }
 
 /* void combinePval()
@@ -432,7 +437,8 @@ void combinePval(Chrom* chrom, int chromLen, int n) {
     for (uint32_t k = 1; k <= chr->len; k++) {
       bool add = false;
       for (int j = 0; j < n; j++)
-        if (chr->pval[j]->end[idx[j]] == k) {
+        if (chr->pval[j] != NULL
+            && chr->pval[j]->end[idx[j]] == k) {
           if (! add) {
             chr->pval[n]->end[idx[n]] = k;
             ////    
@@ -505,7 +511,10 @@ void printIntervalN(File out, bool gzOut, char* name,
   if (gzOut) {
     gzprintf(out.gzf, "%s\t%d\t%d", name, start, end);
     for (int i = 0; i < n; i++)
-      gzprintf(out.gzf, "\t%.5f", p[i]->cov[idx[i]]);
+      if (p[i] == NULL)
+        gzprintf(out.gzf, "\tn/a");
+      else
+        gzprintf(out.gzf, "\t%.5f", p[i]->cov[idx[i]]);
     gzprintf(out.gzf, "\t%.5f", pval);
     if (qval != -1.0f)
       gzprintf(out.gzf, "\t%.5f", qval);
@@ -513,7 +522,10 @@ void printIntervalN(File out, bool gzOut, char* name,
   } else {
     fprintf(out.f, "%s\t%d\t%d", name, start, end);
     for (int i = 0; i < n; i++)
-      fprintf(out.f, "\t%.5f", p[i]->cov[idx[i]]);
+      if (p[i] == NULL)
+        fprintf(out.f, "\tn/a");
+      else
+        fprintf(out.f, "\t%.5f", p[i]->cov[idx[i]]);
     fprintf(out.f, "\t%.5f", pval);
     if (qval != -1.0f)
       fprintf(out.f, "\t%.5f", qval);
@@ -574,7 +586,8 @@ void printLog(File log, bool gzOut, Chrom* chr,
       qvalOpt ? chr->qval->cov[m] : -1.0f, sig);
     // update indexes into pval arrays
     for (int r = 0; r < n; r++)
-      if (chr->pval[r]->end[idx[r]] == chr->pval[n]->end[m])
+      if (chr->pval[r] != NULL
+          && chr->pval[r]->end[idx[r]] == chr->pval[n]->end[m])
         idx[r]++;
   }
   *start = chr->pval[n]->end[m];
@@ -836,19 +849,20 @@ void savePval(Chrom* chrom, int chromLen, int n,
 
     // fill in missing pval arrays from previous samples
     if (n && (chr->pval == NULL
-        || sizeof(chr->pval) / sizeof(chr->pval[0]) < n - 1) ) {
-      if (chr->pval == NULL)
-        fprintf(stderr, "chr %s null\n", chr->name);
-      else
-        fprintf(stderr, "chr %s elts %d\n", chr->name,
-          sizeof(chr->pval) / sizeof(chr->pval[0]));
+        || sizeof(chr->pval) / sizeof(Pileup*) < n) ) {
+//if (chr->pval == NULL)
+//  fprintf(stderr, "chr %s null\n", chr->name);
+//else
+//  fprintf(stderr, "chr %s elts %d\n", chr->name,
+//    sizeof(chr->pval) / sizeof(chr->pval[0]));
       chr->pval = (Pileup**) memrealloc(chr->pval,
         n * sizeof(Pileup*));
-      chr->pvalLen = (uint32_t*) memrealloc(chr->pvalLen,
-        n * sizeof(uint32_t));
-//    chr->pval[n] = (Pileup*) memalloc(sizeof(Pileup));
-//    chr->pval[n]->end = (uint32_t*) memalloc(num * sizeof(uint32_t));
-//    chr->pval[n]->cov = (float*) memalloc(num * sizeof(float));
+      int k = -1;
+      if (chr->pval != NULL)
+        k = sizeof(chr->pval) / sizeof(Pileup*);
+      // fill in NULLs for pval
+      for (int j = n - 1; j > k; j--)
+        chr->pval[j] = NULL;
     }
 
     // check treat/ctrl pileups for missing values
@@ -3179,9 +3193,11 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
         free(chr->qval);
       }
       for (int j = 0; j < sample; j++) {
-        free(chr->pval[j]->end);
-        free(chr->pval[j]->cov);
-        free(chr->pval[j]);
+        if (chr->pval[j]) {
+          free(chr->pval[j]->end);
+          free(chr->pval[j]->cov);
+          free(chr->pval[j]);
+        }
       }
       free(chr->pval);
       free(chr->pvalLen);
