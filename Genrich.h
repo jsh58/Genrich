@@ -152,13 +152,17 @@ typedef struct chrom {
   char* name;         // name of chromosome (reference sequence)
   uint32_t len;       // length of chromosome
   bool skip;          // chromosome to be skipped?
+  bool save;          // chromosome to be saved? (by sample)
   Diff* diff;         // arrays for keeping track of pileup changes
   Pileup* treat;      // pileup arrays for treatment sample(s)
-  uint32_t treatLen;  // length of pileup arrays for treatment sample(s)
+  uint32_t treatLen;  // length of pileup arrays for treatment sample(s) (dynamic)
+  uint32_t treatMem;  // length of pileup arrays for treatment sample(s) (in memory)
   Pileup* ctrl;       // pileup arrays for control sample(s)
-  uint32_t ctrlLen;   // length of pileup arrays for control sample(s)
+  uint32_t ctrlLen;   // length of pileup arrays for control sample(s) (dynamic)
+  uint32_t ctrlMem;   // length of pileup arrays for control sample(s) (in memory)
   Pileup** pval;      // "pileup" arrays for p-values
   uint32_t* pvalLen;  // lengths of "pileup" arrays for p-values
+  uint8_t sample;     // count of samples with p-value arrays saved
   Pileup* qval;       // "pileup" arrays for q-values
 } Chrom;
 

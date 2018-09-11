@@ -419,6 +419,16 @@ void combinePval(Chrom* chrom, int chromLen, int n) {
     if (chr->skip)
       continue;
 
+    // fill in missing pval arrays from previous samples
+/*    if (chr->sample < n) {
+      // fill in NULLs for pval
+      chr->pval = (Pileup**) memrealloc(chr->pval,
+        n * sizeof(Pileup*));
+      for (int j = n - 1; j >= chr->sample; j--)
+        chr->pval[j] = NULL;
+      chr->sample = n;
+    }*/
+
     // create additional 'pileup' array for combined p-values
     uint32_t num = countIntervals2(chr, n);
     chr->pval = (Pileup**) memrealloc(chr->pval,
@@ -429,6 +439,7 @@ void combinePval(Chrom* chrom, int chromLen, int n) {
     chr->pvalLen = (uint32_t*) memrealloc(chr->pvalLen,
       (n + 1) * sizeof(uint32_t));
     chr->pvalLen[n] = num;
+    chr->sample++;
 
     // save combined p-values
     uint32_t idx[n + 1];  // indexes into each pval array
@@ -454,9 +465,6 @@ void combinePval(Chrom* chrom, int chromLen, int n) {
 
   }
 }
-
-/*********************************/
-
 
 /*** Call peaks ***/
 
@@ -723,9 +731,16 @@ int callPeaks(File out, File log, bool logOpt, bool gzOut,
  *   and printing output.
  */
 void findPeaks(File out, File log, bool logOpt, bool gzOut,
-    uint64_t genomeLen, Chrom* chrom, int chromLen,
-    int* sample, float pqvalue, bool qvalOpt, int minLen,
-    int maxGap, bool verbose) {
+    Chrom* chrom, int chromLen, int* sample, float pqvalue,
+    bool qvalOpt, int minLen, int maxGap, bool verbose) {
+
+  // calculate genome length
+  uint64_t genomeLen = 0;
+  for (int i = 0; i < chromLen; i++) {
+    Chrom* chr = chrom + i;
+    if (! chr->skip)
+      genomeLen += chr->len;
+  }
 
   if (verbose) {
     fprintf(stderr, "Peak-calling parameters:\n");
@@ -755,19 +770,6 @@ void findPeaks(File out, File log, bool logOpt, bool gzOut,
 }
 
 /*** Calculate p-values ***/
-
-/* void saveConst()
- * Save a given value as pileup for a full chromosome.
- */
-void saveConst(Pileup** p, uint32_t* size, uint32_t len,
-    float val) {
-  *p = (Pileup*) memalloc(sizeof(Pileup));
-  (*p)->end = (uint32_t*) memalloc(sizeof(uint32_t));
-  (*p)->end[0] = len;
-  (*p)->cov = (float*) memalloc(sizeof(float));
-  (*p)->cov[0] = val;
-  *size = 1;
-}
 
 /* uint32_t countIntervals()
  * Count the number of pileup intervals to create
@@ -847,29 +849,42 @@ void savePval(Chrom* chrom, int chromLen, int n,
     if (chr->skip)
       continue;
 
-    // fill in missing pval arrays from previous samples
-    if (n && (chr->pval == NULL
-        || sizeof(chr->pval) / sizeof(Pileup*) < n) ) {
-//if (chr->pval == NULL)
-//  fprintf(stderr, "chr %s null\n", chr->name);
-//else
-//  fprintf(stderr, "chr %s elts %d\n", chr->name,
-//    sizeof(chr->pval) / sizeof(chr->pval[0]));
+    // p-values not to be saved
+    if (! chr->save) {
       chr->pval = (Pileup**) memrealloc(chr->pval,
-        n * sizeof(Pileup*));
-      int k = -1;
-      if (chr->pval != NULL)
-        k = sizeof(chr->pval) / sizeof(Pileup*);
-      // fill in NULLs for pval
-      for (int j = n - 1; j > k; j--)
-        chr->pval[j] = NULL;
+        (n + 1) * sizeof(Pileup*));
+      chr->pval[n] = NULL;
+      chr->sample++;
+      continue;
     }
 
+    // fill in missing pval arrays from previous samples
+    if (chr->sample < n) {
+      chr->pval = (Pileup**) memrealloc(chr->pval,
+        n * sizeof(Pileup*));
+      for (int j = n - 1; j >= chr->sample; j--)
+        chr->pval[j] = NULL;
+      chr->sample = n;
+    }
+
+/*
     // check treat/ctrl pileups for missing values
-    if (chr->treat == NULL)
-      saveConst(&chr->treat, &chr->treatLen, chr->len, 0.0f);
+    if (chr->treat == NULL) {
+      if (chr->save)
+        // save constant value of 0.0f
+        saveConst(&chr->treat, &chr->treatLen, chr->len,
+          0.0f);
+      else {
+        // chr not in SAM/BAM: save NULL for pval array
+        chr->pval = (Pileup**) memrealloc(chr->pval,
+          (n + 1) * sizeof(Pileup*));
+        chr->pval[n] = NULL;
+        continue;
+      }
+    }
     if (chr->ctrl == NULL)
       exit(error(chr->name, ERRCTRL));
+*/
 
     // create 'pileup' arrays for p-values
     uint32_t num = countIntervals(chr);
@@ -881,6 +896,7 @@ void savePval(Chrom* chrom, int chromLen, int n,
     chr->pvalLen = (uint32_t*) memrealloc(chr->pvalLen,
       (n + 1) * sizeof(uint32_t));
     chr->pvalLen[n] = num;
+    chr->sample++;
 
     // save p-values to arrays
     Pileup* p = chr->pval[n];
@@ -916,15 +932,32 @@ void savePval(Chrom* chrom, int chromLen, int n,
 
 /*** Save treatment/control pileup values ***/
 
+/* void saveConst()
+ * Save a given value as pileup for a full chromosome.
+ */
+void saveConst(Pileup* p, uint32_t* size, uint32_t* mem,
+    uint32_t len, float val) {
+  if (! *mem) {
+    p->end = (uint32_t*) memalloc(sizeof(uint32_t));
+    p->cov = (float*) memalloc(sizeof(float));
+    *mem = 1;
+  }
+  p->end[0] = len;
+  p->cov[0] = val;
+  *size = 1;
+}
+
 /* float calcLambda()
  * Calculate a background lambda value: sum of fragment
  *   lengths divided by total genome length.
  */
 float calcLambda(Chrom* chrom, int chromLen,
     double fragLen, uint64_t* genomeLen) {
-  for (int i = 0; i < chromLen; i++)
-    if (! (chrom + i)->skip)
-      *genomeLen += (chrom + i)->len;
+  for (int i = 0; i < chromLen; i++) {
+    Chrom* chr = chrom + i;
+    if (! chr->skip && chr->save)
+      *genomeLen += chr->len;
+  }
   if (! *genomeLen)
     exit(error("", ERRGEN));
   return fragLen / *genomeLen;
@@ -940,9 +973,10 @@ void savePileupNoCtrl(Chrom* chrom, int chromLen,
     genomeLen);
   for (int i = 0; i < chromLen; i++) {
     Chrom* chr = chrom + i;
-    if (chr->skip)
+    if (chr->skip || ! chr->save)
       continue;
-    saveConst(&chr->ctrl, &chr->ctrlLen, chr->len, lambda);
+    saveConst(chr->ctrl, &chr->ctrlLen, &chr->ctrlMem,
+      chr->len, lambda);
   }
 }
 
@@ -1039,7 +1073,7 @@ float calcFactor(Chrom* chrom, int chromLen,
   double ctrlFrag = 0.0;
   for (int i = 0; i < chromLen; i++) {
     Chrom* chr = chrom + i;
-    if (chr->skip || chr->diff == NULL)
+    if (chr->skip || ! chr->save || chr->diff == NULL)
       continue;
 
     // initialize variables
@@ -1099,19 +1133,24 @@ void savePileupCtrl(Chrom* chrom, int chromLen,
   // create pileup for each chrom
   for (int i = 0; i < chromLen; i++) {
     Chrom* chr = chrom + i;
-    if (chr->skip)
+    if (chr->skip || ! chr->save)
       continue;
 
-    // if no read coverage, save constant pileup of 0
+    // if no read coverage, save constant pileup of lambda
     if (chr->diff == NULL) {
-      saveConst(&chr->ctrl, &chr->ctrlLen, chr->len, 0.0f);
+      saveConst(chr->ctrl, &chr->ctrlLen, &chr->ctrlMem,
+        chr->len, lambda);
       continue;
     }
 
-    // create pileup arrays
-    chr->ctrl = (Pileup*) memalloc(sizeof(Pileup));
-    chr->ctrl->end = (uint32_t*) memalloc(chr->ctrlLen * sizeof(uint32_t));
-    chr->ctrl->cov = (float*) memalloc(chr->ctrlLen * sizeof(float));
+    // expand pileup arrays (if necessary)
+    if (chr->ctrlLen > chr->ctrlMem) {
+      chr->ctrl->end = (uint32_t*) memrealloc(chr->ctrl->end,
+        chr->ctrlLen * sizeof(uint32_t));
+      chr->ctrl->cov = (float*) memrealloc(chr->ctrl->cov,
+        chr->ctrlLen * sizeof(float));
+      chr->ctrlMem = chr->ctrlLen;
+    }
 
     // initialize pileup values
     Diff* d = chr->diff;
@@ -1177,12 +1216,13 @@ double savePileupTreat(Chrom* chrom, int chromLen) {
   double fragLen = 0.0;  // weighted fragment length
   for (int i = 0; i < chromLen; i++) {
     Chrom* chr = chrom + i;
-    if (chr->skip)
+    if (chr->skip || ! chr->save)
       continue;
 
     // if no read coverage, save constant pileup of 0
     if (chr->diff == NULL) {
-      saveConst(&chr->treat, &chr->treatLen, chr->len, 0.0f);
+      saveConst(chr->treat, &chr->treatLen, &chr->treatMem,
+        chr->len, 0.0f);
       continue;
     }
 
@@ -1195,10 +1235,14 @@ double savePileupTreat(Chrom* chrom, int chromLen) {
       if (d->cov[j] || d->frac[j])
         num++;
 
-    // create pileup arrays
-    chr->treat = (Pileup*) memalloc(sizeof(Pileup));
-    chr->treat->end = (uint32_t*) memalloc(num * sizeof(uint32_t));
-    chr->treat->cov = (float*) memalloc(num * sizeof(float));
+    // expand pileup arrays (if necessary)
+    if (num > chr->treatMem) {
+      chr->treat->end = (uint32_t*) memrealloc(chr->treat->end,
+        num * sizeof(uint32_t));
+      chr->treat->cov = (float*) memrealloc(chr->treat->cov,
+        num * sizeof(float));
+      chr->treatMem = num;
+    }
     chr->treatLen = num;
 
     // initialize pileup values
@@ -1454,8 +1498,8 @@ void subFrac(int16_t* cov, uint8_t* frac, uint8_t count) {
 
 /* void printBED()
  * Print a BED interval for a read/fragment.
- *   Append the count and 'C'ontrol/'T'reatment
- *   to the read name (4th column).
+ *   Append the count, 'C'ontrol/'T'reatment, and
+ *   sample number to the read name (4th column).
  */
 void printBED(File bed, bool gzOut, char* chr,
     int64_t start, int64_t end, char* qname,
@@ -2121,19 +2165,19 @@ int saveChrom(char* name, int len, int* chromLen,
     if (!strcmp(c->name, name)) {
       if (c->len != len)
         exit(error(c->name, ERRCHRLEN));
+      if (! ctrl)
+        c->save = true;
       return i;
     }
   }
 
   // determine if chrom should be skipped
-  bool skip = ctrl; // automatically skip if ref in ctrl sample only
-  if (! skip)
-    // check if chrom is on skipped list
-    for (int i = 0; i < xcount; i++)
-      if (!strcmp(xchrList[i], name)) {
-        skip = true;
-        break;
-      }
+  bool skip = false;
+  for (int i = 0; i < xcount; i++)
+    if (!strcmp(xchrList[i], name)) {
+      skip = true;
+      break;
+    }
 
   // save to list
   *chrom = (Chrom*) memrealloc(*chrom,
@@ -2143,13 +2187,21 @@ int saveChrom(char* name, int len, int* chromLen,
   strcpy(c->name, name);
   c->len = len;
   c->skip = skip;
+  c->save = ! ctrl; // do not save if ref in ctrl sample only
   c->diff = NULL;
-  c->treat = NULL;
+  c->treat = (Pileup*) memalloc(sizeof(Pileup));
+  c->treat->end = NULL;
+  c->treat->cov = NULL;
   c->treatLen = 0;
-  c->ctrl = NULL;
+  c->treatMem = 0;
+  c->ctrl = (Pileup*) memalloc(sizeof(Pileup));
+  c->ctrl->end = NULL;
+  c->ctrl->cov = NULL;
   c->ctrlLen = 0;
+  c->ctrlMem = 0;
   c->pval = NULL;
   c->pvalLen = NULL;
+  c->sample = 0;
   c->qval = NULL;
   (*chromLen)++;
   return *chromLen - 1;
@@ -3054,7 +3106,6 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
   Aln** unpair = NULL;    // array of unpaired alns (for avg-ext option)
   char* readName = memalloc(MAX_ALNS + 1);  // name of read being analyzed
   readName[0] = readName[MAX_ALNS] = '\0';
-  uint64_t genomeLen = 0; // total length of genome
   int sample = 0;         // number of sample pairs analyzed
 
   // loop through input files (treatment and control)
@@ -3064,9 +3115,13 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
     : strtok_r(ctrlFile, COM, &end2);
   while (treatName) {
 
+    // reset 'save' bools of each Chrom
+    for (int j = 0; j < chromLen; j++)
+      (chrom + j)->save = false;
+
     // initialize variables
-    double fragLen = 0.0; // total weighted length of all treatment fragments
-    genomeLen = 0;        // reset genome length (could be dynamic)
+    double fragLen = 0.0;   // total weighted length of all treatment fragments
+    uint64_t genomeLen = 0; // reset genome length (could be dynamic)
 
     // process matching treatment/control files
     for (int i = 0; i < 2; i++) {
@@ -3075,16 +3130,16 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
       char* filename = treatName;
       if (i) {
         filename = ctrlName;
-        if (ctrlName != NULL && ! strcmp(ctrlName, "null"))
+        if (ctrlName != NULL && !strcmp(ctrlName, "null"))
           filename = NULL;
-      }
-      if (filename == NULL) {
-        if (verbose)
-          fprintf(stderr, "- control file #%d not provided -\n",
-            sample + 1);
-        savePileupNoCtrl(chrom, chromLen, fragLen,
-          &genomeLen);
-        break;
+        if (filename == NULL) {
+          if (verbose)
+            fprintf(stderr, "- control file #%d not provided -\n",
+              sample + 1);
+          savePileupNoCtrl(chrom, chromLen, fragLen,
+            &genomeLen);
+          break;
+        }
       }
 
       // open input file
@@ -3169,8 +3224,8 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
     openWrite(logFile, &log, gzOut);
 
   // find peaks
-  findPeaks(out, log, logFile != NULL, gzOut, genomeLen,
-    chrom, chromLen, &sample, pqvalue, qvalOpt, minLen,
+  findPeaks(out, log, logFile != NULL, gzOut, chrom,
+    chromLen, &sample, pqvalue, qvalOpt, minLen,
     maxGap, verbose);
 
   // free memory
