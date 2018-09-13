@@ -209,7 +209,7 @@ void saveQval(Chrom* chrom, int chromLen, int n,
 
   // calculate q-values for each p-value: -log(q) = -log(p*N/k)
   uint64_t k = 1;  // 1 + number of bases with higher -log(p)
-  float logN = -1.0f * log10f(genomeLen);
+  float logN = - log10f(genomeLen);
   float* qVal = (float*) memalloc((pLen + 1) * sizeof(float));
   qVal[pLen] = FLT_MAX;
   for (int64_t i = pLen - 1; i > -1; i--) {
@@ -2048,7 +2048,7 @@ bool savePairedAln(Aln** aln, int* alnLen,
   Aln* a = *aln + *alnLen;
   a->chrom = chrom;
   a->score = score;
-  a->primary = flag & 0x100 ? false : true;
+  a->primary = (bool) (!(flag & 0x100));
   a->full = false;
   a->paired = true;
 
@@ -2082,10 +2082,10 @@ bool saveSingleAln(Aln** aln, int* alnLen,
   Aln* a = *aln + *alnLen;
   a->chrom = chrom;
   a->score = score;
-  a->primary = flag & 0x100 ? false : true;
+  a->primary = (bool) (!(flag & 0x100));
   a->paired = false;
-  a->strand = flag & 0x10 ? false : true;
-  a->first = flag & 0x40 ? true : false;
+  a->strand = (bool) (!(flag & 0x10));
+  a->first = (bool) (flag & 0x40);
   a->pos[0] = pos;
   a->pos[1] = pos + length;
   (*alnLen)++;
@@ -2964,7 +2964,7 @@ bool checkBAM(File in, bool gz) {
 bool openRead(char* inFile, File* in) {
 
   // open file or stdin
-  bool stdinBool = (strcmp(inFile, "-") ? false : true);
+  bool stdinBool = ! strcmp(inFile, "-");
   FILE* dummy = (stdinBool ? stdin : fopen(inFile, "r"));
   if (dummy == NULL)
     exit(error(inFile, ERROPEN));
@@ -3395,7 +3395,7 @@ void getArgs(int argc, char** argv) {
   // adjust significance level to -log scale
   if (pqvalue <= 0.0f || pqvalue > 1.0f)
     exit(error("", ERRPQVAL));
-  pqvalue = -1.0f * log10f(pqvalue);
+  pqvalue = - log10f(pqvalue);
 
   // send arguments to runProgram()
   runProgram(inFile, ctrlFile, outFile, logFile, pileFile,
