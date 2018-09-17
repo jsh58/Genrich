@@ -372,7 +372,188 @@ void computeQval(Chrom* chrom, int chromLen,
   free(table);
 }
 
+/*** Calculate p-value for Chi-squared test ***/
+
+// from dpq.h in R-3.5.0:
+#define R_Log1_Exp(x)  ((x) > -M_LN2 ? log(-expm1(x)) : log1p(-exp(x)))
+
+/* double bd0()
+ * Adapted from bd0.c in R-3.5.0.
+ */
+double bd0(double x, double np) {
+  double ej, s, s1, v;
+  if (fabs(x-np) < 0.1*(x+np)) {
+    v = (x-np)/(x+np);
+    s = (x-np)*v;
+    if (fabs(s) < DBL_MIN)
+      return s;
+    ej = 2*x*v;
+    v = v*v;
+    for (int j = 1; j < 1000; j++) {
+      // Taylor series; 1000: no infinite loop
+      //   as |v| < .1,  v^2000 is "zero"
+      ej *= v;
+      s1 = s+ej/((j<<1)+1);
+      if (s1 == s)
+        return s1;
+      s = s1;
+    }
+  }
+  return x * log(x / np) + np - x;
+}
+
+/* double stirlerr()
+ * Adapted from stirlerr.c in R-3.5.0.
+ *   Argument 'n' is an integer >= 1.
+ */
+double stirlerr(double n) {
+  // numerical constants
+  double S0 = 1.0 / 12;
+  double S1 = 1.0 / 360;
+  double S2 = 1.0 / 1260;
+  double S3 = 1.0 / 1680;
+  double S4 = 1.0 / 1188;
+  double sferr[16] = {
+    0.0,
+    0.0810614667953272582196702,
+    0.0413406959554092940938221,
+    0.02767792568499833914878929,
+    0.02079067210376509311152277,
+    0.01664469118982119216319487,
+    0.01387612882307074799874573,
+    0.01189670994589177009505572,
+    0.010411265261972096497478567,
+    0.009255462182712732917728637,
+    0.008330563433362871256469318,
+    0.007573675487951840794972024,
+    0.006942840107209529865664152,
+    0.006408994188004207068439631,
+    0.005951370112758847735624416,
+    0.005554733551962801371038690
+  };
+
+  double nn = n * n;
+  if (n > 500.0)
+    return (S0-S1/nn)/n;
+  if (n > 80.0)
+    return (S0-(S1-S2/nn)/nn)/n;
+  if (n > 35.0)
+    return (S0-(S1-(S2-S3/nn)/nn)/nn)/n;
+  if (n > 15.0)
+    return (S0-(S1-(S2-(S3-S4/nn)/nn)/nn)/nn)/n;
+  return sferr[(int) n];
+}
+
+/* double dpois()
+ * Adapted from dpois.c in R-3.5.0 (cf. dpois_raw()).
+ */
+double dpois(double x, double lambda) {
+  return -0.5 * log(2.0 * M_PI * x) - stirlerr(x)
+    - bd0(x, lambda);
+}
+
+/* double pd_upper_series()
+ * Adapted from pgamma.c in R-3.5.0.
+ */
+double pd_upper_series(double x, double alph) {
+  double term = x / alph;
+  double sum = term;
+  do {
+    alph++;
+    term *= x / alph;
+    sum += term;
+  } while (term > sum * DBL_EPSILON);
+  return log(sum);
+}
+
+/* double pd_lower_series()
+ * Adapted from pgamma.c in R-3.5.0.
+ */
+double pd_lower_series(double lambda, double y) {
+  double term = 1, sum = 0;
+  while (y >= 1 && term > sum * DBL_EPSILON) {
+    term *= y / lambda;
+    sum += term;
+    y--;
+  }
+  return log1p(sum);
+}
+
+/* double pgamma_smallx()
+ * Adapted from pgamma.c in R-3.5.0.
+ */
+double pgamma_smallx(double x, double alph) {
+  double sum = 0.0;
+  double c = alph;
+  double n = 0.0;
+  double term;
+  do {
+    n++;
+    c *= -x / n;
+    term = c / (alph + n);
+    sum += term;
+  } while (fabs(term) > DBL_EPSILON * fabs(sum));
+  double lf2 = alph * log(x) - lgamma(alph + 1);
+  return R_Log1_Exp(log1p(sum) + lf2);
+}
+
+/* double pgamma()
+ * Adapted from pgamma.c in R-3.5.0 (cf. pgamma_raw()).
+ *   Argument 'alph' is an integer >= 2.
+ */
+double pgamma(double x, double alph) {
+
+  if (x < 1)
+    // small values of x
+    return pgamma_smallx(x, alph);
+
+  else if (x <= alph - 1) {
+    // larger alph than x
+    double sum = pd_upper_series(x, alph);
+    double d = dpois(alph - 1, x);
+    return R_Log1_Exp(sum + d);
+  }
+
+  // x > alph - 1
+  double sum = pd_lower_series(x, alph - 1);
+  double d = dpois(alph - 1, x);
+  return sum + d;
+}
+
+/* double pchisq()
+ * Calculate a p-value for a chi-squared distribution
+ *   with observation 'x' and 'df' degrees of freedom.
+ *   'df' must be an even integer, 4 <= df <= 400
+ * Return value is -log10(p).
+ * Adapted from pchisq() in R-3.5.0, with lower.tail=FALSE
+ *   and log.p=TRUE.
+ */
+double pchisq(double x, int df) {
+  if (df < 4 || df > 400 || df / 2.0 != (int) (df / 2.0))
+    exit(error(errMsg[ERRDF], ERRISSUE));
+  return -pgamma(x / 2.0, df / 2.0) / M_LN10;
+}
+
 /*** Combine p-values from multiple replicates ***/
+
+/* float multPval()
+ * Combine multiple p-values into a single net p-value
+ *   using Fisher's method.
+ */
+float multPval(Pileup** pval, int n, uint32_t idx[]) {
+  double sum = 0.0;
+  int df = 0;
+  for (int j = 0; j < n; j++)
+    if (pval[j] != NULL) {
+      sum += pval[j]->cov[idx[j]];
+      df += 2;
+    }
+  if (! df)
+    exit(error(errMsg[ERRMULT], ERRISSUE));
+  if (df == 2 || ! sum)
+    return (float) sum;
+  return (float) (pchisq(2.0 * sum / M_LOG10E, df));
+}
 
 /* uint32_t countIntervals2()
  * Count the number of pileup intervals to create
@@ -396,23 +577,6 @@ uint32_t countIntervals2(Chrom* c, int n) {
       }
   }
   return num;
-}
-
-/* float multPval()
- * Combine multiple p-values into a single net p-value
- * *** at this point, just a simple average ***
- */
-float multPval(Pileup** pval, int n, uint32_t idx[]) {
-  float ans = 0.0f;
-  int count = 0;
-  for (int j = 0; j < n; j++)
-    if (pval[j] != NULL) {
-      ans += pval[j]->cov[idx[j]];
-      count++;
-    }
-  if (! count)
-    exit(error(errMsg[ERRMULT], ERRISSUE));
-  return ans / count;
 }
 
 /* void combinePval()
@@ -462,8 +626,8 @@ void combinePval(Chrom* chrom, int chromLen, int n) {
             && chr->pval[j]->end[idx[j]] == k) {
           if (! add) {
             chr->pval[n]->end[idx[n]] = k;
-            chr->pval[n]->cov[idx[n]] = multPval(chr->pval,
-              n, idx);
+            chr->pval[n]->cov[idx[n]]
+              = multPval(chr->pval, n, idx);
             idx[n]++;
             add = true;
           }
@@ -840,7 +1004,8 @@ void printPile(File pile, char* name, uint32_t start,
 float calcPval(float treatVal, float ctrlVal) {
   if (ctrlVal == 0.0f)
     return treatVal == 0.0f ? 0.0f : FLT_MAX;
-  return treatVal / ctrlVal * M_LOG10E;
+  double pval = treatVal / ctrlVal * M_LOG10E;
+  return pval > FLT_MAX ? FLT_MAX : (float) pval;
 }
 
 /* void savePval()
