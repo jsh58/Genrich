@@ -373,6 +373,7 @@ void computeQval(Chrom* chrom, int chromLen,
 }
 
 /*** Calculate p-value for Chi-squared test ***/
+// adapted from R-3.5.0 source code, as noted below
 
 // from dpq.h in R-3.5.0:
 #define R_Log1_Exp(x)  ((x) > -M_LN2 ? log(-expm1(x)) : log1p(-exp(x)))
@@ -390,8 +391,6 @@ double bd0(double x, double np) {
     ej = 2*x*v;
     v = v*v;
     for (int j = 1; j < 1000; j++) {
-      // Taylor series; 1000: no infinite loop
-      //   as |v| < .1,  v^2000 is "zero"
       ej *= v;
       s1 = s+ej/((j<<1)+1);
       if (s1 == s)
@@ -404,10 +403,9 @@ double bd0(double x, double np) {
 
 /* double stirlerr()
  * Adapted from stirlerr.c in R-3.5.0.
- *   Argument 'n' is an integer >= 1.
+ *   Argument 'n' is an integer, 1 <= n <= 199.
  */
 double stirlerr(double n) {
-  // numerical constants
   double S0 = 1.0 / 12;
   double S1 = 1.0 / 360;
   double S2 = 1.0 / 1260;
@@ -433,8 +431,6 @@ double stirlerr(double n) {
   };
 
   double nn = n * n;
-  if (n > 500.0)
-    return (S0-S1/nn)/n;
   if (n > 80.0)
     return (S0-(S1-S2/nn)/nn)/n;
   if (n > 35.0)
@@ -499,7 +495,7 @@ double pgamma_smallx(double x, double alph) {
 
 /* double pgamma()
  * Adapted from pgamma.c in R-3.5.0 (cf. pgamma_raw()).
- *   Argument 'alph' is an integer >= 2.
+ *   Argument 'alph' is an integer, 2 <= alph <= 200.
  */
 double pgamma(double x, double alph) {
 
@@ -523,10 +519,10 @@ double pgamma(double x, double alph) {
 /* double pchisq()
  * Calculate a p-value for a chi-squared distribution
  *   with observation 'x' and 'df' degrees of freedom.
- *   'df' must be an even integer, 4 <= df <= 400
+ *   'df' must be an even integer, 4 <= df <= 400.
+ * Adapted from pchisq.c and pgamma.c in R-3.5.0,
+ *   with lower_tail=FALSE and log_p=TRUE.
  * Return value is -log10(p).
- * Adapted from pchisq() in R-3.5.0, with lower.tail=FALSE
- *   and log.p=TRUE.
  */
 double pchisq(double x, int df) {
   if (df < 4 || df > 400 || df / 2.0 != (int) (df / 2.0))
@@ -552,7 +548,10 @@ float multPval(Pileup** pval, int n, uint32_t idx[]) {
     exit(error(errMsg[ERRMULT], ERRISSUE));
   if (df == 2 || ! sum)
     return (float) sum;
-  return (float) (pchisq(2.0 * sum / M_LOG10E, df));
+
+  // calculate p-value using chi-squared dist.
+  double p = pchisq(2.0 * sum / M_LOG10E, df);
+  return p > FLT_MAX ? FLT_MAX : (float) p;
 }
 
 /* uint32_t countIntervals2()
@@ -695,10 +694,10 @@ void printIntervalN(File out, bool gzOut, char* name,
       if (p[i] == NULL)
         gzprintf(out.gzf, "\tn/a");
       else
-        gzprintf(out.gzf, "\t%.5f", p[i]->cov[idx[i]]);
-    gzprintf(out.gzf, "\t%.5f", pval);
+        gzprintf(out.gzf, "\t%f", p[i]->cov[idx[i]]);
+    gzprintf(out.gzf, "\t%f", pval);
     if (qval != -1.0f)
-      gzprintf(out.gzf, "\t%.5f", qval);
+      gzprintf(out.gzf, "\t%f", qval);
     gzprintf(out.gzf, "%s\n", sig ? "\t*" : "");
   } else {
     fprintf(out.f, "%s\t%d\t%d", name, start, end);
@@ -706,10 +705,10 @@ void printIntervalN(File out, bool gzOut, char* name,
       if (p[i] == NULL)
         fprintf(out.f, "\tn/a");
       else
-        fprintf(out.f, "\t%.5f", p[i]->cov[idx[i]]);
-    fprintf(out.f, "\t%.5f", pval);
+        fprintf(out.f, "\t%f", p[i]->cov[idx[i]]);
+    fprintf(out.f, "\t%f", pval);
     if (qval != -1.0f)
-      fprintf(out.f, "\t%.5f", qval);
+      fprintf(out.f, "\t%f", qval);
     fprintf(out.f, "%s\n", sig ? "\t*" : "");
   }
 }
@@ -723,16 +722,16 @@ void printInterval(File out, bool gzOut, char* name,
     uint32_t start, uint32_t end, float treatVal,
     float ctrlVal, float pval, float qval, bool sig) {
   if (gzOut) {
-    gzprintf(out.gzf, "%s\t%d\t%d\t%.5f\t%.5f\t%.5f",
+    gzprintf(out.gzf, "%s\t%d\t%d\t%f\t%f\t%f",
       name, start, end, treatVal, ctrlVal, pval);
     if (qval != -1.0f)
-      gzprintf(out.gzf, "\t%.5f", qval);
+      gzprintf(out.gzf, "\t%f", qval);
     gzprintf(out.gzf, "%s\n", sig ? "\t*" : "");
   } else {
-    fprintf(out.f, "%s\t%d\t%d\t%.5f\t%.5f\t%.5f",
+    fprintf(out.f, "%s\t%d\t%d\t%f\t%f\t%f",
       name, start, end, treatVal, ctrlVal, pval);
     if (qval != -1.0f)
-      fprintf(out.f, "\t%.5f", qval);
+      fprintf(out.f, "\t%f", qval);
     fprintf(out.f, "%s\n", sig ? "\t*" : "");
   }
 }
@@ -990,10 +989,10 @@ void printPile(File pile, char* name, uint32_t start,
     uint32_t end, float treat, float ctrl, float pval,
     bool gzOut) {
   if (gzOut)
-    gzprintf(pile.gzf, "%s\t%d\t%d\t%.5f\t%.5f\t%.5f\n",
+    gzprintf(pile.gzf, "%s\t%d\t%d\t%f\t%f\t%f\n",
       name, start, end, treat, ctrl, pval);
   else
-    fprintf(pile.f, "%s\t%d\t%d\t%.5f\t%.5f\t%.5f\n",
+    fprintf(pile.f, "%s\t%d\t%d\t%f\t%f\t%f\n",
       name, start, end, treat, ctrl, pval);
 }
 
@@ -1655,7 +1654,7 @@ void subFrac(int16_t* cov, uint8_t* frac, uint8_t count) {
 
 /* void printBED()
  * Print a BED interval for a read/fragment.
- *   Append the count, 'C'ontrol/'T'reatment, and
+ *   Append the aln count, 'C'ontrol/'T'reatment, and
  *   sample number to the read name (4th column).
  */
 void printBED(File bed, bool gzOut, char* chr,
