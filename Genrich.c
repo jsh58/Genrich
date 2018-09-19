@@ -740,28 +740,20 @@ void printInterval(File out, bool gzOut, char* name,
  * Control printing of stats for an interval.
  */
 void printLog(File log, bool gzOut, Chrom* chr,
-    uint32_t* start, int n, uint32_t m, uint32_t* j,
-    uint32_t* k, uint32_t idx[], bool qvalOpt,
+    uint32_t start, int n, uint32_t m, uint32_t j,
+    uint32_t k, uint32_t idx[], bool qvalOpt,
     bool sig) {
   if (! n) {
     // single replicate
     printInterval(log, gzOut, chr->name,
-      *start, chr->pval[n]->end[m],
-      chr->treat->cov[*j], chr->ctrl->cov[*k],
+      start, chr->pval[n]->end[m],
+      chr->treat->cov[j], chr->ctrl->cov[k],
       chr->pval[n]->cov[m],
       qvalOpt ? chr->qval->cov[m] : -1.0f, sig);
-    // update chr->treat and chr->ctrl indexes
-    if (chr->ctrl->end[*k] < chr->treat->end[*j])
-      (*k)++;
-    else {
-      if (chr->ctrl->end[*k] == chr->treat->end[*j])
-        (*k)++;
-      (*j)++;
-    }
   } else {
     // multiple replicates
     printIntervalN(log, gzOut, chr->name,
-      *start, chr->pval[n]->end[m],
+      start, chr->pval[n]->end[m],
       chr->pval, n, idx, chr->pval[n]->cov[m],
       qvalOpt ? chr->qval->cov[m] : -1.0f, sig);
     // update indexes into pval arrays
@@ -770,7 +762,6 @@ void printLog(File log, bool gzOut, Chrom* chr,
           && chr->pval[r]->end[idx[r]] == chr->pval[n]->end[m])
         idx[r]++;
   }
-  *start = chr->pval[n]->end[m];
 }
 
 /* void printPeak()
@@ -881,8 +872,21 @@ int callPeaks(File out, File log, bool logOpt, bool gzOut,
 
       // print stats for interval
       if (logOpt)
-        printLog(log, gzOut, chr, &start, n, m, &j, &k,
+        printLog(log, gzOut, chr, start, n, m, j, k,
           idx, qvalOpt, sig);
+
+      // update chr->treat and chr->ctrl indexes
+      if (! n) {
+        if (chr->ctrl->end[k] < chr->treat->end[j])
+          k++;
+        else {
+          if (chr->ctrl->end[k] == chr->treat->end[j])
+            k++;
+          j++;
+        }
+      }
+
+      start = chr->pval[n]->end[m];
     }
 
     // determine if last peak meets length threshold
