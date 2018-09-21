@@ -3425,16 +3425,16 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
       free(chr->pvalLen);
       free(chr->ctrl->end);
       free(chr->ctrl->cov);
-      free(chr->ctrl);
       free(chr->treat->end);
       free(chr->treat->cov);
-      free(chr->treat);
       if (chr->diff) {
         free(chr->diff->frac);
         free(chr->diff->cov);
         free(chr->diff);
       }
     }
+    free(chr->ctrl);
+    free(chr->treat);
     free(chr->name);
   }
   free(chrom);
