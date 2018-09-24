@@ -15,6 +15,7 @@
 #include <getopt.h>
 #include <math.h>
 #include <float.h>
+#include <limits.h>
 #include <zlib.h>
 #include <omp.h>
 #include "Genrich.h"
