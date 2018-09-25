@@ -4,7 +4,7 @@
 
   Finding sites of enrichment from genome-wide assays.
 
-  Version 0.2
+  Version 0.3
 */
 
 #include <stdio.h>
@@ -46,6 +46,7 @@ void usage(void) {
   fprintf(stderr, "  -%c  <file>       Output BED file for reads/fragments/intervals\n", BEDFILE);
   fprintf(stderr, "Filtering options:\n");
   fprintf(stderr, "  -%c  <arg>        Comma-separated list of chromosomes to ignore\n", XCHROM);
+  fprintf(stderr, "  -%c  <file>       Input BED file of genomic regions to ignore\n", XFILE);
   fprintf(stderr, "  -%c  <int>        Minimum MAPQ to keep an alignment (def. 0)\n", MINMAPQ);
   fprintf(stderr, "  -%c  <float>      Keep secondary alignments whose scores are\n", ASDIFF);
   fprintf(stderr, "                     within <float> of the best (def. 0)\n");
@@ -2317,13 +2318,57 @@ bool parseAlign(Aln** aln, int* alnLen, uint16_t flag,
 
 /*** Save SAM/BAM header info ***/
 
+// save regions to be excluded
+void saveXBed(Chrom* c, int xBedLen, Bed* xBed) {
+  for (int i = 0; i < xBedLen; i++) {
+    Bed* b = xBed + i;
+    if (!strcmp(c->name, b->name)) {
+      // insert interval into array, sorted by start pos
+      int j;
+      for (j = 0; j < c->bedLen; j++)
+        if (b->pos[0] <= c->bedSt[j])
+          break;
+      c->bedLen++;
+      c->bedSt = (uint32_t*) memrealloc(c->bedSt,
+        c->bedLen * sizeof(uint32_t));
+      c->bedEnd = (uint32_t*) memrealloc(c->bedEnd,
+        c->bedLen * sizeof(uint32_t));
+      for (int k = c->bedLen - 1; k > j; k--) {
+        c->bedSt[k] = c->bedSt[k-1];
+        c->bedEnd[k] = c->bedEnd[k-1];
+      }
+      c->bedSt[j] = b->pos[0];
+      c->bedEnd[j] = b->pos[1];
+    }
+  }
+
+  // merge overlapping intervals
+  int i = 1;
+  while (i < c->bedLen) {
+    if (c->bedSt[i] <= c->bedEnd[i-1]) {
+      if (c->bedEnd[i] > c->bedEnd[i-1])
+        c->bedEnd[i-1] = c->bedEnd[i];
+      // shift coordinates back one
+      for (int j = i; j < c->bedLen - 1; j++) {
+        c->bedSt[j] = c->bedSt[j + 1];
+        c->bedEnd[j] = c->bedEnd[j + 1];
+      }
+      c->bedLen--;
+    } else
+      i++;
+  }
+
+  // still need to check for exceeding c->len
+
+}
+
 /* int saveChrom()
  * If chromosome (reference sequence) has not been
  *   saved yet, save it to the array. Return the index.
  */
 int saveChrom(char* name, int len, int* chromLen,
     Chrom** chrom, int xcount, char** xchrList,
-    bool ctrl) {
+    int xBedLen, Bed* xBed, bool ctrl) {
 
   // determine if chrom has been saved already
   for (int i = 0; i < *chromLen; i++) {
@@ -2369,6 +2414,14 @@ int saveChrom(char* name, int len, int* chromLen,
   c->pvalLen = NULL;
   c->sample = 0;
   c->qval = NULL;
+
+  // determine if there are regions to be skipped
+  c->bedSt = NULL;
+  c->bedEnd = NULL;
+  c->bedLen = 0;
+  if (! skip)
+    saveXBed(c, xBedLen, xBed);
+
   (*chromLen)++;
   return *chromLen - 1;
 }
@@ -2377,7 +2430,8 @@ int saveChrom(char* name, int len, int* chromLen,
  * Save chromosome length info from a SAM header line.
  */
 void loadChrom(char* line, int* chromLen, Chrom** chrom,
-    int xcount, char** xchrList, bool ctrl) {
+    int xcount, char** xchrList, int xBedLen, Bed* xBed,
+    bool ctrl) {
   // parse SAM header line for chrom info
   char* name = NULL, *len = NULL;
   char* field = strtok(NULL, TAB);
@@ -2400,7 +2454,7 @@ void loadChrom(char* line, int* chromLen, Chrom** chrom,
 
   // save chrom info to array (*chrom)
   saveChrom(name, getInt(len), chromLen, chrom,
-    xcount, xchrList, ctrl);
+    xcount, xchrList, xBedLen, xBed, ctrl);
 }
 
 /* void checkHeader()
@@ -2408,7 +2462,8 @@ void loadChrom(char* line, int* chromLen, Chrom** chrom,
  *   sort order or chromosome lengths.
  */
 void checkHeader(char* line, int* chromLen, Chrom** chrom,
-    int xcount, char** xchrList, bool ctrl) {
+    int xcount, char** xchrList, int xBedLen, Bed* xBed,
+    bool ctrl) {
 
   // load tag from SAM header line
   char* tag = strtok(line, TAB);
@@ -2437,7 +2492,7 @@ void checkHeader(char* line, int* chromLen, Chrom** chrom,
   } else if (! strcmp(tag, "@SQ"))
     // load chrom lengths from header line
     loadChrom(line, chromLen, chrom, xcount, xchrList,
-      ctrl);
+      xBedLen, xBed, ctrl);
 
 }
 
@@ -2569,13 +2624,14 @@ int readSAM(File in, bool gz, char* line, Aln** aln,
     char* readName, double* totalLen, int* unmapped,
     int* paired, int* single, int* pairedPr, int* singlePr,
     int* supp, int* skipped, int* lowMapQ, int minMapQ,
-    int xcount, char** xchrList, int* secPair,
-    int* secSingle, int* orphan, int* chromLen,
-    Chrom** chrom, bool singleOpt, bool extendOpt,
-    int extend, bool avgExtOpt, Aln*** unpair,
-    int* unpairMem, float asDiff, bool atacOpt,
-    int atacLen5, int atacLen3, File bed, bool bedOpt,
-    bool gzOut, bool ctrl, int sample, bool verbose) {
+    int xcount, char** xchrList, int xBedLen, Bed* xBed,
+    int* secPair, int* secSingle, int* orphan,
+    int* chromLen, Chrom** chrom, bool singleOpt,
+    bool extendOpt, int extend, bool avgExtOpt,
+    Aln*** unpair, int* unpairMem, float asDiff,
+    bool atacOpt, int atacLen5, int atacLen3, File bed,
+    bool bedOpt, bool gzOut, bool ctrl, int sample,
+    bool verbose) {
 
   // SAM fields to save
   char* qname, *rname, *cigar, *rnext, *seq, *qual, *extra;
@@ -2595,7 +2651,7 @@ int readSAM(File in, bool gz, char* line, Aln** aln,
       if (pastHeader)
         exit(error(line, ERRHEAD));
       checkHeader(line, chromLen, chrom, xcount, xchrList,
-        ctrl);
+        xBedLen, xBed, ctrl);
       continue;
     }
     pastHeader = true;
@@ -3002,13 +3058,14 @@ int readBAM(gzFile in, char* line, Aln** aln,
     char* readName, double* totalLen, int* unmapped,
     int* paired, int* single, int* pairedPr, int* singlePr,
     int* supp, int* skipped, int* lowMapQ, int minMapQ,
-    int xcount, char** xchrList, int* secPair,
-    int* secSingle, int* orphan, int* chromLen,
-    Chrom** chrom, bool singleOpt, bool extendOpt,
-    int extend, bool avgExtOpt, Aln*** unpair,
-    int* unpairMem, float asDiff, bool atacOpt,
-    int atacLen5, int atacLen3, File bed, bool bedOpt,
-    bool gzOut, bool ctrl, int sample, bool verbose) {
+    int xcount, char** xchrList, int xBedLen, Bed* xBed,
+    int* secPair, int* secSingle, int* orphan,
+    int* chromLen, Chrom** chrom, bool singleOpt,
+    bool extendOpt, int extend, bool avgExtOpt,
+    Aln*** unpair, int* unpairMem, float asDiff,
+    bool atacOpt, int atacLen5, int atacLen3, File bed,
+    bool bedOpt, bool gzOut, bool ctrl, int sample,
+    bool verbose) {
 
   // load first line from header
   int32_t l_text = readInt32(in, true);
@@ -3055,8 +3112,8 @@ int readBAM(gzFile in, char* line, Aln** aln,
     }
     if (line[len-1] != '\0')
       exit(error("", ERRBAM));
-    idx[i] = saveChrom(line, readInt32(in, true),
-      chromLen, chrom, xcount, xchrList, ctrl);
+    idx[i] = saveChrom(line, readInt32(in, true), chromLen,
+      chrom, xcount, xchrList, xBedLen, xBed, ctrl);
   }
 
   return parseBAM(in, line, aln, readName,
@@ -3181,6 +3238,57 @@ bool openRead(char* inFile, File* in) {
   return gzip;
 }
 
+// save genomic regions to ignore
+int loadBED(char* xFile, char* line, Bed** xBed) {
+  // open BED file
+  File in;
+  bool gz = openRead(xFile, &in);
+
+  // load BED records
+  int count = 0;
+  while (getLine(line, MAX_SIZE, in, gz) != NULL) {
+
+    // parse BED record
+    char* name = strtok(line, TAB);
+    if (name == NULL)
+      exit(error(line, ERRBED));
+    int pos[2];
+    for (int i = 0; i < 2; i++) {
+      char* val = strtok(NULL, i ? TABN : TAB);
+      if (val == NULL)
+        exit(error(line, ERRBED));
+      pos[i] = getInt(val);
+    }
+    if (pos[1] <= pos[0]) {
+      char* msg = (char*) memalloc(MAX_ALNS);
+      sprintf(msg, "%s, %d - %d", name, pos[0], pos[1]);
+      exit(error(msg, ERRBED));
+    }
+
+    *xBed = (Bed*) memrealloc(*xBed, (count + 1) * sizeof(Bed));
+    Bed* b = *xBed + count;
+    b->name = memalloc(1 + strlen(name));
+    strcpy(b->name, name);
+    b->pos[0] = pos[0];
+    b->pos[1] = pos[1];
+
+//fprintf(stderr, "chr %s, %d - %d\n", name, pos[0], pos[1]);
+    count++;
+  }
+
+//for (int i = 0; i < count; i++) {
+//  Bed* b = *xBed + i;
+//  fprintf(stderr, "chr %s, %d - %d\n", b->name, b->pos[0], b->pos[1]);
+//}
+
+  // close file
+  if ( (gz && gzclose(in.gzf) != Z_OK)
+      || (! gz && fclose(in.f)) )
+    exit(error(xFile, ERRCLOSE));
+
+  return count;
+}
+
 /*** Main ***/
 
 /* void logCounts()
@@ -3237,9 +3345,11 @@ void logCounts(int count, int unmapped, int supp,
           (int) (avgLen + 0.5));
     }
   }
-  if (atacOpt)
-    fprintf(stderr, "    ATAC-seq mode: cut sites expanded to %dbp\n",
-      atacLen);
+  if (atacOpt) {
+    fprintf(stderr, "    ATAC-seq cut sites: %10d\n",
+      2 * pairedPr + singlePr);
+    fprintf(stderr, "      (expanded to length %dbp)\n", atacLen);
+  }
 }
 
 /* void runProgram()
@@ -3251,9 +3361,9 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
     char* logFile, char* pileFile, char* bedFile,
     bool gzOut, bool singleOpt, bool extendOpt, int extend,
     bool avgExtOpt, int minMapQ, int xcount,
-    char** xchrList, float pqvalue, bool qvalOpt,
-    int minLen, int maxGap, float asDiff, bool atacOpt,
-    int atacLen5, int atacLen3, bool verbose,
+    char** xchrList, char* xFile, float pqvalue,
+    bool qvalOpt, int minLen, int maxGap, float asDiff,
+    bool atacOpt, int atacLen5, int atacLen3, bool verbose,
     int threads) {
 
   // open optional output files
@@ -3273,6 +3383,12 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
   char* readName = memalloc(MAX_ALNS + 1);  // name of read being analyzed
   readName[0] = readName[MAX_ALNS] = '\0';
   int sample = 0;         // number of sample pairs analyzed
+
+  // save genomic regions to ignore
+  Bed* xBed = NULL;
+  int xBedLen = 0;
+  if (xFile != NULL)
+    xBedLen = loadBED(xFile, line, &xBed);
 
   // loop through input files (treatment and control)
   char* end1, *end2;
@@ -3337,20 +3453,20 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
         count = readBAM(in.gzf, line, &aln, readName,
           &totalLen, &unmapped, &paired, &single,
           &pairedPr, &singlePr, &supp, &skipped, &lowMapQ,
-          minMapQ, xcount, xchrList, &secPair, &secSingle,
-          &orphan, &chromLen, &chrom, singleOpt, extendOpt,
-          extend, avgExtOpt, &unpair, &unpairMem, asDiff,
-          atacOpt, atacLen5, atacLen3, bed, bedFile != NULL,
-          gzOut, i, sample, verbose);
+          minMapQ, xcount, xchrList, xBedLen, xBed,
+          &secPair, &secSingle, &orphan, &chromLen, &chrom,
+          singleOpt, extendOpt, extend, avgExtOpt, &unpair,
+          &unpairMem, asDiff, atacOpt, atacLen5, atacLen3,
+          bed, bedFile != NULL, gzOut, i, sample, verbose);
       else
         count = readSAM(in, gz, line, &aln, readName,
           &totalLen, &unmapped, &paired, &single,
           &pairedPr, &singlePr, &supp, &skipped, &lowMapQ,
-          minMapQ, xcount, xchrList, &secPair, &secSingle,
-          &orphan, &chromLen, &chrom, singleOpt, extendOpt,
-          extend, avgExtOpt, &unpair, &unpairMem, asDiff,
-          atacOpt, atacLen5, atacLen3, bed, bedFile != NULL,
-          gzOut, i, sample, verbose);
+          minMapQ, xcount, xchrList, xBedLen, xBed,
+          &secPair, &secSingle, &orphan, &chromLen, &chrom,
+          singleOpt, extendOpt, extend, avgExtOpt, &unpair,
+          &unpairMem, asDiff, atacOpt, atacLen5, atacLen3,
+          bed, bedFile != NULL, gzOut, i, sample, verbose);
 
       // log counts
       if (verbose)
@@ -3400,6 +3516,11 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
       free(xchrList[i]);
     free(xchrList);
   }
+  if (xBedLen) {
+    for (int i = 0; i < xBedLen; i++)
+      free(xBed[i].name);
+    free(xBed);
+  }
   if (avgExtOpt) {
     for (int i = 0; i < unpairMem; i++)
       free(unpair[i]);
@@ -3408,6 +3529,12 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
   for (int i = 0; i < chromLen; i++) {
     Chrom* chr = chrom + i;
     if (! chr->skip) {
+      if (chr->bedLen) {
+for (int j = 0; j < chr->bedLen; j++)
+  fprintf(stderr, "%s, %d - %d\n", chr->name, chr->bedSt[j], chr->bedEnd[j]);
+        free(chr->bedSt);
+        free(chr->bedEnd);
+      }
       if (qvalOpt) {
         if (chr->qval) {
           free(chr->qval->end);
@@ -3483,7 +3610,8 @@ void getArgs(int argc, char** argv) {
 
   // default parameters/filenames
   char* outFile = NULL, *inFile = NULL, *ctrlFile = NULL,
-    *logFile = NULL, *pileFile = NULL, *bedFile = NULL;
+    *logFile = NULL, *pileFile = NULL, *bedFile = NULL,
+    *xFile = NULL;
   char* xchrom = NULL;
   int extend = 0, minMapQ = 0, minLen = DEFMINLEN,
     maxGap = DEFMAXGAP, atacLen5 = DEFATAC, atacLen3 = 0,
@@ -3511,6 +3639,7 @@ void getArgs(int argc, char** argv) {
       case ATACOPT: atacOpt = true; break;
       case ATACLEN: atacLen5 = getInt(optarg); break;
       case XCHROM: xchrom = optarg; break;
+      case XFILE: xFile = optarg; break;
       case MINMAPQ: minMapQ = getInt(optarg); break;
       case ASDIFF: asDiff = getFloat(optarg); break;
       case QVALUE: pqvalue = getFloat(optarg); break;
@@ -3569,9 +3698,9 @@ void getArgs(int argc, char** argv) {
   // send arguments to runProgram()
   runProgram(inFile, ctrlFile, outFile, logFile, pileFile,
     bedFile, gzOut, singleOpt, extendOpt, extend,
-    avgExtOpt, minMapQ, xcount, xchrList, pqvalue, qvalOpt,
-    minLen, maxGap, asDiff, atacOpt, atacLen5, atacLen3,
-    verbose, threads);
+    avgExtOpt, minMapQ, xcount, xchrList, xFile, pqvalue,
+    qvalOpt, minLen, maxGap, asDiff, atacOpt, atacLen5,
+    atacLen3, verbose, threads);
 }
 
 /* int main()

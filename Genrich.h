@@ -4,9 +4,9 @@
 
   Finding sites of enrichment from genome-wide assays.
 
-  Version 0.2
+  Version 0.3
 */
-#define VERSION     "0.2"
+#define VERSION     "0.3"
 
 // macros
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
@@ -18,7 +18,8 @@
                             //   - also used as max. read name length,
                             //     and for various dynamic memory allocs
 #define HASH_SIZE   1310417 // size of hashtable for p-values
-#define TAB         "\t"    // separator for SAM fields
+#define TAB         "\t"    // separator for SAM/BED fields
+#define TABN        "\t\n"  // separator for final BED field
 #define COL         ":"     // separator for SAM optional fields (TAG:TYPE:VALUE)
 #define COM         ", "    // separator for input file names / ref. names
 
@@ -36,7 +37,7 @@ enum sam { NIL, QNAME, FLAG, RNAME, POS, MAPQ, CIGAR, RNEXT,
 #define NOSCORE     -FLT_MAX  // for alignments with no alignment score(s)
 
 // command-line options
-#define OPTIONS     "ht:c:o:f:k:b:zya:xjd:e:m:s:p:q:g:l:n:vV"
+#define OPTIONS     "ht:c:o:f:k:b:zya:xjd:e:E:m:s:p:q:g:l:n:vV"
 #define HELP        'h'
 #define INFILE      't'
 #define CTRLFILE    'c'
@@ -51,6 +52,7 @@ enum sam { NIL, QNAME, FLAG, RNAME, POS, MAPQ, CIGAR, RNEXT,
 #define ATACOPT     'j'
 #define ATACLEN     'd'
 #define XCHROM      'e'
+#define XFILE       'E'
 #define MINMAPQ     'm'
 #define ASDIFF      's'
 #define PVALUE      'p'
@@ -80,7 +82,8 @@ enum errCode { ERRFILE, ERROPEN, ERROPENW, ERRCLOSE,
   ERRMEM, ERRINT, ERRFLOAT, ERRPARAM, ERREXTEND, ERRATAC,
   ERRPQVAL, ERRASDIFF, ERRMISM, ERRINFO, ERRSAM, ERRCHROM,
   ERRHEAD, ERRBAM, ERRGEN, ERRTREAT, ERRCHRLEN, ERRCTRL,
-  ERRPOS, ERRSORT, ERRTYPE, ERRAUX, ERRISSUE, ERRALNS,
+  ERRPOS, ERRSORT, ERRTYPE, ERRAUX, ERRBED,
+  ERRISSUE, ERRALNS,
   ERRPILE, ERRPVAL, ERRARR, ERRARRC, ERRMULT, ERRDF,
   ERRUNGET, ERRGZIP, ERRTHREAD, ERRNAME, ERRCIGAR, DEFERR
 };
@@ -111,6 +114,7 @@ const char* errMsg[] = { "Need input/output files",
   "SAM/BAM file not sorted by queryname (samtools sort -n)",
   ": unknown value type in BAM auxiliary field",
   "Poorly formatted BAM auxiliary field",
+  ": poorly formatted BED record",
   "\n  (internal error: please open an Issue on https://github.com/jsh58/Genrich)",
   "Disallowed number of alignments",
   "Invalid pileup value (< 0)",
@@ -134,6 +138,11 @@ typedef union file {
   gzFile gzf;
 } File;
 
+typedef struct bed {
+  uint32_t pos[2];
+  char* name;       // chromosome name
+} Bed;
+
 typedef struct hash {
   float val;      // p-value
   uint64_t len;   // length of genome with that p-value
@@ -155,6 +164,9 @@ typedef struct chrom {
   uint32_t len;       // length of chromosome
   bool skip;          // chromosome to be skipped?
   bool save;          // chromosome to be saved? (by sample)
+  uint32_t* bedSt;    // start coordinate of regions to be ignored
+  uint32_t* bedEnd;   // end coordinate of regions to be ignored
+  int bedLen;         // number of regions to be ignored
   Diff* diff;         // arrays for keeping track of pileup changes
   Pileup* treat;      // pileup arrays for treatment sample(s)
   uint32_t treatLen;  // length of pileup arrays for treatment sample(s) (dynamic)
