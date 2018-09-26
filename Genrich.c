@@ -926,8 +926,8 @@ void findPeaks(File out, File log, bool logOpt, bool gzOut,
     Chrom* chr = chrom + i;
     if (! chr->skip && chr->pval[*sample - 1] != NULL) {
       genomeLen += chr->len;
-      for (int j = 0; j < chr->bedLen; j++)
-        genomeLen -= chr->bedEnd[j] - chr->bedSt[j];
+      for (int j = 0; j < chr->bedLen; j += 2)
+        genomeLen -= chr->bed[j+1] - chr->bed[j];
     }
   }
 
@@ -997,12 +997,21 @@ void printPileHeader(File pile, char* treatName,
 void printPile(File pile, char* name, uint32_t start,
     uint32_t end, float treat, float ctrl, float pval,
     bool gzOut) {
-  if (gzOut)
-    gzprintf(pile.gzf, "%s\t%d\t%d\t%f\t%f\t%f\n",
-      name, start, end, treat, ctrl, pval);
-  else
-    fprintf(pile.f, "%s\t%d\t%d\t%f\t%f\t%f\n",
-      name, start, end, treat, ctrl, pval);
+  if (gzOut) {
+    if (ctrl == -1.0f)
+      gzprintf(pile.gzf, "%s\t%d\t%d\t%f\t%f\tNA\n",
+        name, start, end, treat, 0.0f);
+    else
+      gzprintf(pile.gzf, "%s\t%d\t%d\t%f\t%f\t%f\n",
+        name, start, end, treat, ctrl, pval);
+  } else {
+    if (ctrl == -1.0f)
+      fprintf(pile.f, "%s\t%d\t%d\t%f\t%f\tNA\n",
+        name, start, end, treat, 0.0f);
+    else
+      fprintf(pile.f, "%s\t%d\t%d\t%f\t%f\t%f\n",
+        name, start, end, treat, ctrl, pval);
+  }
 }
 
 /* float calcPval()
@@ -1010,6 +1019,8 @@ void printPile(File pile, char* name, uint32_t start,
  *   with parameter beta (ctrlVal) and observation treatVal.
  */
 float calcPval(float treatVal, float ctrlVal) {
+  if (ctrlVal == -1.0f)
+    return -1.0f; // in a skipped region
   if (ctrlVal == 0.0f)
     return treatVal == 0.0f ? 0.0f : FLT_MAX;
   double pval = treatVal / ctrlVal * M_LOG10E;
@@ -1122,8 +1133,8 @@ float calcLambda(Chrom* chrom, int chromLen,
     Chrom* chr = chrom + i;
     if (! chr->skip && chr->save) {
       *genomeLen += chr->len;
-      for (int j = 0; j < chr->bedLen; j++)
-        *genomeLen -= chr->bedEnd[j] - chr->bedSt[j];
+      for (int j = 0; j < chr->bedLen; j += 2)
+        *genomeLen -= chr->bed[j+1] - chr->bed[j];
     }
   }
   if (! *genomeLen)
@@ -1143,8 +1154,42 @@ void savePileupNoCtrl(Chrom* chrom, int chromLen,
     Chrom* chr = chrom + i;
     if (chr->skip || ! chr->save)
       continue;
-    saveConst(chr->ctrl, &chr->ctrlLen, &chr->ctrlMem,
-      chr->len, lambda);
+    if (chr->bedLen == 0)
+      // no BED intervals: save constant of lambda
+      saveConst(chr->ctrl, &chr->ctrlLen, &chr->ctrlMem,
+        chr->len, lambda);
+    else {
+      // with BED intervals
+      int num = chr->bedLen + 1;  // number of array intervals
+      int idx = 0;    // index into chr->bed array
+      bool save = true;
+      if (chr->bed[0] == 0) {
+        num--;
+        idx++;
+        save = false; // 1st interval skipped
+      }
+      if (chr->bed[chr->bedLen - 1] == chr->len)
+        num--;
+      if (num > chr->ctrlMem) {
+        chr->ctrl->end = (uint32_t*) memrealloc(chr->ctrl->end,
+          num * sizeof(uint32_t));
+        chr->ctrl->cov = (float*) memrealloc(chr->ctrl->cov,
+          num * sizeof(float));
+        chr->ctrlMem = num;
+      }
+      chr->ctrlLen = num;
+
+      // populate chr->ctrl arrays: alternate lambda and -1
+      for (int j = 0; j < num - 1; j++) {
+        chr->ctrl->end[j] = chr->bed[idx];
+        chr->ctrl->cov[j] = save ? lambda : -1.0f;
+        save = ! save;
+        idx++;
+      }
+      chr->ctrl->end[num-1] = chr->len;
+      chr->ctrl->cov[num-1] = save ? lambda : -1.0f;
+
+    }
   }
 }
 
@@ -1398,9 +1443,26 @@ double savePileupTreat(Chrom* chrom, int chromLen) {
 
     // determine number of pileup intervals
     Diff* d = chr->diff;
-    uint32_t num = 1;
+    int bedIdx = 0;     // index into chr->bed array
+    uint32_t bedPos = bedIdx < chr->bedLen ?
+      chr->bed[bedIdx] : chr->len + 1;  // position of BED interval
+    bool save = true;
+    if (bedPos == 0) {
+      // first BED interval starts at 0
+      save = false;
+      bedIdx++;
+      bedPos = bedIdx < chr->bedLen ?
+        chr->bed[bedIdx] : chr->len + 1;
+    }
+    uint32_t num = 1;   // number of intervals
     for (uint32_t j = 1; j < chr->len; j++)
-      if (d->cov[j] || d->frac[j])
+      if (j == bedPos) {
+        num++;
+        save = ! save;
+        bedIdx++;
+        bedPos = bedIdx < chr->bedLen ?
+          chr->bed[bedIdx] : chr->len + 1;
+      } else if (save && (d->cov[j] || d->frac[j]))
         num++;
 
     // expand pileup arrays (if necessary)
@@ -1413,6 +1475,18 @@ double savePileupTreat(Chrom* chrom, int chromLen) {
     }
     chr->treatLen = num;
 
+    // reset BED interval values
+    bedIdx = 0; // index into chr->bed array
+    bedPos = bedIdx < chr->bedLen ?
+      chr->bed[bedIdx] : chr->len + 1;
+    save = true;
+    if (bedPos == 0) {
+      save = false;
+      bedIdx++;
+      bedPos = bedIdx < chr->bedLen ?
+        chr->bed[bedIdx] : chr->len + 1;
+    }
+
     // initialize pileup values
     int32_t cov = 0;      // current pileup value
     uint8_t frac = 0;     // current pileup value (fraction part)
@@ -1423,29 +1497,42 @@ double savePileupTreat(Chrom* chrom, int chromLen) {
     uint32_t pos = 0;     // position in pileup arrays
     uint32_t j;
     for (j = 1; j < chr->len; j++) {
-      if (d->cov[j] || d->frac[j]) {
 
+      if (j == bedPos || (save && (d->cov[j] || d->frac[j]))) {
         // save end of interval and pileup value
         chr->treat->end[pos] = j;
-        chr->treat->cov[pos] = val;
+        if (save) {
+          chr->treat->cov[pos] = val;
+          fragLen += (j - start) * val; // frag. length weighted by val
+        } else
+          chr->treat->cov[pos] = 0.0f;
         pos++;
-
-        // keep track of fragment length (weighted by val)
-        fragLen += (j - start) * val;
         start = j;
+      }
 
-        // update pileup value
+      // update pileup value
+      if (d->cov[j] || d->frac[j])
         val = updateVal(d->cov[j], d->frac[j], &cov, &frac);
 
+      // update 'save' status (from BED intervals)
+      if (j == bedPos) {
+        save = ! save;
+        bedIdx++;
+        bedPos = bedIdx < chr->bedLen ?
+          chr->bed[bedIdx] : chr->len + 1;
+      }
 //fprintf(stderr, "  pos %d: %.9f -> %.9f", j, getVal(d->cov[j], d->frac[j]), val);
 //while(!getchar()) ;
-      }
+
     }
 
     // save final interval
     chr->treat->end[pos] = j;
-    chr->treat->cov[pos] = val;
-    fragLen += (j - start) * val;
+    if (save) {
+      chr->treat->cov[pos] = val;
+      fragLen += (j - start) * val;
+    } else
+      chr->treat->cov[pos] = 0.0f;
 
     // verify array length
     if (pos + 1 != chr->treatLen) {
@@ -1724,15 +1811,19 @@ uint32_t saveInterval(Chrom* c, int64_t start, int64_t end,
 
   // check for overflow/underflow (c->diff->cov is int16_t)
   if (c->diff->cov[start] == SHRT_MAX) {
-    if (verbose)
-      fprintf(stderr, "Warning! Read %s, alignment at (%s, %ld-%ld) skipped due to overflow\n",
+    if (verbose) {
+      fprintf(stderr, "Warning! Read %s, alignment at (%s, %ld-%ld)",
         qname, c->name, start, end);
+      fprintf(stderr, " skipped due to overflow\n");
+    }
     return 0;
   }
   if (c->diff->cov[end] == SHRT_MIN) {
-    if (verbose)
-      fprintf(stderr, "Warning! Read %s, alignment at (%s, %ld-%ld) skipped due to underflow\n",
+    if (verbose) {
+      fprintf(stderr, "Warning! Read %s, alignment at (%s, %ld-%ld)",
         qname, c->name, start, end);
+      fprintf(stderr, " skipped due to underflow\n");
+    }
     return 0;
   }
 
@@ -2346,20 +2437,21 @@ void saveXBed(Chrom* c, int xBedLen, Bed* xBed,
 
       // insert interval into array, sorted by start pos
       int j;
-      for (j = 0; j < c->bedLen; j++)
-        if (b->pos[0] <= c->bedSt[j])
+      for (j = 0; j < c->bedLen; j += 2)
+        if (b->pos[0] <= c->bed[j])
           break;
-      c->bedLen++;
-      c->bedSt = (uint32_t*) memrealloc(c->bedSt,
+      c->bedLen += 2;
+      c->bed = (uint32_t*) memrealloc(c->bed,
         c->bedLen * sizeof(uint32_t));
-      c->bedEnd = (uint32_t*) memrealloc(c->bedEnd,
-        c->bedLen * sizeof(uint32_t));
-      for (int k = c->bedLen - 1; k > j; k--) {
-        c->bedSt[k] = c->bedSt[k-1];
-        c->bedEnd[k] = c->bedEnd[k-1];
+      //c->bedEnd = (uint32_t*) memrealloc(c->bedEnd,
+      //  c->bedLen * sizeof(uint32_t));
+      for (int k = c->bedLen - 1; k > j + 1; k--) {
+        c->bed[k] = c->bed[k-2];
+        //c->bedEnd[k] = c->bedEnd[k-1];
       }
-      c->bedSt[j] = b->pos[0];
-      c->bedEnd[j] = b->pos[1];
+      c->bed[j] = b->pos[0];
+      c->bed[j+1] = b->pos[1];
+      //c->bedEnd[j] = b->pos[1];
     }
   }
 
@@ -2368,28 +2460,28 @@ void saveXBed(Chrom* c, int xBedLen, Bed* xBed,
   while (i < c->bedLen) {
 
     // check for interval past end of chrom
-    if (c->bedEnd[i] > c->len) {
+    if (c->bed[i+1] > c->len) {
       if (verbose) {
         fprintf(stderr, "Warning! BED interval (%s, %d - %d) extends ",
-          c->name, c->bedSt[i], c->bedEnd[i]);
+          c->name, c->bed[i], c->bed[i+1]);
         fprintf(stderr, "past end of ref.\n  - edited to (%s, %d - %d)\n",
-          c->name, c->bedSt[i], c->len);
+          c->name, c->bed[i], c->len);
       }
-      c->bedEnd[i] = c->len;
+      c->bed[i+1] = c->len;
     }
 
     // check for overlap with previous
-    if (i && c->bedSt[i] <= c->bedEnd[i-1]) {
-      if (c->bedEnd[i] > c->bedEnd[i-1])
-        c->bedEnd[i-1] = c->bedEnd[i];
+    if (i && c->bed[i] <= c->bed[i-1]) {
+      if (c->bed[i+1] > c->bed[i-1])
+        c->bed[i-1] = c->bed[i+1];
       // shift coordinates back one
-      for (int j = i; j < c->bedLen - 1; j++) {
-        c->bedSt[j] = c->bedSt[j + 1];
-        c->bedEnd[j] = c->bedEnd[j + 1];
+      for (int j = i; j < c->bedLen - 2; j++) {
+        c->bed[j] = c->bed[j + 2];
+        //c->bedEnd[j] = c->bedEnd[j + 1];
       }
-      c->bedLen--;
+      c->bedLen -= 2;
     } else
-      i++;
+      i += 2;
   }
 }
 
@@ -2447,8 +2539,8 @@ int saveChrom(char* name, uint32_t len, int* chromLen,
   c->qval = NULL;
 
   // determine if there are regions to be skipped
-  c->bedSt = NULL;
-  c->bedEnd = NULL;
+  c->bed = NULL;
+  //c->bedEnd = NULL;
   c->bedLen = 0;
   if (! skip)
     saveXBed(c, xBedLen, xBed, verbose);
@@ -3559,10 +3651,11 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
     Chrom* chr = chrom + i;
     if (! chr->skip) {
       if (chr->bedLen) {
-for (int j = 0; j < chr->bedLen; j++)
-  fprintf(stderr, "%s, %d - %d\n", chr->name, chr->bedSt[j], chr->bedEnd[j]);
-        free(chr->bedSt);
-        free(chr->bedEnd);
+for (int j = 0; j < chr->bedLen; j += 2)
+  fprintf(stderr, "%s, %d - %d\n", chr->name, chr->bed[j], chr->bed[j+1]);
+  //fprintf(stderr, "%s, %d - %d\n", chr->name, chr->bedSt[j], chr->bedEnd[j]);
+        free(chr->bed);
+        //free(chr->bedEnd);
       }
       if (qvalOpt) {
         if (chr->qval) {
