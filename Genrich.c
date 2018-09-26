@@ -924,8 +924,11 @@ void findPeaks(File out, File log, bool logOpt, bool gzOut,
   uint64_t genomeLen = 0;
   for (int i = 0; i < chromLen; i++) {
     Chrom* chr = chrom + i;
-    if (! chr->skip && chr->pval[*sample - 1] != NULL)
+    if (! chr->skip && chr->pval[*sample - 1] != NULL) {
       genomeLen += chr->len;
+      for (int j = 0; j < chr->bedLen; j++)
+        genomeLen -= chr->bedEnd[j] - chr->bedSt[j];
+    }
   }
 
   if (verbose) {
@@ -1117,8 +1120,11 @@ float calcLambda(Chrom* chrom, int chromLen,
     double fragLen, uint64_t* genomeLen) {
   for (int i = 0; i < chromLen; i++) {
     Chrom* chr = chrom + i;
-    if (! chr->skip && chr->save)
+    if (! chr->skip && chr->save) {
       *genomeLen += chr->len;
+      for (int j = 0; j < chr->bedLen; j++)
+        *genomeLen -= chr->bedEnd[j] - chr->bedSt[j];
+    }
   }
   if (! *genomeLen)
     exit(error("", ERRGEN));
@@ -2318,11 +2324,26 @@ bool parseAlign(Aln** aln, int* alnLen, uint16_t flag,
 
 /*** Save SAM/BAM header info ***/
 
-// save regions to be excluded
-void saveXBed(Chrom* c, int xBedLen, Bed* xBed) {
+/* void saveXBed()
+ * Save BED regions to be excluded for this chrom.
+ */
+void saveXBed(Chrom* c, int xBedLen, Bed* xBed,
+    bool verbose) {
   for (int i = 0; i < xBedLen; i++) {
     Bed* b = xBed + i;
     if (!strcmp(c->name, b->name)) {
+
+      // check if interval is located off end of chrom
+      if (b->pos[0] >= c->len) {
+        if (verbose) {
+          fprintf(stderr, "Warning! BED interval (%s, %d - %d) ignored\n",
+            b->name, b->pos[0], b->pos[1]);
+          fprintf(stderr, "  - located off end of reference (length %d)\n",
+            c->len);
+        }
+        continue;
+      }
+
       // insert interval into array, sorted by start pos
       int j;
       for (j = 0; j < c->bedLen; j++)
@@ -2343,9 +2364,22 @@ void saveXBed(Chrom* c, int xBedLen, Bed* xBed) {
   }
 
   // merge overlapping intervals
-  int i = 1;
+  int i = 0;
   while (i < c->bedLen) {
-    if (c->bedSt[i] <= c->bedEnd[i-1]) {
+
+    // check for interval past end of chrom
+    if (c->bedEnd[i] > c->len) {
+      if (verbose) {
+        fprintf(stderr, "Warning! BED interval (%s, %d - %d) extends ",
+          c->name, c->bedSt[i], c->bedEnd[i]);
+        fprintf(stderr, "past end of ref.\n  - edited to (%s, %d - %d)\n",
+          c->name, c->bedSt[i], c->len);
+      }
+      c->bedEnd[i] = c->len;
+    }
+
+    // check for overlap with previous
+    if (i && c->bedSt[i] <= c->bedEnd[i-1]) {
       if (c->bedEnd[i] > c->bedEnd[i-1])
         c->bedEnd[i-1] = c->bedEnd[i];
       // shift coordinates back one
@@ -2357,18 +2391,15 @@ void saveXBed(Chrom* c, int xBedLen, Bed* xBed) {
     } else
       i++;
   }
-
-  // still need to check for exceeding c->len
-
 }
 
 /* int saveChrom()
  * If chromosome (reference sequence) has not been
  *   saved yet, save it to the array. Return the index.
  */
-int saveChrom(char* name, int len, int* chromLen,
+int saveChrom(char* name, uint32_t len, int* chromLen,
     Chrom** chrom, int xcount, char** xchrList,
-    int xBedLen, Bed* xBed, bool ctrl) {
+    int xBedLen, Bed* xBed, bool ctrl, bool verbose) {
 
   // determine if chrom has been saved already
   for (int i = 0; i < *chromLen; i++) {
@@ -2420,7 +2451,7 @@ int saveChrom(char* name, int len, int* chromLen,
   c->bedEnd = NULL;
   c->bedLen = 0;
   if (! skip)
-    saveXBed(c, xBedLen, xBed);
+    saveXBed(c, xBedLen, xBed, verbose);
 
   (*chromLen)++;
   return *chromLen - 1;
@@ -2431,7 +2462,7 @@ int saveChrom(char* name, int len, int* chromLen,
  */
 void loadChrom(char* line, int* chromLen, Chrom** chrom,
     int xcount, char** xchrList, int xBedLen, Bed* xBed,
-    bool ctrl) {
+    bool ctrl, bool verbose) {
   // parse SAM header line for chrom info
   char* name = NULL, *len = NULL;
   char* field = strtok(NULL, TAB);
@@ -2453,8 +2484,8 @@ void loadChrom(char* line, int* chromLen, Chrom** chrom,
   len[i] = '\0';
 
   // save chrom info to array (*chrom)
-  saveChrom(name, getInt(len), chromLen, chrom,
-    xcount, xchrList, xBedLen, xBed, ctrl);
+  saveChrom(name, (uint32_t) getInt(len), chromLen, chrom,
+    xcount, xchrList, xBedLen, xBed, ctrl, verbose);
 }
 
 /* void checkHeader()
@@ -2463,7 +2494,7 @@ void loadChrom(char* line, int* chromLen, Chrom** chrom,
  */
 void checkHeader(char* line, int* chromLen, Chrom** chrom,
     int xcount, char** xchrList, int xBedLen, Bed* xBed,
-    bool ctrl) {
+    bool ctrl, bool verbose) {
 
   // load tag from SAM header line
   char* tag = strtok(line, TAB);
@@ -2492,7 +2523,7 @@ void checkHeader(char* line, int* chromLen, Chrom** chrom,
   } else if (! strcmp(tag, "@SQ"))
     // load chrom lengths from header line
     loadChrom(line, chromLen, chrom, xcount, xchrList,
-      xBedLen, xBed, ctrl);
+      xBedLen, xBed, ctrl, verbose);
 
 }
 
@@ -2651,7 +2682,7 @@ int readSAM(File in, bool gz, char* line, Aln** aln,
       if (pastHeader)
         exit(error(line, ERRHEAD));
       checkHeader(line, chromLen, chrom, xcount, xchrList,
-        xBedLen, xBed, ctrl);
+        xBedLen, xBed, ctrl, verbose);
       continue;
     }
     pastHeader = true;
@@ -3112,8 +3143,9 @@ int readBAM(gzFile in, char* line, Aln** aln,
     }
     if (line[len-1] != '\0')
       exit(error("", ERRBAM));
-    idx[i] = saveChrom(line, readInt32(in, true), chromLen,
-      chrom, xcount, xchrList, xBedLen, xBed, ctrl);
+    idx[i] = saveChrom(line, (uint32_t) readInt32(in, true),
+      chromLen, chrom, xcount, xchrList, xBedLen, xBed,
+      ctrl, verbose);
   }
 
   return parseBAM(in, line, aln, readName,
@@ -3238,7 +3270,10 @@ bool openRead(char* inFile, File* in) {
   return gzip;
 }
 
-// save genomic regions to ignore
+/* int loadBED()
+ * Load genomic regions to ignore from BED file.
+ *   Return number saved.
+ */
 int loadBED(char* xFile, char* line, Bed** xBed) {
   // open BED file
   File in;
@@ -3259,27 +3294,21 @@ int loadBED(char* xFile, char* line, Bed** xBed) {
         exit(error(line, ERRBED));
       pos[i] = getInt(val);
     }
-    if (pos[1] <= pos[0]) {
+    if (pos[1] <= pos[0] || pos[0] < 0 || pos[1] < 0) {
       char* msg = (char*) memalloc(MAX_ALNS);
       sprintf(msg, "%s, %d - %d", name, pos[0], pos[1]);
       exit(error(msg, ERRBED));
     }
 
+    // save info to xBed array
     *xBed = (Bed*) memrealloc(*xBed, (count + 1) * sizeof(Bed));
     Bed* b = *xBed + count;
     b->name = memalloc(1 + strlen(name));
     strcpy(b->name, name);
     b->pos[0] = pos[0];
     b->pos[1] = pos[1];
-
-//fprintf(stderr, "chr %s, %d - %d\n", name, pos[0], pos[1]);
     count++;
   }
-
-//for (int i = 0; i < count; i++) {
-//  Bed* b = *xBed + i;
-//  fprintf(stderr, "chr %s, %d - %d\n", b->name, b->pos[0], b->pos[1]);
-//}
 
   // close file
   if ( (gz && gzclose(in.gzf) != Z_OK)
