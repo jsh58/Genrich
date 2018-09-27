@@ -694,7 +694,7 @@ void printIntervalN(File out, bool gzOut, char* name,
     gzprintf(out.gzf, "%s\t%d\t%d", name, start, end);
     for (int i = 0; i < n; i++)
       if (p[i] == NULL)
-        gzprintf(out.gzf, "\tn/a");
+        gzprintf(out.gzf, "\tNA");
       else
         gzprintf(out.gzf, "\t%f", p[i]->cov[idx[i]]);
     gzprintf(out.gzf, "\t%f", pval);
@@ -705,7 +705,7 @@ void printIntervalN(File out, bool gzOut, char* name,
     fprintf(out.f, "%s\t%d\t%d", name, start, end);
     for (int i = 0; i < n; i++)
       if (p[i] == NULL)
-        fprintf(out.f, "\tn/a");
+        fprintf(out.f, "\tNA");
       else
         fprintf(out.f, "\t%f", p[i]->cov[idx[i]]);
     fprintf(out.f, "\t%f", pval);
@@ -981,11 +981,11 @@ void printPileHeader(File pile, char* treatName,
     char* ctrlName, bool gzOut) {
   if (gzOut) {
     gzprintf(pile.gzf, "# treatment file: %s; control file: %s\n",
-      treatName, ctrlName && strcmp(ctrlName, "null") ? ctrlName : "n/a");
+      treatName, ctrlName && strcmp(ctrlName, "null") ? ctrlName : "NA");
     gzprintf(pile.gzf, "chr\tstart\tend\ttreatment\tcontrol\t-log(p)\n");
   } else {
     fprintf(pile.f, "# treatment file: %s; control file: %s\n",
-      treatName, ctrlName && strcmp(ctrlName, "null") ? ctrlName : "n/a");
+      treatName, ctrlName && strcmp(ctrlName, "null") ? ctrlName : "NA");
     fprintf(pile.f, "chr\tstart\tend\ttreatment\tcontrol\t-log(p)\n");
   }
 }
@@ -1142,6 +1142,51 @@ float calcLambda(Chrom* chrom, int chromLen,
   return fragLen / *genomeLen;
 }
 
+/* void saveLambda()
+ * For a ctrl pileup, save constant value of lambda,
+ *   or -1 for BED intervals to be skipped.
+ */
+void saveLambda(Chrom* chr, float lambda) {
+  if (chr->bedLen == 0) {
+    // no BED intervals: save constant of lambda
+    saveConst(chr->ctrl, &chr->ctrlLen, &chr->ctrlMem,
+      chr->len, lambda);
+    return;
+  }
+
+  // with BED intervals
+  int num = chr->bedLen + 1;  // number of array intervals
+  int idx = 0;    // index into chr->bed array
+  bool save = true;
+  if (chr->bed[0] == 0) {
+    num--;
+    idx++;
+    save = false; // 1st interval skipped
+  }
+  if (chr->bed[chr->bedLen - 1] == chr->len)
+    num--;
+
+  // expand pileup arrays (if necessary)
+  if (num > chr->ctrlMem) {
+    chr->ctrl->end = (uint32_t*) memrealloc(chr->ctrl->end,
+      num * sizeof(uint32_t));
+    chr->ctrl->cov = (float*) memrealloc(chr->ctrl->cov,
+      num * sizeof(float));
+    chr->ctrlMem = num;
+  }
+  chr->ctrlLen = num;
+
+  // populate chr->ctrl arrays: alternate lambda and -1
+  for (int j = 0; j < num - 1; j++) {
+    chr->ctrl->end[j] = chr->bed[idx];
+    chr->ctrl->cov[j] = save ? lambda : -1.0f;
+    save = ! save;
+    idx++;
+  }
+  chr->ctrl->end[num-1] = chr->len;
+  chr->ctrl->cov[num-1] = save ? lambda : -1.0f;
+}
+
 /* void savePileupNoCtrl()
  * When no control is available, save the control
  *   pileup as the background lambda value.
@@ -1154,42 +1199,7 @@ void savePileupNoCtrl(Chrom* chrom, int chromLen,
     Chrom* chr = chrom + i;
     if (chr->skip || ! chr->save)
       continue;
-    if (chr->bedLen == 0)
-      // no BED intervals: save constant of lambda
-      saveConst(chr->ctrl, &chr->ctrlLen, &chr->ctrlMem,
-        chr->len, lambda);
-    else {
-      // with BED intervals
-      int num = chr->bedLen + 1;  // number of array intervals
-      int idx = 0;    // index into chr->bed array
-      bool save = true;
-      if (chr->bed[0] == 0) {
-        num--;
-        idx++;
-        save = false; // 1st interval skipped
-      }
-      if (chr->bed[chr->bedLen - 1] == chr->len)
-        num--;
-      if (num > chr->ctrlMem) {
-        chr->ctrl->end = (uint32_t*) memrealloc(chr->ctrl->end,
-          num * sizeof(uint32_t));
-        chr->ctrl->cov = (float*) memrealloc(chr->ctrl->cov,
-          num * sizeof(float));
-        chr->ctrlMem = num;
-      }
-      chr->ctrlLen = num;
-
-      // populate chr->ctrl arrays: alternate lambda and -1
-      for (int j = 0; j < num - 1; j++) {
-        chr->ctrl->end[j] = chr->bed[idx];
-        chr->ctrl->cov[j] = save ? lambda : -1.0f;
-        save = ! save;
-        idx++;
-      }
-      chr->ctrl->end[num-1] = chr->len;
-      chr->ctrl->cov[num-1] = save ? lambda : -1.0f;
-
-    }
+    saveLambda(chr, lambda);
   }
 }
 
@@ -1289,6 +1299,19 @@ float calcFactor(Chrom* chrom, int chromLen,
     if (chr->skip || ! chr->save || chr->diff == NULL)
       continue;
 
+    // initialize BED interval variables
+    int bedIdx = 0;         // index into chr->bed array
+    uint32_t bedPos = bedIdx < chr->bedLen ?
+      chr->bed[bedIdx] : chr->len + 1;  // position of BED interval
+    bool save = true;
+    if (bedPos == 0) {
+      // first BED interval starts at 0
+      save = false;
+      bedIdx++;
+      bedPos = bedIdx < chr->bedLen ?
+        chr->bed[bedIdx] : chr->len + 1;
+    }
+
     // initialize variables
     uint32_t num = 1;       // number of intervals to create for pileup
     Diff* d = chr->diff;
@@ -1300,21 +1323,31 @@ float calcFactor(Chrom* chrom, int chromLen,
     uint32_t start = 0;     // beginning coordinate of interval
     uint32_t j;
     for (j = 1; j < chr->len; j++) {
-      if (d->cov[j] || d->frac[j]) {
 
-        // sum fragment length (weighted by val)
-        ctrlFrag += (j - start) * val;
-        start = j;
-
-        // update pileup value
-        val = updateVal(d->cov[j], d->frac[j], &cov, &frac);
+      if (j == bedPos || (save && (d->cov[j] || d->frac[j]))) {
+        if (save)
+          // save frag. length weighted by val
+          ctrlFrag += (j - start) * val;
         num++;
+        start = j;
+      }
 
+      // update pileup value
+      if (d->cov[j] || d->frac[j])
+        val = updateVal(d->cov[j], d->frac[j], &cov, &frac);
+
+      // update 'save' status (from BED intervals)
+      if (j == bedPos) {
+        save = ! save;
+        bedIdx++;
+        bedPos = bedIdx < chr->bedLen ?
+          chr->bed[bedIdx] : chr->len + 1;
       }
     }
 
     // save final interval
-    ctrlFrag += (j - start) * val;
+    if (save)
+      ctrlFrag += (j - start) * val;
     chr->ctrlLen = num; // save number of intervals
   }
 
@@ -1351,18 +1384,33 @@ void savePileupCtrl(Chrom* chrom, int chromLen,
 
     // if no read coverage, save constant pileup of lambda
     if (chr->diff == NULL) {
-      saveConst(chr->ctrl, &chr->ctrlLen, &chr->ctrlMem,
-        chr->len, lambda);
+      saveLambda(chr, lambda);
+      //saveConst(chr->ctrl, &chr->ctrlLen, &chr->ctrlMem,
+      //  chr->len, lambda);
       continue;
     }
 
     // expand pileup arrays (if necessary)
+    //   (chr->ctrlLen already set in calcFactor())
     if (chr->ctrlLen > chr->ctrlMem) {
       chr->ctrl->end = (uint32_t*) memrealloc(chr->ctrl->end,
         chr->ctrlLen * sizeof(uint32_t));
       chr->ctrl->cov = (float*) memrealloc(chr->ctrl->cov,
         chr->ctrlLen * sizeof(float));
       chr->ctrlMem = chr->ctrlLen;
+    }
+
+    // initialize BED interval variables
+    int bedIdx = 0;         // index into chr->bed array
+    uint32_t bedPos = bedIdx < chr->bedLen ?
+      chr->bed[bedIdx] : chr->len + 1;  // position of BED interval
+    bool save = true;
+    if (bedPos == 0) {
+      // first BED interval starts at 0 (should be skipped)
+      save = false;
+      bedIdx++;
+      bedPos = bedIdx < chr->bedLen ?
+        chr->bed[bedIdx] : chr->len + 1;
     }
 
     // initialize pileup values
@@ -1377,26 +1425,33 @@ void savePileupCtrl(Chrom* chrom, int chromLen,
     uint32_t pos = 0;     // position in pileup arrays
     uint32_t j;
     for (j = 1; j < chr->len; j++) {
-      if (d->cov[j] || d->frac[j]) {
 
-        // update pileup value
+      // update pileup value
+      if (d->cov[j] || d->frac[j])
         val = factor * updateVal(d->cov[j], d->frac[j],
           &cov, &frac);
 
-        // save interval if value has changed
-        if (net != MAX(val, lambda)) {
-          chr->ctrl->end[pos] = j;
-          chr->ctrl->cov[pos] = net;
-          pos++;
-          net = MAX(val, lambda);
-        }
-
+      // determine if interval should be saved
+      if (j == bedPos || (save && net != MAX(val, lambda))) {
+        chr->ctrl->end[pos] = j;
+        chr->ctrl->cov[pos] = save ? net : -1.0f;
+        pos++;
       }
+      net = MAX(val, lambda);
+
+      // update 'save' status (from BED intervals)
+      if (j == bedPos) {
+        save = ! save;
+        bedIdx++;
+        bedPos = bedIdx < chr->bedLen ?
+          chr->bed[bedIdx] : chr->len + 1;
+      }
+
     }
 
     // save final interval
     chr->ctrl->end[pos] = j;
-    chr->ctrl->cov[pos] = net;
+    chr->ctrl->cov[pos] = save ? net : -1.0f;
 
     // update array length
     if (pos >= chr->ctrlLen) {
@@ -1442,18 +1497,18 @@ double savePileupTreat(Chrom* chrom, int chromLen) {
 //fprintf(stderr, "chrom %s\n", chr->name);
 
     // determine number of pileup intervals
-    Diff* d = chr->diff;
     int bedIdx = 0;     // index into chr->bed array
     uint32_t bedPos = bedIdx < chr->bedLen ?
       chr->bed[bedIdx] : chr->len + 1;  // position of BED interval
     bool save = true;
     if (bedPos == 0) {
-      // first BED interval starts at 0
+      // first BED interval starts at 0 (should be skipped)
       save = false;
       bedIdx++;
       bedPos = bedIdx < chr->bedLen ?
         chr->bed[bedIdx] : chr->len + 1;
     }
+    Diff* d = chr->diff;
     uint32_t num = 1;   // number of intervals
     for (uint32_t j = 1; j < chr->len; j++)
       if (j == bedPos) {
