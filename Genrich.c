@@ -203,8 +203,8 @@ float lookup(float* pVal, uint64_t low, uint64_t high,
  *   arrays of p-values (pVal) and lengths (pEnd).
  */
 void saveQval(Chrom* chrom, int chromLen, int n,
-    uint64_t genomeLen, float* pVal,
-    uint64_t* pEnd, int64_t pLen) {
+    uint64_t genomeLen, float* pVal, uint64_t* pEnd,
+    int64_t pLen) {
 
   // sort pileup by p-values
   quickSort(pVal, pEnd, 0, pLen - 1);
@@ -227,8 +227,11 @@ void saveQval(Chrom* chrom, int chromLen, int n,
     if (chr->skip || chr->pval[n] == NULL)
       continue;
     for (uint32_t j = 0; j < chr->pvalLen[n]; j++)
-      chr->qval->cov[j] = lookup(pVal, 0, pLen, qVal,
-        chr->pval[n]->cov[j]);
+      if (chr->pval[n]->cov[j] == -1.0f)
+        chr->qval->cov[j] = 1.0f; // skipped region
+      else
+        chr->qval->cov[j] = lookup(pVal, 0, pLen,
+          qVal, chr->pval[n]->cov[j]);
   }
 
   // free memory
@@ -280,25 +283,6 @@ int recordPval(Hash** table, float p, uint32_t length) {
   return 1;
 }
 
-/* float* collectPval()
- * Collect arrays of p-values and genome lengths from
- *   hashtable (to be used in q-value calculations).
- */
-float* collectPval(Hash** table, uint64_t** pEnd,
-    int64_t pLen) {
-  float* pVal = (float*) memalloc(pLen * sizeof(float));
-  int64_t idx = 0;
-  for (int i = 0; i < HASH_SIZE; i++)
-    for (Hash* h = table[i]; h != NULL; h = h->next) {
-      pVal[idx] = h->val;
-      (*pEnd)[idx] = h->len;
-      idx++;
-    }
-  if (idx != pLen)
-    exit(error(errMsg[ERRPVAL], ERRISSUE));
-  return pVal;
-}
-
 /* Hash** hashPval()
  * Collect p-values in a hashtable.
  */
@@ -321,14 +305,34 @@ Hash** hashPval(Chrom* chrom, int chromLen, int n,
     uint32_t start = 0;
     for (uint32_t m = 0; m < chr->pvalLen[n]; m++) {
       // record p-value and length in hashtable
-      *pLen += recordPval(table, p->cov[m],
-        p->end[m] - start);
+      if (p->cov[m] != -1.0f)
+        *pLen += recordPval(table, p->cov[m],
+          p->end[m] - start);
       start = p->end[m];
     }
-
   }
 
   return table;
+}
+
+/* float* collectPval()
+ * Collect arrays of p-values and genome lengths from
+ *   hashtable (to be used in q-value calculations).
+ */
+float* collectPval(Hash** table, uint64_t** pEnd,
+    int64_t pLen, uint64_t* checkLen) {
+  float* pVal = (float*) memalloc(pLen * sizeof(float));
+  int64_t idx = 0;
+  for (int i = 0; i < HASH_SIZE; i++)
+    for (Hash* h = table[i]; h != NULL; h = h->next) {
+      pVal[idx] = h->val;
+      (*pEnd)[idx] = h->len;
+      *checkLen += h->len;
+      idx++;
+    }
+  if (idx != pLen)
+    exit(error(errMsg[ERRPVAL], ERRISSUE));
+  return pVal;
 }
 
 /* void computeQval()
@@ -354,7 +358,16 @@ void computeQval(Chrom* chrom, int chromLen,
 
   // collect p-values from hashtable
   uint64_t* pEnd = memalloc(pLen * sizeof(uint64_t));
-  float* pVal = collectPval(table, &pEnd, pLen);
+  uint64_t checkLen = 0;  // should match genomeLen
+  float* pVal = collectPval(table, &pEnd, pLen, &checkLen);
+
+  // check that collected p-value lengths match genomeLen
+  if (checkLen != genomeLen) {
+    char* msg = (char*) memalloc(MAX_ALNS);
+    sprintf(msg, "Genome length (%ld) does not match p-value length (%ld)",
+      genomeLen, checkLen);
+    exit(error(msg, ERRISSUE));
+  }
 
   // convert p-values to q-values
   saveQval(chrom, chromLen, n, genomeLen, pVal, pEnd, pLen);
@@ -542,12 +555,12 @@ float multPval(Pileup** pval, int n, uint32_t idx[]) {
   double sum = 0.0;
   int df = 0;
   for (int j = 0; j < n; j++)
-    if (pval[j] != NULL) {
+    if (pval[j] != NULL && pval[j]->cov[idx[j]] != -1.0f) {
       sum += pval[j]->cov[idx[j]];
       df += 2;
     }
-  if (! df)
-    exit(error(errMsg[ERRMULT], ERRISSUE));
+  if (df == 0)
+    return -1.0f;
   if (df == 2 || ! sum)
     return (float) sum;
 
@@ -689,28 +702,41 @@ void printLogHeader(File log, bool gzOut, int n,
  */
 void printIntervalN(File out, bool gzOut, char* name,
     uint32_t start, uint32_t end, Pileup** p, int n,
-    uint32_t idx[], float pval, float qval, bool sig) {
+    uint32_t idx[], float pval, bool qvalOpt,
+    float qval, bool sig) {
   if (gzOut) {
     gzprintf(out.gzf, "%s\t%d\t%d", name, start, end);
     for (int i = 0; i < n; i++)
-      if (p[i] == NULL)
-        gzprintf(out.gzf, "\tNA");
+      if (p[i] == NULL || p[i]->cov[idx[i]] == -1.0f)
+        gzprintf(out.gzf, "\t%s", NA);
       else
         gzprintf(out.gzf, "\t%f", p[i]->cov[idx[i]]);
-    gzprintf(out.gzf, "\t%f", pval);
-    if (qval != -1.0f)
-      gzprintf(out.gzf, "\t%f", qval);
+    if (pval == -1.0f) {
+      gzprintf(out.gzf, "\t%s", NA);
+      if (qvalOpt)
+        gzprintf(out.gzf, "\t%s", NA);
+    } else {
+      gzprintf(out.gzf, "\t%f", pval);
+      if (qvalOpt)
+        gzprintf(out.gzf, "\t%f", qval);
+    }
     gzprintf(out.gzf, "%s\n", sig ? "\t*" : "");
   } else {
     fprintf(out.f, "%s\t%d\t%d", name, start, end);
     for (int i = 0; i < n; i++)
-      if (p[i] == NULL)
-        fprintf(out.f, "\tNA");
+      if (p[i] == NULL || p[i]->cov[idx[i]] == -1.0f)
+        fprintf(out.f, "\t%s", NA);
       else
         fprintf(out.f, "\t%f", p[i]->cov[idx[i]]);
-    fprintf(out.f, "\t%f", pval);
-    if (qval != -1.0f)
-      fprintf(out.f, "\t%f", qval);
+    if (pval == -1.0f) {
+      fprintf(out.f, "\t%s", NA);
+      if (qvalOpt)
+        fprintf(out.f, "\t%s", NA);
+    } else {
+      fprintf(out.f, "\t%f", pval);
+      if (qvalOpt)
+        fprintf(out.f, "\t%f", qval);
+    }
     fprintf(out.f, "%s\n", sig ? "\t*" : "");
   }
 }
@@ -722,19 +748,36 @@ void printIntervalN(File out, bool gzOut, char* name,
  */
 void printInterval(File out, bool gzOut, char* name,
     uint32_t start, uint32_t end, float treatVal,
-    float ctrlVal, float pval, float qval, bool sig) {
+    float ctrlVal, float pval, bool qvalOpt, float qval,
+    bool sig) {
   if (gzOut) {
-    gzprintf(out.gzf, "%s\t%d\t%d\t%f\t%f\t%f",
-      name, start, end, treatVal, ctrlVal, pval);
-    if (qval != -1.0f)
-      gzprintf(out.gzf, "\t%f", qval);
-    gzprintf(out.gzf, "%s\n", sig ? "\t*" : "");
+    if (ctrlVal == -1.0f) {
+      gzprintf(out.gzf, "%s\t%d\t%d\t%f\t%f\t%s",
+        name, start, end, treatVal, 0.0f, NA);
+      if (qvalOpt)
+        gzprintf(out.gzf, "\t%s", NA);
+      gzprintf(out.gzf, "\n");
+    } else {
+      gzprintf(out.gzf, "%s\t%d\t%d\t%f\t%f\t%f",
+        name, start, end, treatVal, ctrlVal, pval);
+      if (qvalOpt)
+        gzprintf(out.gzf, "\t%f", qval);
+      gzprintf(out.gzf, "%s\n", sig ? "\t*" : "");
+    }
   } else {
-    fprintf(out.f, "%s\t%d\t%d\t%f\t%f\t%f",
-      name, start, end, treatVal, ctrlVal, pval);
-    if (qval != -1.0f)
-      fprintf(out.f, "\t%f", qval);
-    fprintf(out.f, "%s\n", sig ? "\t*" : "");
+    if (ctrlVal == -1.0f) {
+      fprintf(out.f, "%s\t%d\t%d\t%f\t%f\t%s",
+        name, start, end, treatVal, 0.0f, NA);
+      if (qvalOpt)
+        fprintf(out.f, "\t%s", NA);
+      fprintf(out.f, "\n");
+    } else {
+      fprintf(out.f, "%s\t%d\t%d\t%f\t%f\t%f",
+        name, start, end, treatVal, ctrlVal, pval);
+      if (qvalOpt)
+        fprintf(out.f, "\t%f", qval);
+      fprintf(out.f, "%s\n", sig ? "\t*" : "");
+    }
   }
 }
 
@@ -750,13 +793,13 @@ void printLog(File log, bool gzOut, Chrom* chr,
     printInterval(log, gzOut, chr->name,
       start, chr->pval[n]->end[m],
       chr->treat->cov[j], chr->ctrl->cov[k],
-      chr->pval[n]->cov[m],
+      chr->pval[n]->cov[m], qvalOpt,
       qvalOpt ? chr->qval->cov[m] : -1.0f, sig);
   } else {
     // multiple replicates
     printIntervalN(log, gzOut, chr->name,
-      start, chr->pval[n]->end[m],
-      chr->pval, n, idx, chr->pval[n]->cov[m],
+      start, chr->pval[n]->end[m], chr->pval, n, idx,
+      chr->pval[n]->cov[m], qvalOpt,
       qvalOpt ? chr->qval->cov[m] : -1.0f, sig);
     // update indexes into pval arrays
     for (int r = 0; r < n; r++)
@@ -981,11 +1024,11 @@ void printPileHeader(File pile, char* treatName,
     char* ctrlName, bool gzOut) {
   if (gzOut) {
     gzprintf(pile.gzf, "# treatment file: %s; control file: %s\n",
-      treatName, ctrlName && strcmp(ctrlName, "null") ? ctrlName : "NA");
+      treatName, ctrlName && strcmp(ctrlName, "null") ? ctrlName : NA);
     gzprintf(pile.gzf, "chr\tstart\tend\ttreatment\tcontrol\t-log(p)\n");
   } else {
     fprintf(pile.f, "# treatment file: %s; control file: %s\n",
-      treatName, ctrlName && strcmp(ctrlName, "null") ? ctrlName : "NA");
+      treatName, ctrlName && strcmp(ctrlName, "null") ? ctrlName : NA);
     fprintf(pile.f, "chr\tstart\tend\ttreatment\tcontrol\t-log(p)\n");
   }
 }
@@ -999,15 +1042,15 @@ void printPile(File pile, char* name, uint32_t start,
     bool gzOut) {
   if (gzOut) {
     if (ctrl == -1.0f)
-      gzprintf(pile.gzf, "%s\t%d\t%d\t%f\t%f\tNA\n",
-        name, start, end, treat, 0.0f);
+      gzprintf(pile.gzf, "%s\t%d\t%d\t%f\t%f\t%s\n",
+        name, start, end, treat, 0.0f, NA);
     else
       gzprintf(pile.gzf, "%s\t%d\t%d\t%f\t%f\t%f\n",
         name, start, end, treat, ctrl, pval);
   } else {
     if (ctrl == -1.0f)
-      fprintf(pile.f, "%s\t%d\t%d\t%f\t%f\tNA\n",
-        name, start, end, treat, 0.0f);
+      fprintf(pile.f, "%s\t%d\t%d\t%f\t%f\t%s\n",
+        name, start, end, treat, 0.0f, NA);
     else
       fprintf(pile.f, "%s\t%d\t%d\t%f\t%f\t%f\n",
         name, start, end, treat, ctrl, pval);
@@ -3705,19 +3748,16 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
   for (int i = 0; i < chromLen; i++) {
     Chrom* chr = chrom + i;
     if (! chr->skip) {
-      if (chr->bedLen) {
+      if (chr->bedLen)
+{
 for (int j = 0; j < chr->bedLen; j += 2)
   fprintf(stderr, "%s, %d - %d\n", chr->name, chr->bed[j], chr->bed[j+1]);
-  //fprintf(stderr, "%s, %d - %d\n", chr->name, chr->bedSt[j], chr->bedEnd[j]);
         free(chr->bed);
-        //free(chr->bedEnd);
-      }
-      if (qvalOpt) {
-        if (chr->qval) {
-          free(chr->qval->end);
-          free(chr->qval->cov);
-          free(chr->qval);
-        }
+}
+      if (qvalOpt && chr->qval) {
+        free(chr->qval->end);
+        free(chr->qval->cov);
+        free(chr->qval);
       }
       for (int j = 0; j < sample; j++) {
         if (chr->pval[j]) {

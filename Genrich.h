@@ -22,6 +22,7 @@
 #define TABN        "\t\n"  // separator for final BED field
 #define COL         ":"     // separator for SAM optional fields (TAG:TYPE:VALUE)
 #define COM         ", "    // separator for input file names / ref. names
+#define NA          "NA"    // results not available
 
 // default parameter values
 #define DEFQVAL     0.05    // default q-value
@@ -84,7 +85,7 @@ enum errCode { ERRFILE, ERROPEN, ERROPENW, ERRCLOSE,
   ERRHEAD, ERRBAM, ERRGEN, ERRTREAT, ERRCHRLEN, ERRCTRL,
   ERRPOS, ERRSORT, ERRTYPE, ERRAUX, ERRBED,
   ERRISSUE, ERRALNS,
-  ERRPILE, ERRPVAL, ERRARR, ERRARRC, ERRMULT, ERRDF,
+  ERRPILE, ERRPVAL, ERRARR, ERRARRC, ERRDF,
   ERRUNGET, ERRGZIP, ERRTHREAD, ERRNAME, ERRCIGAR, DEFERR
 };
 const char* errMsg[] = { "Need input/output files",
@@ -121,7 +122,6 @@ const char* errMsg[] = { "Need input/output files",
   "Failure collecting p-values",
   "Failure creating treatment pileup",
   "Failure creating control pileup",
-  "Failure to combine multiple p-values (division by 0)",
   "Invalid df in pchisq()",
 
   "Failure in ungetc() call",
