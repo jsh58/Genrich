@@ -228,7 +228,7 @@ void saveQval(Chrom* chrom, int chromLen, int n,
       continue;
     for (uint32_t j = 0; j < chr->pvalLen[n]; j++)
       if (chr->pval[n]->cov[j] == -1.0f)
-        chr->qval->cov[j] = 1.0f; // skipped region
+        chr->qval->cov[j] = -1.0f; // skipped region
       else
         chr->qval->cov[j] = lookup(pVal, 0, pLen,
           qVal, chr->pval[n]->cov[j]);
@@ -947,6 +947,127 @@ int callPeaks(File out, File log, bool logOpt, bool gzOut,
   return count;
 }
 
+/* int callPeaksM()
+ * Call peaks, using minLen and maxGap parameters.
+ *   Produce output on the fly.
+ *   Return number of peaks.
+ */
+int callPeaksM(File out, File log, bool logOpt, bool gzOut,
+    Chrom* chrom, int chromLen, int n, float pqvalue,
+    bool qvalOpt, int minLen, int maxGap) {
+
+  if (logOpt)
+    printLogHeader(log, gzOut, n, qvalOpt);
+
+  // loop through chroms
+  int count = 0;      // count of peaks
+  for (int i = 0; i < chromLen; i++) {
+    Chrom* chr = chrom + i;
+    if (chr->skip || (qvalOpt && chr->qval == NULL)
+        || (! qvalOpt && chr->pval[n] == NULL) )
+      continue;
+
+    // create indexes into arrays for logging purposes
+    //   (treat/ctrl pileup [if n == 0] and p-value arrays [if n > 0])
+    uint32_t j = 0, k = 0;  // indexes into chr->treat, chr->ctrl
+    uint32_t idx[n];        // indexes into each pval array
+    for (int r = 0; r < n; r++)
+      idx[r] = 0;
+
+    // reset peak variables
+    int64_t peakStart = -1, peakEnd = -1; // ends of potential peak
+    float summitVal = -1.0f;              // summit p/q value
+    uint32_t summitPos = 0;               // distance from peakStart to summit
+    uint32_t summitLen = 0;               // length of summit interval
+    float summitPval = -1.0f, summitQval = -1.0f; // summit p- and q-values
+    float summitFE = -1.0f;               // summit fold enrichment
+
+    // loop through intervals (defined by chr->pval[n])
+    uint32_t start = 0;    // start of interval
+    for (uint32_t m = 0; m < chr->pvalLen[n]; m++) {
+
+      bool sig = false;
+      float val = qvalOpt ? chr->qval->cov[m] : chr->pval[n]->cov[m];
+      if ( val > pqvalue ) {
+
+        // interval reaches significance
+        sig = true;
+        if (peakStart == -1)
+          peakStart = start;  // start new potential peak
+        peakEnd = chr->pval[n]->end[m];  // end of potential peak
+
+        // check if interval is summit for this peak
+        if (val > summitVal) {
+          summitVal = val;
+          if (! n)
+            summitFE = chr->ctrl->cov[k] ?
+              chr->treat->cov[j] / chr->ctrl->cov[k] : FLT_MAX;
+          summitPval = chr->pval[n]->cov[m];
+          summitQval = qvalOpt ? chr->qval->cov[m] : -1.0f;
+          summitPos = (peakEnd + (m ? chr->pval[n]->end[m-1] : 0) ) / 2
+            - peakStart;  // midpoint of interval
+          summitLen = peakEnd - (m ? chr->pval[n]->end[m-1] : 0);
+        } else if (val == summitVal) {
+          // update summitPos only if interval is longer
+          uint32_t len = chr->pval[n]->end[m]
+            - (m ? chr->pval[n]->end[m-1] : 0);
+          if (len > summitLen) {
+            summitPos = (peakEnd + (m ? chr->pval[n]->end[m-1] : 0) ) / 2
+              - peakStart;  // midpoint of interval
+            summitLen = len;
+          }
+        }
+
+      } else {
+
+        // interval does not reach significance
+        if (peakStart != -1 && (val == -1.0f
+            || chr->pval[n]->end[m] - peakEnd > maxGap)) {
+          // determine if prior peak meets length threshold
+          if (peakEnd - peakStart >= minLen) {
+            printPeak(out, gzOut, chr->name, peakStart,
+              peakEnd, count, summitVal, summitFE,
+              summitPval, summitQval, summitPos);
+            count++;
+          }
+          peakStart = -1;     // reset peak start
+          summitVal = -1.0f;  // reset peak summit value
+          summitLen = 0;      // reset peak summit length
+        }
+      }
+
+      // print stats for interval
+      if (logOpt)
+        printLog(log, gzOut, chr, start, n, m, j, k,
+          idx, qvalOpt, sig);
+
+      // update chr->treat and chr->ctrl indexes
+      if (! n) {
+        if (chr->ctrl->end[k] < chr->treat->end[j])
+          k++;
+        else {
+          if (chr->ctrl->end[k] == chr->treat->end[j])
+            k++;
+          j++;
+        }
+      }
+
+      start = chr->pval[n]->end[m];
+    }
+
+    // determine if last peak meets length threshold
+    if (peakStart != -1 && peakEnd - peakStart >= minLen) {
+      printPeak(out, gzOut, chr->name, peakStart,
+        peakEnd, count, summitVal, summitFE,
+        summitPval, summitQval, summitPos);
+      count++;
+    }
+
+  }
+
+  return count;
+}
+
 /* void findPeaks()
  * Control process of finding peaks:
  *   calculating p- and q-values, calling peaks,
@@ -988,9 +1109,16 @@ void findPeaks(File out, File log, bool logOpt, bool gzOut,
     computeQval(chrom, chromLen, genomeLen, *sample - 1);
 
   // identify peaks
-  int count = callPeaks(out, log, logOpt, gzOut, chrom,
-    chromLen, *sample - 1, pqvalue, qvalOpt, minLen,
-    maxGap);
+  int count;
+  if (true) {
+    count = callPeaksM(out, log, logOpt, gzOut, chrom,
+      chromLen, *sample - 1, pqvalue, qvalOpt, minLen,
+      maxGap);
+  } else {
+    count = callPeaks(out, log, logOpt, gzOut, chrom,
+      chromLen, *sample - 1, pqvalue, qvalOpt, minLen,
+      maxGap);
+  }
   if (verbose)
     fprintf(stderr, "Peaks identified: %d\n", count);
 }
