@@ -46,7 +46,7 @@ void usage(void) {
   fprintf(stderr, "  -%c  <file>       Output BED file for reads/fragments/intervals\n", BEDFILE);
   fprintf(stderr, "Filtering options:\n");
   fprintf(stderr, "  -%c  <arg>        Comma-separated list of chromosomes to ignore\n", XCHROM);
-  fprintf(stderr, "  -%c  <file>       Input BED file of genomic regions to ignore\n", XFILE);
+  fprintf(stderr, "  -%c  <file>       Input BED file(s) of genomic regions to ignore\n", XFILE);
   fprintf(stderr, "  -%c  <int>        Minimum MAPQ to keep an alignment (def. 0)\n", MINMAPQ);
   fprintf(stderr, "  -%c  <float>      Keep secondary alignments whose scores are\n", ASDIFF);
   fprintf(stderr, "                     within <float> of the best (def. 0)\n");
@@ -3589,49 +3589,58 @@ bool openRead(char* inFile, File* in) {
 }
 
 /* int loadBED()
- * Load genomic regions to ignore from BED file.
+ * Load genomic regions to ignore from BED file(s).
  *   Return number saved.
  */
 int loadBED(char* xFile, char* line, Bed** xBed) {
-  // open BED file
-  File in;
-  bool gz = openRead(xFile, &in);
 
-  // load BED records
-  int count = 0;
-  while (getLine(line, MAX_SIZE, in, gz) != NULL) {
+  // loop through BED files
+  int count = 0;  // count of intervals saved
+  char* end;
+  char* filename = strtok_r(xFile, COM, &end);
+  while (filename) {
 
-    // parse BED record
-    char* name = strtok(line, TAB);
-    if (name == NULL)
-      exit(error(line, ERRBED));
-    int pos[2];
-    for (int i = 0; i < 2; i++) {
-      char* val = strtok(NULL, i ? TABN : TAB);
-      if (val == NULL)
+    // open BED file
+    File in;
+    bool gz = openRead(filename, &in);
+
+    // load BED records
+    while (getLine(line, MAX_SIZE, in, gz) != NULL) {
+
+      // parse BED record
+      char* name = strtok(line, TAB);
+      if (name == NULL)
         exit(error(line, ERRBED));
-      pos[i] = getInt(val);
-    }
-    if (pos[1] <= pos[0] || pos[0] < 0 || pos[1] < 0) {
-      char* msg = (char*) memalloc(MAX_ALNS);
-      sprintf(msg, "%s, %d - %d", name, pos[0], pos[1]);
-      exit(error(msg, ERRBED));
+      int pos[2];
+      for (int i = 0; i < 2; i++) {
+        char* val = strtok(NULL, i ? TABN : TAB);
+        if (val == NULL)
+          exit(error(line, ERRBED));
+        pos[i] = getInt(val);
+      }
+      if (pos[1] <= pos[0] || pos[0] < 0 || pos[1] < 0) {
+        char* msg = (char*) memalloc(MAX_ALNS);
+        sprintf(msg, "%s, %d - %d", name, pos[0], pos[1]);
+        exit(error(msg, ERRBED));
+      }
+
+      // save info to xBed array
+      *xBed = (Bed*) memrealloc(*xBed, (count + 1) * sizeof(Bed));
+      Bed* b = *xBed + count;
+      b->name = memalloc(1 + strlen(name));
+      strcpy(b->name, name);
+      b->pos[0] = pos[0];
+      b->pos[1] = pos[1];
+      count++;
     }
 
-    // save info to xBed array
-    *xBed = (Bed*) memrealloc(*xBed, (count + 1) * sizeof(Bed));
-    Bed* b = *xBed + count;
-    b->name = memalloc(1 + strlen(name));
-    strcpy(b->name, name);
-    b->pos[0] = pos[0];
-    b->pos[1] = pos[1];
-    count++;
+    // close file
+    if ( (gz && gzclose(in.gzf) != Z_OK)
+        || (! gz && fclose(in.f)) )
+      exit(error(filename, ERRCLOSE));
+
+    filename = strtok_r(NULL, COM, &end);
   }
-
-  // close file
-  if ( (gz && gzclose(in.gzf) != Z_OK)
-      || (! gz && fclose(in.f)) )
-    exit(error(xFile, ERRCLOSE));
 
   return count;
 }
@@ -3846,6 +3855,16 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
     sample++;
   }
 
+  // free 'diff' arrays
+  for (int i = 0; i < chromLen; i++) {
+    Chrom* chr = chrom + i;
+    if (chr->diff) {
+      free(chr->diff->frac);
+      free(chr->diff->cov);
+      free(chr->diff);
+    }
+  }
+
   // open output files
   File out, log;
   openWrite(outFile, &out, gzOut);
@@ -3877,11 +3896,11 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
     Chrom* chr = chrom + i;
     if (! chr->skip) {
       if (chr->bedLen)
-{
-for (int j = 0; j < chr->bedLen; j += 2)
-  fprintf(stderr, "%s, %d - %d\n", chr->name, chr->bed[j], chr->bed[j+1]);
+//{
+//for (int j = 0; j < chr->bedLen; j += 2)
+//  fprintf(stderr, "%s, %d - %d\n", chr->name, chr->bed[j], chr->bed[j+1]);
         free(chr->bed);
-}
+//}
       if (qvalOpt && chr->qval) {
         free(chr->qval->end);
         free(chr->qval->cov);
@@ -3900,11 +3919,6 @@ for (int j = 0; j < chr->bedLen; j += 2)
       free(chr->ctrl->cov);
       free(chr->treat->end);
       free(chr->treat->cov);
-      if (chr->diff) {
-        free(chr->diff->frac);
-        free(chr->diff->cov);
-        free(chr->diff);
-      }
     }
     free(chr->ctrl);
     free(chr->treat);
