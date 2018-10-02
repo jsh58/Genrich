@@ -999,11 +999,13 @@ int callPeaksM(File out, File log, bool logOpt, bool gzOut,
         // check if interval is summit for this peak
         if (val > summitVal) {
           summitVal = val;
-          if (! n)
-            summitFE = chr->ctrl->cov[k] ?
-              chr->treat->cov[j] / chr->ctrl->cov[k] : FLT_MAX;
           summitPval = chr->pval[n]->cov[m];
           summitQval = qvalOpt ? chr->qval->cov[m] : -1.0f;
+          if (n)
+            summitFE = qvalOpt ? summitQval : summitPval;
+          else
+            summitFE = chr->ctrl->cov[k] ?
+              chr->treat->cov[j] / chr->ctrl->cov[k] : FLT_MAX;
           summitPos = (peakEnd + (m ? chr->pval[n]->end[m-1] : 0) ) / 2
             - peakStart;  // midpoint of interval
           summitLen = peakEnd - (m ? chr->pval[n]->end[m-1] : 0);
@@ -1015,6 +1017,7 @@ int callPeaksM(File out, File log, bool logOpt, bool gzOut,
             summitPos = (peakEnd + (m ? chr->pval[n]->end[m-1] : 0) ) / 2
               - peakStart;  // midpoint of interval
             summitLen = len;
+            // assumes summitPval, summitQval, summitFE remain the same
           }
         }
 
@@ -1299,18 +1302,19 @@ void saveConst(Pileup* p, uint32_t* size, uint32_t* mem,
  *   lengths divided by total genome length.
  */
 float calcLambda(Chrom* chrom, int chromLen,
-    double fragLen, uint64_t* genomeLen) {
+    double fragLen) {
+  uint64_t genomeLen = 0;
   for (int i = 0; i < chromLen; i++) {
     Chrom* chr = chrom + i;
     if (! chr->skip && chr->save) {
-      *genomeLen += chr->len;
+      genomeLen += chr->len;
       for (int j = 0; j < chr->bedLen; j += 2)
-        *genomeLen -= chr->bed[j+1] - chr->bed[j];
+        genomeLen -= chr->bed[j+1] - chr->bed[j];
     }
   }
-  if (! *genomeLen)
+  if (! genomeLen)
     exit(error("", ERRGEN));
-  return fragLen / *genomeLen;
+  return fragLen / genomeLen;
 }
 
 /* void saveLambda()
@@ -1363,9 +1367,8 @@ void saveLambda(Chrom* chr, float lambda) {
  *   pileup as the background lambda value.
  */
 void savePileupNoCtrl(Chrom* chrom, int chromLen,
-    double fragLen, uint64_t* genomeLen) {
-  float lambda = calcLambda(chrom, chromLen, fragLen,
-    genomeLen);
+    double fragLen) {
+  float lambda = calcLambda(chrom, chromLen, fragLen);
   for (int i = 0; i < chromLen; i++) {
     Chrom* chr = chrom + i;
     if (chr->skip || ! chr->save)
@@ -1533,11 +1536,10 @@ float calcFactor(Chrom* chrom, int chromLen,
  *   'diff' arrays and background lambda value.
  */
 void savePileupCtrl(Chrom* chrom, int chromLen,
-    double fragLen, uint64_t* genomeLen, bool verbose) {
+    double fragLen, bool verbose) {
 
   // calculate background lambda value
-  float lambda = calcLambda(chrom, chromLen, fragLen,
-    genomeLen);
+  float lambda = calcLambda(chrom, chromLen, fragLen);
 
   // calculate scale factor (treatment / control)
   float factor = calcFactor(chrom, chromLen, fragLen);
@@ -1556,8 +1558,6 @@ void savePileupCtrl(Chrom* chrom, int chromLen,
     // if no read coverage, save constant pileup of lambda
     if (chr->diff == NULL) {
       saveLambda(chr, lambda);
-      //saveConst(chr->ctrl, &chr->ctrlLen, &chr->ctrlMem,
-      //  chr->len, lambda);
       continue;
     }
 
@@ -1665,8 +1665,6 @@ double savePileupTreat(Chrom* chrom, int chromLen) {
       continue;
     }
 
-//fprintf(stderr, "chrom %s\n", chr->name);
-
     // determine number of pileup intervals
     int bedIdx = 0;     // index into chr->bed array
     uint32_t bedPos = bedIdx < chr->bedLen ?
@@ -1747,8 +1745,6 @@ double savePileupTreat(Chrom* chrom, int chromLen) {
         bedPos = bedIdx < chr->bedLen ?
           chr->bed[bedIdx] : chr->len + 1;
       }
-//fprintf(stderr, "  pos %d: %.9f -> %.9f", j, getVal(d->cov[j], d->frac[j]), val);
-//while(!getchar()) ;
 
     }
 
@@ -2669,15 +2665,11 @@ void saveXBed(Chrom* c, int xBedLen, Bed* xBed,
       c->bedLen += 2;
       c->bed = (uint32_t*) memrealloc(c->bed,
         c->bedLen * sizeof(uint32_t));
-      //c->bedEnd = (uint32_t*) memrealloc(c->bedEnd,
-      //  c->bedLen * sizeof(uint32_t));
-      for (int k = c->bedLen - 1; k > j + 1; k--) {
+      // shift intervals ahead
+      for (int k = c->bedLen - 1; k > j + 1; k--)
         c->bed[k] = c->bed[k-2];
-        //c->bedEnd[k] = c->bedEnd[k-1];
-      }
       c->bed[j] = b->pos[0];
       c->bed[j+1] = b->pos[1];
-      //c->bedEnd[j] = b->pos[1];
     }
   }
 
@@ -2701,13 +2693,12 @@ void saveXBed(Chrom* c, int xBedLen, Bed* xBed,
       if (c->bed[i+1] > c->bed[i-1])
         c->bed[i-1] = c->bed[i+1];
       // shift coordinates back one
-      for (int j = i; j < c->bedLen - 2; j++) {
+      for (int j = i; j < c->bedLen - 2; j++)
         c->bed[j] = c->bed[j + 2];
-        //c->bedEnd[j] = c->bedEnd[j + 1];
-      }
       c->bedLen -= 2;
     } else
       i += 2;
+
   }
 }
 
@@ -2766,7 +2757,6 @@ int saveChrom(char* name, uint32_t len, int* chromLen,
 
   // determine if there are regions to be skipped
   c->bed = NULL;
-  //c->bedEnd = NULL;
   c->bedLen = 0;
   if (! skip)
     saveXBed(c, xBedLen, xBed, verbose);
@@ -3757,11 +3747,8 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
     for (int j = 0; j < chromLen; j++)
       (chrom + j)->save = false;
 
-    // initialize variables
-    double fragLen = 0.0;   // total weighted length of all treatment fragments
-    uint64_t genomeLen = 0; // reset genome length (could be dynamic)
-
     // process matching treatment/control files
+    double fragLen = 0.0; // total weighted length of all treatment fragments
     for (int i = 0; i < 2; i++) {
 
       // get treat/ctrl filename
@@ -3774,8 +3761,7 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
           if (verbose)
             fprintf(stderr, "- control file #%d not provided -\n",
               sample + 1);
-          savePileupNoCtrl(chrom, chromLen, fragLen,
-            &genomeLen);
+          savePileupNoCtrl(chrom, chromLen, fragLen);
           break;
         }
       }
@@ -3834,8 +3820,7 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
 
       // save pileup values
       if (i)
-        savePileupCtrl(chrom, chromLen, fragLen,
-          &genomeLen, verbose);
+        savePileupCtrl(chrom, chromLen, fragLen, verbose);
       else
         fragLen = savePileupTreat(chrom, chromLen);
 
@@ -3896,11 +3881,7 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
     Chrom* chr = chrom + i;
     if (! chr->skip) {
       if (chr->bedLen)
-//{
-//for (int j = 0; j < chr->bedLen; j += 2)
-//  fprintf(stderr, "%s, %d - %d\n", chr->name, chr->bed[j], chr->bed[j+1]);
         free(chr->bed);
-//}
       if (qvalOpt && chr->qval) {
         free(chr->qval->end);
         free(chr->qval->cov);
