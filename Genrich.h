@@ -25,8 +25,8 @@
 #define NA          "NA"    // results not available
 
 // default parameter values
-#define DEFQVAL     0.05    // default q-value
-#define DEFMINLEN   100     // minimum length of a peak
+#define DEFQVAL     0.05f   // default q-value
+#define DEFAUC      20.0f   // area under the curve for peak calling
 #define DEFMAXGAP   100     // maximum gap between significant sites
 #define DEFATAC     100     // interval length for ATAC-seq mode
 #define DEFTHR      1       // number of threads
@@ -38,7 +38,7 @@ enum sam { NIL, QNAME, FLAG, RNAME, POS, MAPQ, CIGAR, RNEXT,
 #define NOSCORE     -FLT_MAX  // for alignments with no alignment score(s)
 
 // command-line options
-#define OPTIONS     "ht:c:o:f:k:b:zya:xjd:e:E:m:s:p:q:g:l:n:vV"
+#define OPTIONS     "ht:c:o:f:k:b:zyw:xjd:e:E:m:s:p:q:a:l:g:n:vV"
 #define HELP        'h'
 #define INFILE      't'
 #define CTRLFILE    'c'
@@ -48,7 +48,7 @@ enum sam { NIL, QNAME, FLAG, RNAME, POS, MAPQ, CIGAR, RNEXT,
 #define BEDFILE     'b'
 #define GZOPT       'z'
 #define SINGLEOPT   'y'
-#define EXTENDOPT   'a'
+#define EXTENDOPT   'w'
 #define AVGEXTOPT   'x'
 #define ATACOPT     'j'
 #define ATACLEN     'd'
@@ -58,8 +58,9 @@ enum sam { NIL, QNAME, FLAG, RNAME, POS, MAPQ, CIGAR, RNEXT,
 #define ASDIFF      's'
 #define PVALUE      'p'
 #define QVALUE      'q'
-#define MAXGAP      'g'
+#define MINAUC      'a'
 #define MINLEN      'l'
+#define MAXGAP      'g'
 
 #define THREADS     'n'
 #define VERBOSE     'v'
@@ -81,10 +82,10 @@ enum omp_locks { OUT, UN, LOG, DOVE, ALN, OMP_LOCKS };
 // error messages
 enum errCode { ERRFILE, ERROPEN, ERROPENW, ERRCLOSE,
   ERRMEM, ERRINT, ERRFLOAT, ERRPARAM, ERREXTEND, ERRATAC,
-  ERRPQVAL, ERRASDIFF, ERRMISM, ERRINFO, ERRSAM, ERRCHROM,
-  ERRHEAD, ERRBAM, ERRGEN, ERRTREAT, ERRCHRLEN, ERRCTRL,
-  ERRPOS, ERRSORT, ERRTYPE, ERRAUX, ERRBED,
-  ERRISSUE, ERRALNS,
+  ERRPQVAL, ERRASDIFF, ERRMINAUC, ERRMINLEN, ERRMISM,
+  ERRINFO, ERRSAM, ERRCHROM, ERRHEAD, ERRBAM, ERRGEN,
+  ERRTREAT, ERRCHRLEN, ERRCTRL, ERRPOS, ERRSORT, ERRTYPE,
+  ERRAUX, ERRBED, ERRISSUE, ERRALNS,
   ERRPILE, ERRPVAL, ERRARR, ERRARRC, ERRDF,
   ERRUNGET, ERRGZIP, ERRTHREAD, ERRNAME, ERRCIGAR, DEFERR
 };
@@ -100,6 +101,8 @@ const char* errMsg[] = { "Need input/output files",
   "ATAC-seq interval length must be > 0",
   "p-/q-value must be in (0,1]",
   "Secondary alignment score threshold must be >= 0.0",
+  "Minimum AUC must be >= 0.0",
+  "Minimum peak length must be > 0",
 
   ": mismatch between sequence length and CIGAR",
   ": no sequence information (SEQ or CIGAR)",
@@ -140,7 +143,7 @@ typedef union file {
 
 typedef struct bed {
   uint32_t pos[2];
-  char* name;       // chromosome name
+  char* name;     // chromosome name
 } Bed;
 
 typedef struct hash {
@@ -164,9 +167,7 @@ typedef struct chrom {
   uint32_t len;       // length of chromosome
   bool skip;          // chromosome to be skipped?
   bool save;          // chromosome to be saved? (by sample)
-//  uint32_t* bedSt;    // start coordinate of regions to be ignored
-//  uint32_t* bedEnd;   // end coordinate of regions to be ignored
-  uint32_t* bed;      // coordinates of regions to be ignored
+  uint32_t* bed;      // coordinates (paired) of regions to be ignored
   int bedLen;         // number of regions to be ignored
   Diff* diff;         // arrays for keeping track of pileup changes
   Pileup* treat;      // pileup arrays for treatment sample(s)
