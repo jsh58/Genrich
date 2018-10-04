@@ -995,8 +995,8 @@ int callPeaksM(File out, File log, bool logOpt, bool gzOut,
         sig = true;
         uint32_t len = chr->pval[n]->end[m] - start;
         if (peakStart == -1)
-          peakStart = start;  // start new potential peak
-        peakEnd = chr->pval[n]->end[m];  // end of potential peak
+          peakStart = start;            // start new potential peak
+        peakEnd = chr->pval[n]->end[m]; // end of potential peak (for now)
 
         // check if interval is summit for this peak
         if (val > summitVal) {
@@ -1009,7 +1009,7 @@ int callPeaksM(File out, File log, bool logOpt, bool gzOut,
             summitFE = chr->ctrl->cov[k] ?
               chr->treat->cov[j] / chr->ctrl->cov[k] : FLT_MAX;
           summitPos = (peakEnd + start)/2 - peakStart; // midpoint of interval
-          summitLen = peakEnd - start;
+          summitLen = len;
         } else if (val == summitVal) {
           // update summitPos only if interval is longer
           if (len > summitLen) {
