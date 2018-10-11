@@ -5,7 +5,8 @@
   * [Quick start](#quick)
   * [Software compilation](#compile)
   * [Usage message](#usage)
-* [Peak-calling method](#method)
+* [Attributes](#attributes)
+  * [Peak-calling method](#method)
 * [I/O files and options](#files)
   * [Required files](#required)
   * [Optional files](#optional)
@@ -19,7 +20,7 @@
 
 ## Introduction <a name="intro"></a>
 
-Genrich is a peak-caller for genomic enrichment assays (e.g. ChIP-seq, ATAC-seq).  It analyzes alignment files generated following the assay and produces a peak file.
+Genrich is a peak-caller for genomic enrichment assays (e.g. ChIP-seq, ATAC-seq).  It analyzes alignment files generated following the assay and produces a file detailing peaks of significant enrichment. It incorporates ideas from [`SAMtoBED`](https://github.com/jsh58/ATAC-seq/blob/master/atacseq/SAMtoBED.py), [`removeChrom`](https://github.com/jsh58/ATAC-seq/blob/master/atacseq/removeChrom.py), and [`MACS2 v2.1.2_dev`](https://github.com/jsh58/MACS).
 <br>
 
 ### Quick start <a name="quick"></a>
@@ -27,11 +28,10 @@ Genrich is a peak-caller for genomic enrichment assays (e.g. ChIP-seq, ATAC-seq)
 Given:
 * `sample.bam` (alignment file)
 * `Genrich` (compiled as described [below](#compile))
-<br>
 
 To produce a file listing regions of genomic enrichment:
 ```
-$ ./Genrich  -t sample.bam  -o sample.narrowPeak
+$ ./Genrich  -t sample.bam  -o sample.narrowPeak  -v
 ```
 
 ### Software compilation <a name="compile"></a>
@@ -78,17 +78,31 @@ Other options:
   -v               Option to print status updates/counts to stderr
 ```
 
-## Peak-calling method <a name="method"></a>
+## Attributes <a name="attributes"></a>
 
-(coming soon)
+### Peak-calling method <a name="method"></a>
+
+The basic method used by Genrich to identify peaks is depicted in Figure 1 (with the help of [IGV](http://software.broadinstitute.org/software/igv/)).
 
 <figure>
   <img src="figures/figure1.png" alt="Peak-calling by Genrich" width="800">
-  <figcaption><strong>Figure 1.</strong>  Peak-calling by Genrich, shown with <a href="http://software.broadinstitute.org/software/igv/">IGV</a>.  Genrich infers full fragments from paired-end alignments and creates a treatment "pileup" by summing the fragments that cover each position of the genome.  Without a control sample, the control pileup is equal to the background level.  The <i>p</i>-values are calculated assuming an exponential distribution with the control pileup as the parameter &beta;. etc.</figcaption>
+  <figcaption><strong>Figure 1.  Peak-calling by Genrich.</strong></figcaption>
 </figure>
 <br><br>
 
-[IGV](http://software.broadinstitute.org/software/igv/)
+Here is the process performed by Genrich:
+* Infer full fragments from paired-end alignments and create a treatment "pileup" by summing the fragments that cover each position of the genome.  (Alternative options for interpreting alignments are described [here](#unpaired), and ATAC-seq mode is described [here](#atacseq).)
+* Create a control pileup using the control sample (if available) and background level (additional information about control/background pileup calculation can be found [here](#somewhere)).
+* Calculate *p*-values for each genomic position, as described [here](#somewhere).
+* Convert *p*-values to *q*-values, as described [here](#somewhere).
+* Calculate the "area under the curve" (AUC) for all regions whose -log(*q*) values rise above the statistical threshold (horizontal line in Fig. 1, panel "-log(q)", default 1.301 = -log(0.05)).
+* Combine nearby regions and call peaks whose total AUC is above a threshold (details of peak-calling parameters can be found [here](#peakcalling)).
+
+
+### more info <a name="somewhere"></a>
+The *p*-values are calculated assuming an [exponential distribution](https://en.wikipedia.org/wiki/Exponential_distribution#Alternative_parameterization) with the control/background pileup value as the parameter &beta;.  The exponential distribution has two attributes that make it sui
+* Because it is a continuous probability distribution, fractional treatment pileups can be considered.  This is important for reads/fragments with [multiple alignments](#somewhere).
+* The *p*-value for a treatment value <i>x</i> and background <i>&beta;</i> is <i>e<sup>-x/&beta;</sup></i>.  Therefore, multiplying <i>x</i> and <i>&beta;</i> by the same factor results in the same *p*-value, which implies that the *p*-values are robust to sequencing depth artifacts.
 
 
 ## I/O files and options <a name="files"></a>
@@ -98,17 +112,16 @@ Other options:
 ```
   -t  <file>       Input SAM/BAM file(s) for treatment sample(s)
 ```
-Genrich analyzes alignment files in [SAM/BAM format](https://samtools.github.io/hts-specs/SAMv1.pdf).  SAM files must have a header.
-
-SAM/BAM files for multiple replicates can be specified, comma-separated (or space-separated, in quotes).  Multiple SAM/BAM files for a single replicate should be combined in advance via `samtools merge`.
-
-The SAM/BAM files should be name sorted (via `samtools sort -n`).  As of [Version 0.3](https://github.com/jsh58/Genrich/releases/tag/v0.3), unsorted SAM/BAM files are allowed, but this is likely to change.
+* Genrich analyzes alignment files in [SAM/BAM format](https://samtools.github.io/hts-specs/SAMv1.pdf).  SAM files must have a header.
+* SAM/BAM files for multiple replicates can be specified, comma-separated (or space-separated, in quotes).
+* Multiple SAM/BAM files for a single replicate should be combined in advance via `samtools merge`.
+* The SAM/BAM files should be name sorted (via `samtools sort -n`).  As of [Version 0.3](https://github.com/jsh58/Genrich/releases/tag/v0.3), unsorted SAM/BAM files are allowed, but this is likely to change.
 <br><br>
 
 ```
   -o  <file>       Output peak file (in ENCODE narrowPeak format)
 ```
-As indicated, the output file is in [ENCODE narrowPeak format](https://genome.ucsc.edu/FAQ/FAQformat.html#format12).  Here are additional details of the fields:
+* As indicated, the output file is in [ENCODE narrowPeak format](https://genome.ucsc.edu/FAQ/FAQformat.html#format12).  Here are additional details of the fields:
 <table>
   <tr>
     <td align="center">4. name</td>
@@ -135,6 +148,11 @@ As indicated, the output file is in [ENCODE narrowPeak format](https://genome.uc
     <td>Summit position: the midpoint of the interval reaching the highest significance (the longest interval in case of ties)</td>
   </tr>
 </table>
+* Here is the part of the output file corresponding to the peaks called in Figure 1:
+```
+chr1	1565272	1565335	peak_253	43	.	92.013634	6.853281	4.313010	25
+chr1	1565608	1566028	peak_254	129	.	1473.275024	15.990990	12.873972	259
+```
 <br>
 
 ### Optional files <a name="optional"></a>
@@ -151,7 +169,17 @@ As indicated, the output file is in [ENCODE narrowPeak format](https://genome.uc
 ```
 * With a single replicate, this log file lists treatment/control pileup values, *p*- and *q*-values, and significance (`*`) for each interval.
 * With multiple replicates, this log file lists *p*-values of each replicate, combined *p*-value, *q*-value, and significance for each interval.
-* Note that this file (as well as the `-k` file, below) is called "bedgraph-ish" because it contains multiple `dataValue` fields, which isn't strictly allowed in the [bedGraph format](https://genome.ucsc.edu/goldenpath/help/bedgraph.html).  However, a simple application of `awk` can produce the desired bedgraph files for visualization purposes ([awk reference](http://kirste.userpage.fu-berlin.de/chemnet/use/info/gawk/gawk_7.html#SEC57)).
+* Note that this file (as well as the `-k` file, below) is called "bedgraph-ish" because it contains multiple `dataValue` fields, which isn't strictly allowed in the [bedGraph format](https://genome.ucsc.edu/goldenpath/help/bedgraph.html).  However, a simple application of `awk` can produce the desired bedgraph files for visualization purposes (see this [awk reference](http://kirste.userpage.fu-berlin.de/chemnet/use/info/gawk/gawk_7.html#SEC57) for a guide to printing specific fields of input records).
+* Here is part of the log file corresponding to the beginning of `peak_254` (Fig. 1):
+```
+chr1	1565338	1565605	0.000000	0.190111	0.000000	0.000000
+chr1	1565605	1565608	1.000000	0.190111	2.284427	0.621277
+chr1	1565608	1565618	2.000000	0.190111	4.568854	2.318294	*
+chr1	1565618	1565647	3.000000	0.190111	6.853281	4.313010	*
+chr1	1565647	1565654	2.000000	0.190111	4.568854	2.318294	*
+chr1	1565654	1565720	1.000000	0.190111	2.284427	0.621277
+chr1	1565720	1565733	2.000000	0.190111	4.568854	2.318294	*
+```
 <br><br>
 
 ```
@@ -221,13 +249,13 @@ By default, Genrich analyzes only properly paired alignments and infers the full
 
 <figure>
   <img src="figures/figure2.png" alt="Alignment analysis" width="800">
-  <figcaption><strong>Figure 2.</strong>  Analysis of alignments by Genrich.  The alignment file <code>example.bam</code> has both properly paired alignments (top left) and unpaired "singleton" alignments (top right).  By default, Genrich infers the full fragments from the paired alignments and discards the unpaired alignments.  Unpaired alignments can be kept via <code>-y</code>, <code>-w &lt;int&gt;</code>, or <code>-x</code>, as described above.</figcaption>
+  <figcaption><strong>Figure 2.  Analysis of alignments by Genrich.</strong>  The alignment file <code>example.bam</code> has both properly paired alignments (top left) and unpaired "singleton" alignments (top right).  By default, Genrich infers the full fragments from the paired alignments and discards the unpaired alignments.  Unpaired alignments can be kept via <code>-y</code>, <code>-w &lt;int&gt;</code>, or <code>-x</code>, as described above.</figcaption>
 </figure>
 <br><br>
 
 ## ATAC-seq mode <a name="atacseq"></a>
 
-[ATAC-seq](https://informatics.fas.harvard.edu/atac-seq-guidelines.html#overview) is a method for assessing genomic regions of open chromatin.  Since only the ends of the DNA fragments indicate where the transposase enzyme was able to insert into the chromatin, it may not be optimal to interpret alignments as shown above (Fig. 2).  Genrich has an alternative analysis mode for ATAC-seq in which it will create intervals centered on cut sites (Fig. 3).
+[ATAC-seq](https://informatics.fas.harvard.edu/atac-seq-guidelines.html#overview) is a method for assessing genomic regions of open chromatin.  Since only the ends of the DNA fragments indicate where the transposase enzyme was able to insert into the chromatin, it may not be optimal to interpret alignments as shown above (Fig. 2).  Genrich has an alternative analysis mode for ATAC-seq in which it will create intervals centered on transposase cut sites (Fig. 3).
 
 ```
   -j               Use ATAC-seq mode (def. false)
