@@ -7,6 +7,10 @@
   * [Usage message](#usage)
 * [Attributes](#attributes)
   * [Peak-calling method](#method)
+  * [Genome length calculation](#genomelen)
+  * [Control/background pileup calculation](#pileup)
+  * [*p*-value calculation](#pvalue)
+  * [*q*-value calculation](#qvalue)
 * [I/O files and options](#files)
   * [Required files](#required)
   * [Optional files](#optional)
@@ -82,27 +86,39 @@ Other options:
 
 ### Peak-calling method <a name="method"></a>
 
-The basic method used by Genrich to identify peaks is depicted in Figure 1 (with the help of [IGV](http://software.broadinstitute.org/software/igv/)).
+Here is the basic method used by Genrich to identify peaks (Fig. 1):
+* Infer full fragments from paired-end alignments and create a treatment "pileup" by summing the fragments that cover each position of the genome.  (Alternative options for interpreting alignments are described [here](#unpaired), and ATAC-seq mode is described [here](#atacseq).)
+* Create a control pileup using the control sample (if available) and background level (additional information about control/background pileup calculation can be found [here](#pileup)).
+* Calculate *p*-values for each genomic position, as described [here](#pvalue).
+* Convert *p*-values to *q*-values, as described [here](#qvalue).
+* Calculate the "area under the curve" (AUC) for all regions whose -log(*q*) values rise above the statistical threshold (horizontal line in Fig. 1, panel "-log(q)", default 1.301 = -log<sub>10</sub>(0.05)).
+* Combine nearby regions and call peaks whose total AUC is above a threshold (details of peak-calling parameters can be found [here](#peakcalling)).
 
 <figure>
   <img src="figures/figure1.png" alt="Peak-calling by Genrich" width="800">
-  <figcaption><strong>Figure 1.  Peak-calling by Genrich.</strong></figcaption>
+  <figcaption><strong>Figure 1.  Peak-calling by Genrich.</strong>  Visualization by <a href="http://software.broadinstitute.org/software/igv/">IGV</a>.</figcaption>
 </figure>
 <br><br>
 
-Here is the process performed by Genrich:
-* Infer full fragments from paired-end alignments and create a treatment "pileup" by summing the fragments that cover each position of the genome.  (Alternative options for interpreting alignments are described [here](#unpaired), and ATAC-seq mode is described [here](#atacseq).)
-* Create a control pileup using the control sample (if available) and background level (additional information about control/background pileup calculation can be found [here](#somewhere)).
-* Calculate *p*-values for each genomic position, as described [here](#somewhere).
-* Convert *p*-values to *q*-values, as described [here](#somewhere).
-* Calculate the "area under the curve" (AUC) for all regions whose -log(*q*) values rise above the statistical threshold (horizontal line in Fig. 1, panel "-log(q)", default 1.301 = -log(0.05)).
-* Combine nearby regions and call peaks whose total AUC is above a threshold (details of peak-calling parameters can be found [here](#peakcalling)).
+### Genome length calculation <a name="genomelen"></a>
+
+Genrich computes the genome length as the sum of the lengths of the chromosomes (reference sequences) in the header of the SAM/BAM file.  The length is reduced if the user specifies chromosomes (`-e`) or genomic regions (`-E`) to be ignored, as described [below](#filter).  The calculated length is used for calculating a [background pileup value](#pileup) and [*q*-values](#qvalue).
 
 
-### more info <a name="somewhere"></a>
-The *p*-values are calculated assuming an [exponential distribution](https://en.wikipedia.org/wiki/Exponential_distribution#Alternative_parameterization) with the control/background pileup value as the parameter &beta;.  The exponential distribution has two attributes that make it sui
+### Control/background pileup calculation <a name="pileup"></a>
+
+The background pileup value is calculated by dividing the total sequence information in the treatment sample by the [calculated genome length](#genomelen).  The net control pileup value at a particular genomic position is the maximum of the background pileup value and the pileup of the control sample at that position (if a control sample is specified).  Note that control pileups are scaled to match the treatment, based on the total sequence information in each (the scaling factor is given as part of the verbose [`-v`] output).
+
+
+### *p*-value calculation <a name="pvalue"></a>
+
+The *p*-values are calculated for each base of the genome assuming an [exponential distribution](https://en.wikipedia.org/wiki/Exponential_distribution#Alternative_parameterization) with the control/background pileup value as the parameter *&beta;*.  The exponential distribution has two attributes that make it suitable for this calculation:
 * Because it is a continuous probability distribution, fractional treatment pileups can be considered.  This is important for reads/fragments with [multiple alignments](#somewhere).
-* The *p*-value for a treatment value <i>x</i> and background <i>&beta;</i> is <i>e<sup>-x/&beta;</sup></i>.  Therefore, multiplying <i>x</i> and <i>&beta;</i> by the same factor results in the same *p*-value, which implies that the *p*-values are robust to sequencing depth artifacts.
+* The *p*-value for a treatment value *x* and background *&beta;* is <i>e<sup>-x / &beta;</sup></i>.  Therefore, multiplying *x* and *&beta;* by the same factor results in the same *p*-value, which implies that the *p*-values are robust to sequencing depth artifacts.
+
+### *q*-value calculation <a name="qvalue"></a>
+
+The *q*-value for each base of the genome is calculated from the *p*-value using the [Benjamini-Hochberg procedure](http://www.math.tau.ac.il/~ybenja/MyPapers/benjamini_hochberg1995.pdf).  Note that the [calculated genome length](#genomelen) is used as the number of hypothesis tests (*m*).
 
 
 ## I/O files and options <a name="files"></a>
@@ -148,10 +164,11 @@ The *p*-values are calculated assuming an [exponential distribution](https://en.
     <td>Summit position: the midpoint of the interval reaching the highest significance (the longest interval in case of ties)</td>
   </tr>
 </table>
+
 * Here is the part of the output file corresponding to the peaks called in Figure 1:
 ```
-chr1	1565272	1565335	peak_253	43	.	92.013634	6.853281	4.313010	25
-chr1	1565608	1566028	peak_254	129	.	1473.275024	15.990990	12.873972	259
+chr1    1565272    1565335    peak_253     43    .      92.013634     6.853281     4.313010     25
+chr1    1565608    1566028    peak_254    129    .    1473.275024    15.990990    12.873972    259
 ```
 <br>
 
@@ -172,15 +189,15 @@ chr1	1565608	1566028	peak_254	129	.	1473.275024	15.990990	12.873972	259
 * Note that this file (as well as the `-k` file, below) is called "bedgraph-ish" because it contains multiple `dataValue` fields, which isn't strictly allowed in the [bedGraph format](https://genome.ucsc.edu/goldenpath/help/bedgraph.html).  However, a simple application of `awk` can produce the desired bedgraph files for visualization purposes (see this [awk reference](http://kirste.userpage.fu-berlin.de/chemnet/use/info/gawk/gawk_7.html#SEC57) for a guide to printing specific fields of input records).
 * Here is part of the log file corresponding to the beginning of `peak_254` (Fig. 1):
 ```
-chr1	1565338	1565605	0.000000	0.190111	0.000000	0.000000
-chr1	1565605	1565608	1.000000	0.190111	2.284427	0.621277
-chr1	1565608	1565618	2.000000	0.190111	4.568854	2.318294	*
-chr1	1565618	1565647	3.000000	0.190111	6.853281	4.313010	*
-chr1	1565647	1565654	2.000000	0.190111	4.568854	2.318294	*
-chr1	1565654	1565720	1.000000	0.190111	2.284427	0.621277
-chr1	1565720	1565733	2.000000	0.190111	4.568854	2.318294	*
+chr1    1565338    1565605    0.000000    0.190111    0.000000    0.000000
+chr1    1565605    1565608    1.000000    0.190111    2.284427    0.621277
+chr1    1565608    1565618    2.000000    0.190111    4.568854    2.318294    *
+chr1    1565618    1565647    3.000000    0.190111    6.853281    4.313010    *
+chr1    1565647    1565654    2.000000    0.190111    4.568854    2.318294    *
+chr1    1565654    1565720    1.000000    0.190111    2.284427    0.621277
+chr1    1565720    1565733    2.000000    0.190111    4.568854    2.318294    *
 ```
-<br><br>
+<br>
 
 ```
   -k  <file>       Output bedgraph-ish file for pileups and p-values
@@ -199,19 +216,19 @@ chr1	1565720	1565733	2.000000	0.190111	4.568854	2.318294	*
 ```
   -e  <arg>        Comma-separated list of chromosomes to ignore
 ```
-* All alignments to the given list of chromosomes (reference sequences) will be ignored.  The alignments' lengths will not factor into the total sequence information calculation, nor to the average fragment length calculation (`-x`), and the alignments will not be printed to the `-b` file.
+* All alignments to the given list of chromosomes (reference sequences) will be ignored.  The alignments' lengths will not factor into the [total sequence information calculation](#pileup), nor to the average fragment length calculation (`-x`), and the alignments will not be printed to the `-b` file.
 * For reads/fragments with multiple alignments, the scores of alignments to `-e` chromosomes **will** be considered for comparison purposes.
-* The lengths of the `-e` chromosomes will be subtracted from the total genome length calculated by the program.
+* The lengths of the `-e` chromosomes will be subtracted from the [total genome length](#genomelen) calculated by the program.
 <br><br>
 
 ```
   -E  <file>       Input BED file(s) of genomic regions to ignore
 ```
-* All alignments, or portions of alignments, that lie within the given genomic regions will be ignored.  The alignments' lengths (within an ignored region) will not factor into the total sequence information calculation, but the full fragment length **will** be counted for the average fragment length calculation (`-x`), and the full fragment **will** be listed in the `-b` file.
+* All alignments, or portions of alignments, that lie within the given genomic regions will be ignored.  The alignments' lengths (within an ignored region) will not factor into the [total sequence information calculation](#pileup), but the full fragment length *will* be counted for the average fragment length calculation (`-x`), and the full fragment *will* be listed in the `-b` file.
 * The regions will affect peak calls, such that no peak may extend into or around an excluded region.
 * In the output log files (`-f`, `-k`), excluded regions will have treatment/control pileup values of `0.0` and *p*-/*q*-values of `NA`.
 * Multiple BED files can be specified, comma-separated (or space-separated, in quotes).
-* The regions' lengths will be subtracted from the total genome length calculated by the program.
+* The regions' lengths will be subtracted from the [total genome length](#genomelen) calculated by the program.
 * The accessory script [`findNs.py`](https://github.com/jsh58/Genrich/blob/master/findNs.py) will produce a BED file of 'N' homopolymers in a fasta file (e.g. a reference genome).  Its output should be given to Genrich via `-E`.
 <br><br>
 
@@ -248,7 +265,7 @@ By default, Genrich analyzes only properly paired alignments and infers the full
 * `-x`: unpaired alignments will be kept, with their lengths changed to the average length of properly paired alignments (excluding those aligning to skipped chromosomes [`-e`])
 
 <figure>
-  <img src="figures/figure2.png" alt="Alignment analysis" width="800">
+  <img src="figures/figure2.png" alt="Alignment analysis" width="700">
   <figcaption><strong>Figure 2.  Analysis of alignments by Genrich.</strong>  The alignment file <code>example.bam</code> has both properly paired alignments (top left) and unpaired "singleton" alignments (top right).  By default, Genrich infers the full fragments from the paired alignments and discards the unpaired alignments.  Unpaired alignments can be kept via <code>-y</code>, <code>-w &lt;int&gt;</code>, or <code>-x</code>, as described above.</figcaption>
 </figure>
 <br><br>
@@ -263,7 +280,7 @@ By default, Genrich analyzes only properly paired alignments and infers the full
 ```
 
 <figure>
-  <img src="figures/figure3.png" alt="ATAC-seq mode" width="800">
+  <img src="figures/figure3.png" alt="ATAC-seq mode" width="700">
   <figcaption><strong>Figure 3.</strong>  ATAC-seq mode of Genrich.  Genrich analyzes intervals centered on cut sites (both ends of full fragments, as well as the 5' ends of unpaired alignments if <code>-y</code> is set).  The lengths of the intervals can be changed from the default of <code>-d 100</code>.</figcaption>
 </figure>
 <br><br>
@@ -276,15 +293,14 @@ Note that unpaired alignments can be analyzed with `-y`, though only one interva
 
 ```
   -q  <float>      Maximum q-value (FDR-adjusted p-value; def. 0.05)
+  -p  <float>      Maximum p-value (overrides -q if set)
 ```
 * This is the threshold below which a base is considered significantly enriched in the treatment sample(s) vs. the control/background.
-* The *q*-value for each base of the genome is calculated from the *p*-value using the [Benjamini-Hochberg procedure](http://www.math.tau.ac.il/~ybenja/MyPapers/benjamini_hochberg1995.pdf).  Note that the calculated genome length is used as the number of hypothesis tests, and it does not include ignored chromosomes (`-e`) or regions (`-E`).
+* When `-p` is selected, *q*-values will not be calculated (reported as -1).
 <br><br>
 
 ```
-  -p  <float>      Maximum p-value (overrides -q if set)
 ```
-* When selected, the chosen threshold will be used to judge significance based on *p*-values, and *q*-values will not be calculated (reported as -1).
 <br><br>
 
 ```
@@ -327,6 +343,25 @@ Other options:
   -h/--help        Print the usage message and exit
   -V/--version     Print the version and exit
 ```
+* Here is the verbose output for the sample shown above (Fig. 1):
+```
+$ ./Genrich  -t SRR5427884.bam  -o SRR5427884.narrowPeak  -f SRR5427884.log  -v
+Processing treatment file #1: SRR5427884.bam
+  BAM records analyzed:    6633684
+    Paired alignments:     6633684
+    Unpaired alignments:         0
+  Fragments analyzed:      3316842
+    Full fragments:        3316842
+      (avg. length: 174.0bp)
+- control file #1 not provided -
+Peak-calling parameters:
+  Genome length: 3036303846bp
+  Significance threshold: -log(q) > 1.301
+  Min. AUC: 20.000
+  Max. gap between sites: 100bp
+Peaks identified: 416514
+```
+
 <br>
 
 ## Contact <a name="contact"></a>
