@@ -7,6 +7,7 @@
   * [Usage message](#usage)
 * [Attributes](#attributes)
   * [Peak-calling method](#method)
+  * [Alignment parsing](#alignment)
   * [Multiple replicates](#replicate)
   * [Multimapping reads](#multimap)
   * [Genome length calculation](#genomelen)
@@ -26,8 +27,8 @@
 
 ## Introduction <a name="intro"></a>
 
-Genrich is a peak-caller for genomic enrichment assays (e.g. ChIP-seq, ATAC-seq).  It analyzes alignment files generated following the assay and produces a file detailing peaks of significant enrichment. It incorporates ideas from [`SAMtoBED`](https://github.com/jsh58/ATAC-seq/blob/master/atacseq/SAMtoBED.py), [`removeChrom`](https://github.com/jsh58/ATAC-seq/blob/master/atacseq/removeChrom.py), and [`MACS2 v2.1.2_dev`](https://github.com/jsh58/MACS).
-<br>
+Genrich is a peak-caller for genomic enrichment assays (e.g. ChIP-seq, ATAC-seq).  It analyzes alignment files generated following the assay and produces a file detailing peaks of significant enrichment.
+
 
 ### Quick start <a name="quick"></a>
 
@@ -47,7 +48,7 @@ The software can be downloaded from [GitHub](https://github.com/jsh58/Genrich).
 A Makefile is provided for compilation with [GCC](https://gcc.gnu.org/releases.html), and [zlib](http://zlib.net) is also required.  The program has been tested after compilation with GCC 5.4.0 and zlib 1.2.8.
 
 To compile, run `make` in the folder in which the software was downloaded.  The executable `Genrich` should be produced.
-<br>
+
 
 ### Usage message <a name="usage"></a>
 
@@ -88,12 +89,12 @@ Other options:
 
 ### Peak-calling method <a name="method"></a>
 
-Here is the basic method used by Genrich to identify peaks (Fig. 1):
-* Infer full fragments from paired-end alignments and create a treatment "pileup" by summing the fragments that cover each position of the genome.  (Alternative options for interpreting alignments are described [here](#unpaired), and ATAC-seq mode is described [here](#atacseq).)
+Here is an overview of the method used by Genrich to identify peaks (Fig. 1):
+* Parse alignments for the treatment sample and create a treatment "pileup" by counting the DNA fragments that cover each position of the genome (additional information about alignment parsing can be found [here](#alignment)).
 * Create a control pileup using the control sample (if available) and background level (additional information about control/background pileup calculation can be found [here](#pileup)).
 * Calculate *p*-values for each genomic position, as described [here](#pvalue).
 * Convert *p*-values to *q*-values, as described [here](#qvalue).
-* Calculate the "area under the curve" (AUC) for all regions whose -log(*q*) values rise above the statistical threshold (horizontal line in Fig. 1, panel "-log(q)", default 1.301 = -log<sub>10</sub>(0.05)).
+* Calculate the "area under the curve" (AUC) for all regions whose -log(*q*) values rise above the statistical threshold.
 * Combine nearby regions and call peaks whose total AUC is above a threshold (details of peak-calling parameters can be found [here](#peakcalling)).
 
 <figure>
@@ -102,9 +103,16 @@ Here is the basic method used by Genrich to identify peaks (Fig. 1):
 </figure>
 <br><br>
 
+### Alignment parsing <a name="alignment"></a>
+
+Genrich analyzes paired-end reads aligned to a reference genome.  It correctly infers full fragments as spanning between the 5' ends of two properly paired alignments.  By default, it does not consider unpaired ("singleton") alignments, although there are three options for keeping such alignments, as described [here](#unpaired).
+
+An alternative analysis mode for ATAC-seq is also provided by Genrich, as described [here](#atacseq).
+
+
 ### Multiple replicates <a name="replicate"></a>
 
-Genrich calls peaks for multiple replicates in a single step.  First, it analyzes the replicates separately, with [*p*-values calculated](#pvalue) for each. At each genomic position, the multiple replicates' *p*-values are then combined by [Fisher's method](https://en.wikipedia.org/wiki/Fisher's_method#Application_to_independent_test_statistics).  The combined *p*-values are [converted to *q*-values](#qvalue), and peaks are called.  This obviates the need for [IDR](https://www.encodeproject.org/software/idr/) (you're welcome!).
+Genrich calls peaks for multiple replicates collectively.  First, it analyzes the replicates separately, with [*p*-values calculated](#pvalue) for each. At each genomic position, the multiple replicates' *p*-values are then combined by [Fisher's method](https://en.wikipedia.org/wiki/Fisher's_method#Application_to_independent_test_statistics).  The combined *p*-values are [converted to *q*-values](#qvalue), and peaks are called.  This obviates the need for [IDR](https://www.encodeproject.org/software/idr/) (you're welcome!).
 
 
 ### Multimapping reads <a name="multimap"></a>
@@ -262,7 +270,7 @@ chr1    1565720    1565733    2.000000    0.190111    4.568854    2.318294    *
 ```
   -s  <float>      Keep sec alns with AS >= bestAS - <float> (def. 0)
 ```
-* Genrich analyzes all secondary alignments, but, by default, it keeps only the alignments whose scores are equal to the best score for the read/fragment.  Setting a value such as `-s 20` will cause Genrich also to keep secondary alignments whose scores are within 20 of the best.
+* Genrich analyzes all secondary alignments, but, by default, it keeps only the alignments whose [scores](http://bowtie-bio.sourceforge.net/bowtie2/manual.shtml#scores-higher-more-similar) are equal to the best score for the read/fragment.  Setting a value such as `-s 20` will cause Genrich also to keep secondary alignments whose scores are within 20 of the best.
 * The SAM/BAM should have alignment scores under the extra field `AS`.  If not, all alignments will be considered equivalent.
 * Each of the `N` alignments for a read/fragment is counted as `1/N` for the pileup.
 * As described [above](#multimap), a maximum of 10 alignments per read is analyzed.  Reads with more than 10 alignments will be subsampled based on the best alignment scores; in the case of ties, alignments appearing first in the SAM/BAM are favored.
@@ -313,7 +321,7 @@ Note that unpaired alignments can be analyzed with `-y`, though only one interva
   -q  <float>      Maximum q-value (FDR-adjusted p-value; def. 0.05)
   -p  <float>      Maximum p-value (overrides -q if set)
 ```
-* This is the threshold below which a base is considered significantly enriched in the treatment sample(s) vs. the control/background.
+* This is the threshold below which a base is considered significantly enriched in the treatment sample(s) vs. the control/background.  Note that the significance value will be automatically converted to a -log<sub>10</sub> scale.
 * When `-p` is selected, *q*-values will not be calculated (reported as -1).
 <br><br>
 
