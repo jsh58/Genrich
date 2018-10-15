@@ -20,7 +20,7 @@
 * [Filtering options](#filter)
   * [Unpaired alignments](#unpaired)
 * [ATAC-seq mode](#atacseq)
-* [Peak calling parameters](#peakcalling)
+* [Peak-calling parameters](#peakcalling)
 * [Miscellaneous](#misc)
 * [Contact](#contact)
 <br><br>
@@ -155,9 +155,10 @@ The *q*-value for each base of the genome is calculated from the *p*-value using
   -t  <file>       Input SAM/BAM file(s) for treatment sample(s)
 ```
 * Genrich analyzes alignment files in [SAM/BAM format](https://samtools.github.io/hts-specs/SAMv1.pdf).  SAM files must have a header.
-* SAM/BAM files for multiple replicates can be specified, comma-separated (or space-separated, in quotes).
+* SAM/BAM files for [multiple replicates](#replicate) can be specified, comma-separated (or space-separated, in quotes).
 * Multiple SAM/BAM files for a single replicate should be combined in advance via `samtools merge`.
 * The SAM/BAM files should be name sorted (via `samtools sort -n`).  As of [Version 0.3](https://github.com/jsh58/Genrich/releases/tag/v0.3), unsorted SAM/BAM files are allowed, but this is likely to change.
+* Genrich will read from `stdin` with `-t -`.
 <br><br>
 
 ```
@@ -196,6 +197,7 @@ The *q*-value for each base of the genome is calculated from the *p*-value using
 chr1    1565272    1565335    peak_253     43    .      92.013634     6.853281     4.313010     25
 chr1    1565608    1566028    peak_254    129    .    1473.275024    15.990990    12.873972    259
 ```
+* Genrich will write to `stdout` with `-o -`.
 <br>
 
 ### Optional files <a name="optional"></a>
@@ -229,6 +231,7 @@ chr1    1565720    1565733    2.000000    0.190111    4.568854    2.318294    *
   -k  <file>       Output bedgraph-ish file for pileups and p-values
 ```
 * For each replicate, sequentially, this file lists a header line (`# treatment file: <name>; control file: <name>`), followed by treatment/control pileups and a *p*-value for each interval. This is the way to examine pileup values with multiple replicates, since the `-f` file will not supply them.
+* Note that the maximum difference in pileup values from one genomic position to the next is +32767, and the minimum difference is -32768.  Warning messages about "overflow" or "underflow" are due to this limitation.
 <br><br>
 
 ```
@@ -273,7 +276,7 @@ chr1    1565720    1565733    2.000000    0.190111    4.568854    2.318294    *
 * Genrich analyzes all secondary alignments, but, by default, it keeps only the alignments whose [scores](http://bowtie-bio.sourceforge.net/bowtie2/manual.shtml#scores-higher-more-similar) are equal to the best score for the read/fragment.  Setting a value such as `-s 20` will cause Genrich also to keep secondary alignments whose scores are within 20 of the best.
 * The SAM/BAM should have alignment scores under the extra field `AS`.  If not, all alignments will be considered equivalent.
 * Each of the `N` alignments for a read/fragment is counted as `1/N` for the pileup.
-* As described [above](#multimap), a maximum of 10 alignments per read is analyzed.  Reads with more than 10 alignments will be subsampled based on the best alignment scores; in the case of ties, alignments appearing first in the SAM/BAM are favored.
+* As described [above](#multimap), a maximum of 10 alignments per read is analyzed.  Reads with more than 10 alignments within the `-s` threshold will be subsampled based on the best alignment scores; in the case of ties, alignments appearing first in the SAM/BAM are favored.  Also, if a read has more than 128 alignments in the SAM/BAM, only the first 128 are considered (and a warning message will be printed).
 * The alignment score for a fragment (pair of reads) is equal to the sum of the reads' individual scores.
 * Properly paired alignments take precedence over singleton alignments, regardless of the alignment scores.
 <br><br>
@@ -311,11 +314,13 @@ By default, Genrich analyzes only properly paired alignments and infers the full
 </figure>
 <br><br>
 
-Note that unpaired alignments can be analyzed with `-y`, though only one interval, centered on the read's 5' end, will be inferred.  Both `-w <int>` and `-x` are equivalent to `-y` in ATAC-seq mode.
+Unpaired alignments can be analyzed with `-y`, though only one interval, centered on the read's 5' end, will be inferred.  Both `-w <int>` and `-x` are equivalent to `-y` in ATAC-seq mode.
+
+The remainder of the peak-calling process (calculating pileups and significance values) is identical to the [default analysis mode](#method).  Note that the interval lengths (*not* the fragment lengths) are used to sum the total sequence information in the calculation of a [background pileup value](#pileup).
 <br><br>
 
 
-## Peak calling parameters<a name="peakcalling"></a>
+## Peak-calling parameters<a name="peakcalling"></a>
 
 ```
   -q  <float>      Maximum q-value (FDR-adjusted p-value; def. 0.05)
