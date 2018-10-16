@@ -128,7 +128,7 @@ Genrich analyzes reads/fragments that map to multiple locations in the genome by
 
 ### Genome length calculation <a name="genomelen"></a>
 
-Genrich computes the genome length as the sum of the lengths of the chromosomes (reference sequences) in the header of the SAM/BAM file.  The length is reduced if the user specifies chromosomes (`-e`) or genomic regions (`-E`) to be ignored, as described [below](#filter).  The calculated length is used for calculating a [background pileup value](#pileup) and [*q*-values](#qvalue).
+Genrich computes the genome length as the sum of the lengths of the chromosomes (reference sequences) in the header of the SAM/BAM file.  The length is reduced if the user specifies chromosomes (`-e`) or genomic regions (`-E`) to be ignored, as described [below](#filter).  The calculated length is used for computing a [background pileup value](#pileup) and [*q*-values](#qvalue).
 
 
 ### Control/background pileup calculation <a name="pileup"></a>
@@ -199,7 +199,7 @@ chr1    1565272    1565335    peak_253     43    .      92.013634     6.853281  
 chr1    1565608    1566028    peak_254    129    .    1473.275024    15.990990    12.873972    259
 ```
 * Genrich will write to `stdout` with `-o -`.
-
+<br>
 
 ### Optional files <a name="optional"></a>
 
@@ -358,12 +358,6 @@ The remainder of the peak-calling process (calculating pileups and significance 
 * When selected, all output files will be gzip-compressed.
 <br><br>
 
-```
-  -n  <int>        Number of threads to use (def. 1)
-```
-(not currently implemented)
-<br><br>
-
 Other options:
 ```
   -v/--verbose     Option to print status updates/counts to stderr
@@ -398,9 +392,9 @@ In verbose mode, Genrich may print one or more warnings to `stderr`:
 * `BED interval ignored - located off end of reference`: An excluded BED interval (`-E`) whose start coordinate is past the end of the reference sequence will be ignored.  One should ensure that the genome version that produced the BED intervals matches that of the SAM/BAM.
 * `BED interval extends past end of ref. - edited to <loc>`: An excluded BED interval (`-E`) whose end coordinate is past the end of the reference sequence will be adjusted as indicated.  Again, one should ensure that the genome version that produced the BED intervals matches that of the SAM/BAM.
 * `No paired alignments to calculate avg frag length -- Printing singletons "as is"`: When there are *no* properly paired alignments and the [`-x` average extension option](#unpaired) is selected, the unpaired alignments will be printed as they appear in the SAM/BAM.
-* `Read N, alignment at <loc> skipped due to overflow`: The maximum difference in pileup values from one genomic position to the next is +32767, and additional reads will be skipped due to this limitation.
-* `Read N, alignment at <loc> skipped due to underflow`: The minimum difference in pileup values from one genomic position to the next is -32768, and additional reads will be skipped due to this limitation.
-* `Read N has more than 128 alignments`: As described [above](#multimap), a maximum of 10 alignments per read is analyzed.  In addition, if a read has more than 128 alignments in the SAM/BAM, only the first 128 are considered.  Removing PCR duplicates may help reduce this issue.
+* `Read N, alignment at <loc> skipped due to overflow`: The maximum difference in pileup values from one genomic position to the next is +32767, and additional reads will be skipped due to this limitation.  Removing PCR duplicates may help reduce this issue.
+* `Read N, alignment at <loc> skipped due to underflow`: The minimum difference in pileup values from one genomic position to the next is -32768, and additional reads will be skipped due to this limitation.  Removing PCR duplicates may help reduce this issue.
+* `Read N has more than 128 alignments`: If a read has more than 128 alignments in the SAM/BAM, only the first 128 are considered.  As described [above](#sparam), the best 10 alignments are ultimately analyzed by Genrich.
 
 
 ## Contact <a name="contact"></a>
