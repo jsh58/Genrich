@@ -22,6 +22,7 @@
 * [ATAC-seq mode](#atacseq)
 * [Peak-calling parameters](#peakcalling)
 * [Miscellaneous](#misc)
+  * [Warning messages](#warning)
 * [Contact](#contact)
 <br><br>
 
@@ -198,7 +199,7 @@ chr1    1565272    1565335    peak_253     43    .      92.013634     6.853281  
 chr1    1565608    1566028    peak_254    129    .    1473.275024    15.990990    12.873972    259
 ```
 * Genrich will write to `stdout` with `-o -`.
-<br>
+
 
 ### Optional files <a name="optional"></a>
 
@@ -231,7 +232,6 @@ chr1    1565720    1565733    2.000000    0.190111    4.568854    2.318294    *
   -k  <file>       Output bedgraph-ish file for pileups and p-values
 ```
 * For each replicate, sequentially, this file lists a header line (`# treatment file: <name>; control file: <name>`), followed by treatment/control pileups and a *p*-value for each interval. This is the way to examine pileup values with multiple replicates, since the `-f` file will not supply them.
-* Note that the maximum difference in pileup values from one genomic position to the next is +32767, and the minimum difference is -32768.  Warning messages about "overflow" or "underflow" are due to this limitation.
 <br><br>
 
 ```
@@ -253,10 +253,10 @@ chr1    1565720    1565733    2.000000    0.190111    4.568854    2.318294    *
 ```
   -E  <file>       Input BED file(s) of genomic regions to ignore
 ```
-* All alignments, or portions of alignments, that lie within the given genomic regions will be ignored.  The alignments' lengths (within an ignored region) will not factor into the [total sequence information calculation](#pileup), but the full fragment lengths *will* be counted for the average fragment length calculation (`-x`), and the full fragments *will* be listed in the `-b` file.
+* All alignments, or portions of alignments, that lie within the given genomic regions will be ignored.  The alignments' lengths (within an ignored region) will not factor into the [total sequence information calculation](#pileup).  However, the full fragment lengths *will* be counted for the average fragment length calculation (`-x`), and the full fragments *will* be listed in the `-b` file.
 * The regions will affect peak calls, such that no peak may extend into or around an excluded region.
 * In the output log files (`-f`, `-k`), excluded regions will have treatment/control pileup values of `0.0` and *p*-/*q*-values of `NA`.
-* Multiple BED files can be specified, comma-separated (or space-separated, in quotes).
+* Multiple BED files can be specified, comma-separated (or space-separated, in quotes).  Overlapping BED intervals will be merged appropriately.
 * The regions' lengths will be subtracted from the [total genome length](#genomelen) calculated by the program.
 * Genomic regions to which reads typically do not align uniquely can be specified, but one should consider taking advantage of Genrich's ability to [analyze multimapping reads](#multimap).
 * The accessory script [`findNs.py`](https://github.com/jsh58/Genrich/blob/master/findNs.py) will produce a BED file of 'N' homopolymers in a fasta file (e.g. a reference genome).  Its output should be given to Genrich via `-E`.
@@ -276,7 +276,7 @@ chr1    1565720    1565733    2.000000    0.190111    4.568854    2.318294    *
 * Genrich analyzes all secondary alignments, but, by default, it keeps only the alignments whose [scores](http://bowtie-bio.sourceforge.net/bowtie2/manual.shtml#scores-higher-more-similar) are equal to the best score for the read/fragment.  Setting a value such as `-s 20` will cause Genrich also to keep secondary alignments whose scores are within 20 of the best.
 * The SAM/BAM should have alignment scores under the extra field `AS`.  If not, all alignments will be considered equivalent.
 * Each of the `N` alignments for a read/fragment is counted as `1/N` for the pileup.
-* As described [above](#multimap), a maximum of 10 alignments per read is analyzed.  Reads with more than 10 alignments within the `-s` threshold will be subsampled based on the best alignment scores; in the case of ties, alignments appearing first in the SAM/BAM are favored.  Also, if a read has more than 128 alignments in the SAM/BAM, only the first 128 are considered (and a warning message will be printed).
+* As described [above](#multimap), a maximum of 10 alignments per read is analyzed.  Reads with more than 10 alignments within the `-s` threshold will be subsampled based on the best alignment scores; in the case of ties, alignments appearing first in the SAM/BAM are favored.
 * The alignment score for a fragment (pair of reads) is equal to the sum of the reads' individual scores.
 * Properly paired alignments take precedence over singleton alignments, regardless of the alignment scores.
 <br><br>
@@ -316,7 +316,7 @@ By default, Genrich analyzes only properly paired alignments and infers the full
 
 Unpaired alignments can be analyzed with `-y`, though only one interval, centered on the read's 5' end, will be inferred.  Both `-w <int>` and `-x` are equivalent to `-y` in ATAC-seq mode.
 
-The remainder of the peak-calling process (calculating pileups and significance values) is identical to the [default analysis mode](#method).  Note that the interval lengths (*not* the fragment lengths) are used to sum the total sequence information in the calculation of a [background pileup value](#pileup).
+The remainder of the peak-calling process (calculating pileups and significance values) is identical to the [default analysis mode](#method).  Note that the interval lengths (*not* the fragment lengths) are used to sum the total sequence information for the calculation of [control/background pileup values](#pileup).
 <br><br>
 
 
@@ -340,7 +340,7 @@ The remainder of the peak-calling process (calculating pileups and significance 
 ```
   -l  <int>        Minimum length of a peak (overrides -a if set)
 ```
-* This option overrides the default peak-calling method (`-a`) and instead requires that peaks be at least the specified minimum length.  Any potential peaks whose lengths are below that threshold are eliminated, regardless of the significance.
+* This option overrides the default peak-calling method (`-a`) and instead requires that peaks have at least the specified minimum length.  Any potential peaks whose lengths are below that threshold are eliminated, regardless of the significance.
 <br><br>
 
 ```
@@ -388,6 +388,20 @@ Peak-calling parameters:
   Max. gap between sites: 100bp
 Peaks identified: 416514
 ```
+
+### Warning messages <a name="warning"></a>
+
+In verbose mode, Genrich may print one or more warnings to `stderr`:
+* `Read N prevented from extending below 0 on <chrom>`: This may occur due to extending unpaired alignments (`-w <int>`, `-x`) or in ATAC-seq mode (`-j`).
+* `Read N prevented from extending past <int> on <chrom>`: This also may occur due to extending unpaired alignments (`-w <int>`, `-x`) or in ATAC-seq mode (`-j`).
+* `Large scaling may mask true signal`: This is printed if the [scaling factor](#pileup) for the control pileup is greater than 5.
+* `BED interval ignored - located off end of reference`: An excluded BED interval (`-E`) whose start coordinate is past the end of the reference sequence will be ignored.  One should ensure that the genome version that produced the BED intervals matches that of the SAM/BAM.
+* `BED interval extends past end of ref. - edited to <loc>`: An excluded BED interval (`-E`) whose end coordinate is past the end of the reference sequence will be adjusted as indicated.  Again, one should ensure that the genome version that produced the BED intervals matches that of the SAM/BAM.
+* `No paired alignments to calculate avg frag length -- Printing singletons "as is"`: When there are *no* properly paired alignments and the [`-x` average extension option](#unpaired) is selected, the unpaired alignments will be printed as they appear in the SAM/BAM.
+* `Read N, alignment at <loc> skipped due to overflow`: The maximum difference in pileup values from one genomic position to the next is +32767, and additional reads will be skipped due to this limitation.
+* `Read N, alignment at <loc> skipped due to underflow`: The minimum difference in pileup values from one genomic position to the next is -32768, and additional reads will be skipped due to this limitation.
+* `Read N has more than 128 alignments`: As described [above](#multimap), a maximum of 10 alignments per read is analyzed.  In addition, if a read has more than 128 alignments in the SAM/BAM, only the first 128 are considered.  Removing PCR duplicates may help reduce this issue.
+
 
 ## Contact <a name="contact"></a>
 
