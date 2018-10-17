@@ -4,9 +4,9 @@
 
   Finding sites of enrichment from genome-wide assays.
 
-  Version 0.3
+  Version 0.4
 */
-#define VERSION     "0.3"
+#define VERSION     "0.4"
 
 // macros
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
@@ -23,13 +23,13 @@
 #define COL         ":"     // separator for SAM optional fields (TAG:TYPE:VALUE)
 #define COM         ", "    // separator for input file names / ref. names
 #define NA          "NA"    // results not available
+#define GZEXT       ".gz"   // extension for gzip-compressed files
 
 // default parameter values
 #define DEFQVAL     0.05f   // default q-value
 #define DEFAUC      20.0f   // area under the curve for peak calling
 #define DEFMAXGAP   100     // maximum gap between significant sites
 #define DEFATAC     100     // interval length for ATAC-seq mode
-#define DEFTHR      1       // number of threads
 
 // SAM fields
 enum sam { NIL, QNAME, FLAG, RNAME, POS, MAPQ, CIGAR, RNEXT,
@@ -38,7 +38,7 @@ enum sam { NIL, QNAME, FLAG, RNAME, POS, MAPQ, CIGAR, RNEXT,
 #define NOSCORE     -FLT_MAX  // for alignments with no alignment score(s)
 
 // command-line options
-#define OPTIONS     "ht:c:o:f:k:b:zyw:xjd:e:E:m:s:p:q:a:l:g:n:vV"
+#define OPTIONS     "ht:c:o:f:k:b:zyw:xjd:e:E:m:s:p:q:a:l:g:vV"
 #define HELP        'h'
 #define INFILE      't'
 #define CTRLFILE    'c'
@@ -61,8 +61,6 @@ enum sam { NIL, QNAME, FLAG, RNAME, POS, MAPQ, CIGAR, RNEXT,
 #define MINAUC      'a'
 #define MINLEN      'l'
 #define MAXGAP      'g'
-
-#define THREADS     'n'
 #define VERBOSE     'v'
 #define VERSOPT     'V'
 
@@ -73,21 +71,15 @@ static struct option long_options[] = {
   {0, 0, 0, 0}
 };
 
-// extensions for output files
-#define GZEXT       ".gz"   // for gzip compression
-
-// OMP locks
-enum omp_locks { OUT, UN, LOG, DOVE, ALN, OMP_LOCKS };
-
 // error messages
 enum errCode { ERRFILE, ERROPEN, ERROPENW, ERRCLOSE,
   ERRMEM, ERRINT, ERRFLOAT, ERRPARAM, ERREXTEND, ERRATAC,
   ERRPQVAL, ERRASDIFF, ERRMINAUC, ERRMINLEN, ERRMISM,
   ERRINFO, ERRSAM, ERRCHROM, ERRHEAD, ERRBAM, ERRGEN,
   ERRTREAT, ERRCHRLEN, ERRCTRL, ERRPOS, ERRSORT, ERRTYPE,
-  ERRAUX, ERRBED, ERRISSUE, ERRALNS,
-  ERRPILE, ERRPVAL, ERRARR, ERRARRC, ERRDF,
-  ERRUNGET, ERRGZIP, ERRTHREAD, ERRNAME, ERRCIGAR, DEFERR
+  ERRAUX, ERRBED, ERRISSUE, ERRALNS, ERRPILE, ERRPVAL,
+  ERRARR, ERRARRC, ERRDF,
+  ERRUNGET, ERRGZIP, ERRNAME, ERRCIGAR, DEFERR
 };
 const char* errMsg[] = { "Need input/output files",
   ": cannot open file for reading",
@@ -103,7 +95,6 @@ const char* errMsg[] = { "Need input/output files",
   "Secondary alignment score threshold must be >= 0.0",
   "Minimum AUC must be >= 0.0",
   "Minimum peak length must be > 0",
-
   ": mismatch between sequence length and CIGAR",
   ": no sequence information (SEQ or CIGAR)",
   ": poorly formatted SAM/BAM record",
@@ -128,8 +119,7 @@ const char* errMsg[] = { "Need input/output files",
   "Invalid df in pchisq()",
 
   "Failure in ungetc() call",
-  "Cannot pipe in gzip compressed file (use zcat instead)",
-  "Number of threads must be >= 1",
+  "Cannot pipe in gzip-compressed file (use zcat instead)",
   ": output filename cannot start with '-'",
   ": unknown Op in CIGAR",
   "Unknown error"

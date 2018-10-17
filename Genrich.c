@@ -4,7 +4,7 @@
 
   Finding sites of enrichment from genome-wide assays.
 
-  Version 0.3
+  Version 0.4
 */
 
 #include <stdio.h>
@@ -17,7 +17,6 @@
 #include <float.h>
 #include <limits.h>
 #include <zlib.h>
-#include <omp.h>
 #include "Genrich.h"
 
 /* void printVersion()
@@ -64,9 +63,6 @@ void usage(void) {
   fprintf(stderr, "Other options:\n");
   fprintf(stderr, "  -%c               Option to gzip-compress output(s)\n", GZOPT);
   fprintf(stderr, "  -%c               Option to print status updates/counts to stderr\n", VERBOSE);
-/*
-  fprintf(stderr, "  -%c  <int>        Number of threads to use (def. %d)\n", THREADS, DEFTHR);
-*/
   exit(-1);
 }
 
@@ -1402,8 +1398,6 @@ float updateVal(int16_t dCov, uint8_t dFrac, int32_t* cov,
   // add ints
   *cov += dCov;
   if (! dFrac) {
-//fprintf(stderr, "  adding %d     -> %d / %02x", dCov, *cov, *frac);
-//while (!getchar()) ;
     if (*cov < 0)
       exit(error(errMsg[ERRPILE], ERRISSUE));
     return getVal(*cov, *frac);
@@ -1455,8 +1449,6 @@ float updateVal(int16_t dCov, uint8_t dFrac, int32_t* cov,
   if (*cov < 0)
     exit(error(errMsg[ERRPILE], ERRISSUE));
 
-//fprintf(stderr, "  adding %d / %02x -> %d / %02x", dCov, dFrac, *cov, *frac);
-//while (!getchar()) ;
   return getVal(*cov, *frac);
 }
 
@@ -2465,7 +2457,6 @@ void processAlns(char* qname, Aln* aln, int alnLen,
     }
   }
 
-//int prevPr = *pairedPr, prevSn = *singlePr;
   if (pair)
     // process paired alignments
     *pairedPr += processPair(qname, aln, alnLen,
@@ -2482,26 +2473,6 @@ void processAlns(char* qname, Aln* aln, int alnLen,
         j ? scoreR2 : scoreR1, asDiff, ! j,
         atacOpt, atacLen5, atacLen3, bed, bedOpt,
         gzOut, ctrl, sample, verbose);
-
-/*
-//if (scoreR1 != NOSCORE && scoreR2 != NOSCORE) {
-  if (pair)
-    fprintf(stderr, "paired; score %f\n", scorePr);
-  else
-    fprintf(stderr, "single; scoreR1 %f, scoreR2 %f\n", scoreR1, scoreR2);
-  for (int i = 0; i < alnLen; i++) {
-    Aln* a = aln + i;
-    fprintf(stderr, "Aln %d: %s%s%s; %s:%d-%d; AS=%.0f\n",
-      i, a->paired && a->full ? "paired" : "single",
-      ! a->paired && a->first ? " R1" : "",
-      ! a->paired && ! a->first ? " R2": "",
-      a->chrom->name, a->pos[0], a->pos[1], a->score);
-  }
-  fprintf(stderr, "printed: %d paired, %d single\n",
-    *pairedPr - prevPr, *singlePr - prevSn);
-while(!getchar()) ;
-}
-// */
 
 }
 
@@ -3712,7 +3683,7 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
     char** xchrList, char* xFile, float pqvalue,
     bool qvalOpt, int minLen, bool minLenOpt, int maxGap,
     float minAUC, float asDiff, bool atacOpt, int atacLen5,
-    int atacLen3, bool verbose, int threads) {
+    int atacLen3, bool verbose) {
 
   // open optional output files
   File bed, pile;
@@ -3956,8 +3927,7 @@ void getArgs(int argc, char** argv) {
     *xFile = NULL;
   char* xchrom = NULL;
   int extend = 0, minMapQ = 0, minLen = 0,
-    maxGap = DEFMAXGAP, atacLen5 = DEFATAC, atacLen3 = 0,
-    threads = DEFTHR;
+    maxGap = DEFMAXGAP, atacLen5 = DEFATAC, atacLen3 = 0;
   float asDiff = 0.0f, pqvalue = DEFQVAL, minAUC = DEFAUC;
   bool singleOpt = false, extendOpt = false,
     avgExtOpt = false, atacOpt = false, gzOut = false,
@@ -3989,12 +3959,9 @@ void getArgs(int argc, char** argv) {
       case MINAUC: minAUC = getFloat(optarg); break;
       case MINLEN: minLen = getInt(optarg); minLenOpt = true; break;
       case MAXGAP: maxGap = getInt(optarg); break;
-
       case VERBOSE: verbose = true; break;
       case VERSOPT: printVersion(); break;
       case HELP: usage(); break;
-
-      case THREADS: threads = getInt(optarg); break;
       default: exit(-1);
     }
   if (optind < argc)
@@ -4028,8 +3995,6 @@ void getArgs(int argc, char** argv) {
     exit(error("", ERRMINAUC));
   if (asDiff < 0.0f)
     exit(error("", ERRASDIFF));
-  if (threads < 1)
-    exit(error("", ERRTHREAD));
 
   // save list of chromosomes to ignore
   int xcount = 0;
@@ -4047,7 +4012,7 @@ void getArgs(int argc, char** argv) {
     bedFile, gzOut, singleOpt, extendOpt, extend,
     avgExtOpt, minMapQ, xcount, xchrList, xFile, pqvalue,
     qvalOpt, minLen, minLenOpt, maxGap, minAUC, asDiff,
-    atacOpt, atacLen5, atacLen3, verbose, threads);
+    atacOpt, atacLen5, atacLen3, verbose);
 }
 
 /* int main()
