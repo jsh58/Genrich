@@ -178,8 +178,8 @@ typedef struct aln {
   bool primary;     // primary alignment?
   bool paired;      // properly paired alignment?
   bool full;        // both parts of paired aln analyzed? (only for paired alns)
+  bool first;       // which read of a pair this is
   bool strand;      // which strand aln is on (only for singleton alignments)
-  bool first;       // which read of a pair this is (only for singleton alignments)
   uint8_t count;    // value of aln (only for singletons with avg-ext option)
   char* name;       // read name (only for singletons with avg-ext option)
   Chrom* chrom;     // reference sequence

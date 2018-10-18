@@ -2519,9 +2519,11 @@ bool savePairedAln(Aln** aln, int* alnLen,
   if (flag & 0x40) {
     a->pos[0] = flag & 0x10 ? pos + length : pos;
     a->pos[1] = pnext;
+    a->first = true;
   } else {
     a->pos[0] = pnext;
     a->pos[1] = flag & 0x10 ? pos + length : pos;
+    a->first = false;
   }
 
   (*alnLen)++;
@@ -2578,7 +2580,8 @@ bool parseAlign(Aln** aln, int* alnLen, uint16_t flag,
     for (int i = 0; i < *alnLen; i++) {
       Aln* a = *aln + i;
       if ( a->paired && ! a->full && a->chrom == chrom
-          && (flag & 0x40 ? a->pos[0] == pos : a->pos[1] == pos)
+          && (flag & 0x40 ? (! a->first && a->pos[0] == pos)
+            : (a->first && a->pos[1] == pos) )
           && (flag & 0x100 ? ! a->primary : a->primary) ) {
         // complete paired alignment
         updatePairedAln(a, flag, pos, length, score);
