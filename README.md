@@ -395,7 +395,7 @@ In verbose mode, Genrich may print one or more warnings to `stderr`:
 * `Read N, alignment at <loc> skipped due to overflow`: The maximum difference in pileup values from one genomic position to the next is +32767, and additional reads will be skipped due to this limitation.  Removing PCR duplicates may help reduce this issue.
 * `Read N, alignment at <loc> skipped due to underflow`: The minimum difference in pileup values from one genomic position to the next is -32768, and additional reads will be skipped due to this limitation.  Removing PCR duplicates may help reduce this issue.
 * `Read N has more than 128 alignments`: If a read has more than 128 alignments in the SAM/BAM, only the first 128 are considered.  As described [above](#sparam), the best 10 alignments are ultimately analyzed by Genrich.
-
+* `"orphan" alns`: An "orphan" alignment is one that the SAM/BAM indicates is properly paired, but its pair could not be found.  This could be due to a poorly formatted SAM/BAM, or possibly (but unlikely) a bug in alignment parsing by Genrich.  This is not a warning message *per se*, but if it appears in the verbose accounting of alignments analyzed, it should be treated as such.
 
 ## Contact <a name="contact"></a>
 
