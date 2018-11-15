@@ -899,7 +899,7 @@ int callPeaks(File out, File log, bool logOpt, bool gzOut,
         // interval does not reach significance
         if (peakStart != -1 && (val == -1.0f
             || chr->pval[n]->end[m] - peakEnd > maxGap)) {
-          // determine if prior peak meets length threshold
+          // determine if prior peak meets AUC threshold
           if (auc >= minAUC) {
             printPeak(out, gzOut, chr->name, peakStart,
               peakEnd, count, summitVal, auc,
@@ -932,7 +932,7 @@ int callPeaks(File out, File log, bool logOpt, bool gzOut,
       start = chr->pval[n]->end[m];
     }
 
-    // determine if last peak meets length threshold
+    // determine if last peak meets AUC threshold
     if (peakStart != -1 && auc >= minAUC) {
       printPeak(out, gzOut, chr->name, peakStart,
         peakEnd, count, summitVal, auc,
@@ -2799,9 +2799,8 @@ void checkHeader(char* line, int* chromLen, Chrom** chrom,
     for (i = 0; order[i] != '\n' && order[i] != '\0'; i++) ;
     order[i] = '\0';
 
-    // sort order not unknown or coordinate
-    if (order == NULL || ! strcmp(order, "unknown")
-        || ! strcmp(order, "coordinate"))
+    // sort order must be queryname
+    if (order == NULL || strcmp(order, "queryname"))
       exit(error("", ERRSORT));
 
   } else if (! strcmp(tag, "@SQ"))
@@ -3406,8 +3405,7 @@ int readBAM(gzFile in, char* line, Aln** aln,
       order = field + 3;
     field = strtok(NULL, TAB);
   }
-  if (order == NULL || ! strcmp(order, "unknown")
-      || ! strcmp(order, "coordinate"))
+  if (order == NULL || strcmp(order, "queryname"))
     exit(error("", ERRSORT));
   if (gzseek(in, l_text - i - 1, SEEK_CUR) == -1)
     exit(error("", ERRBAM));

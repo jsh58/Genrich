@@ -158,7 +158,7 @@ The *q*-value for each base of the genome is calculated from the *p*-value using
 * Genrich analyzes alignment files in [SAM/BAM format](https://samtools.github.io/hts-specs/SAMv1.pdf).  SAM files must have a header.
 * SAM/BAM files for [multiple replicates](#replicate) can be specified, comma-separated (or space-separated, in quotes).
 * Multiple SAM/BAM files for a single replicate should be combined in advance via `samtools merge`.
-* The SAM/BAM files should be name sorted (via `samtools sort -n`).  As of [Version 0.3](https://github.com/jsh58/Genrich/releases/tag/v0.3), unsorted SAM/BAM files are allowed, but this is likely to change.
+* The SAM/BAM files must be sorted by queryname (via `samtools sort -n`).
 * Genrich will read from `stdin` with `-t -`.
 <br><br>
 
