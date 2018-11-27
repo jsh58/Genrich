@@ -38,7 +38,7 @@ enum sam { NIL, QNAME, FLAG, RNAME, POS, MAPQ, CIGAR, RNEXT,
 #define NOSCORE     -FLT_MAX  // for alignments with no alignment score(s)
 
 // command-line options
-#define OPTIONS     "ht:c:o:f:k:b:zyw:xjd:e:E:m:s:p:q:a:l:g:vV"
+#define OPTIONS     "ht:c:o:f:k:b:zyw:xjd:e:E:m:s:p:q:a:l:g:rvV"
 #define HELP        'h'
 #define INFILE      't'
 #define CTRLFILE    'c'
@@ -61,6 +61,7 @@ enum sam { NIL, QNAME, FLAG, RNAME, POS, MAPQ, CIGAR, RNEXT,
 #define MINAUC      'a'
 #define MINLEN      'l'
 #define MAXGAP      'g'
+#define DUPSOPT     'r'
 #define VERBOSE     'v'
 #define VERSOPT     'V'
 
@@ -185,11 +186,9 @@ typedef struct aln {
   Chrom* chrom;     // reference sequence
 } Aln;
 
-/*
 typedef struct read {
   char* name;
-  Aln** aln;
-  int alnLen;
-  struct read* next;
+  Aln* aln;         // array of alignments
+  uint8_t alnLen;   // length of alignment array
+  int qual;         // sum of quality scores
 } Read;
-*/
