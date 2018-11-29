@@ -190,7 +190,8 @@ typedef struct read {
   char* name;
   Aln* aln;         // array of alignments
   uint8_t alnLen;   // length of alignment array
+  Aln* alnR2;       // array of alignments for R2 (discordant alns only)
+  uint8_t alnLenR2; // length of alnR2 array (discordant alns only)
   int qual;         // sum of quality scores
-  bool paired;      // paired alignments?
   float score;      // min. alignment score
 } Read;
