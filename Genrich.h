@@ -37,6 +37,9 @@ enum sam { NIL, QNAME, FLAG, RNAME, POS, MAPQ, CIGAR, RNEXT,
 #define SCORE       "AS"      // extra field: alignment score
 #define NOSCORE     -FLT_MAX  // for alignments with no alignment score(s)
 
+// alignment types
+enum alignType { PAIRED, SINGLE, DISCORD };
+
 // command-line options
 #define OPTIONS     "ht:c:o:f:k:b:zyw:xjd:e:E:m:s:p:q:a:l:g:rvV"
 #define HELP        'h'
@@ -79,7 +82,7 @@ enum errCode { ERRFILE, ERROPEN, ERROPENW, ERRCLOSE,
   ERRINFO, ERRSAM, ERRCHROM, ERRHEAD, ERRBAM, ERRGEN,
   ERRTREAT, ERRCHRLEN, ERRCTRL, ERRPOS, ERRSORT, ERRTYPE,
   ERRAUX, ERRBED, ERRISSUE, ERRALNS, ERRPILE, ERRPVAL,
-  ERRARR, ERRARRC, ERRDF,
+  ERRARR, ERRARRC, ERRDF, ERRALNTYPE,
   ERRUNGET, ERRGZIP, ERRNAME, ERRCIGAR, DEFERR
 };
 const char* errMsg[] = { "Need input/output files",
@@ -118,6 +121,7 @@ const char* errMsg[] = { "Need input/output files",
   "Failure creating treatment pileup",
   "Failure creating control pileup",
   "Invalid df in pchisq()",
+  "Invalid alignment type",
 
   "Failure in ungetc() call",
   "Cannot pipe in gzip-compressed file (use zcat instead)",
@@ -186,15 +190,15 @@ typedef struct aln {
   Chrom* chrom;     // reference sequence
 } Aln;
 
-typedef struct hashpr {
+typedef struct hashAln {
   Chrom* chrom;     // reference sequence
+  Chrom* chrom1;    // other reference sequence (discordant only)
   uint32_t pos;     // position of the alignment
   uint32_t pos1;    // other position of the aln (paired and discordant only)
-  Chrom* chrom1;    // other reference sequence (discordant only)
   bool strand;      // strand of aln (discordant and singletons only)
   bool strand1;     // other strand of aln (discordant only)
-  struct hashpr* next;
-} HashPr;
+  struct hashAln* next;
+} HashAln;
 
 typedef struct read {
   char* name;       // read name
@@ -204,4 +208,5 @@ typedef struct read {
   uint8_t alnLenR2; // length of alnR2 array (discordant alns only)
   int qual;         // sum of quality scores
   float score;      // min. alignment score
+  float scoreR2;    // min. alignment score for R2 (discordant alns only)
 } Read;
