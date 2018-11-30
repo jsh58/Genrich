@@ -2694,40 +2694,195 @@ void processAlns(char* qname, Aln* aln, int alnLen,
 
 /*** PCR duplicate removal ***/
 
+uint32_t jenkins_hash_dupPr(Chrom* c, uint32_t pos,
+    uint32_t pos1, uint32_t hashSize) {
+  uint32_t hash = 0;
+  unsigned char* p = (unsigned char*) c;
+//fprintf(stderr, "Chrom* ");
+  for (int i = 0; i < sizeof(float); i++) {
+//fprintf(stderr, "%02x", p[i]);
+    hash += p[i];
+    hash += hash << 10;
+    hash ^= hash >> 6;
+  }
+//fprintf(stderr, "\npos ");
+  p = (unsigned char*) &pos;
+  for (int i = 0; i < sizeof(float); i++) {
+//fprintf(stderr, "%02x", p[i]);
+    hash += p[i];
+    hash += hash << 10;
+    hash ^= hash >> 6;
+  }
+//fprintf(stderr, "\npos1 ");
+  p = (unsigned char*) &pos1;
+  for (int i = 0; i < sizeof(float); i++) {
+//fprintf(stderr, "%02x", p[i]);
+    hash += p[i];
+    hash += hash << 10;
+    hash ^= hash >> 6;
+  }
+//fprintf(stderr, "\n");
+  hash += hash << 3;
+  hash ^= hash >> 11;
+  hash += hash << 15;
+  return hash % hashSize;
+}
+
+// void addToHash()
+void addToHash(Read* r, HashPr** table, uint32_t hashSize) {
+  for (int k = 0; k < r->alnLen; k++) {
+    Aln* a = r->aln + k;
+    uint32_t idx = jenkins_hash_dupPr(a->chrom,
+      a->pos[0], a->pos[1], hashSize);
+
+    // create new node
+    HashPr* h = (HashPr*) memalloc(sizeof(HashPr));
+    h->chrom = a->chrom;
+    h->pos = a->pos[0];
+    h->pos1 = a->pos[1];
+    h->next = table[idx];
+    table[idx] = h;
+  }
+}
+
+// bool findMatch()
+bool findMatch(Read* r, HashPr** table, uint32_t hashSize) {
+  for (int k = 0; k < r->alnLen; k++) {
+    Aln* a = r->aln + k;
+    uint32_t idx = jenkins_hash_dupPr(a->chrom,
+      a->pos[0], a->pos[1], hashSize);
+/*fprintf(stderr, "    %s: %d - %d\n", a->chrom->name, a->pos[0], a->pos[1]);
+fprintf(stderr, "    %08x %04x %04x\n", a->chrom, a->pos[0], a->pos[1]);
+fprintf(stderr, "    idx: %d\n", idx);
+while (!getchar()) ;*/
+    for (HashPr* h = table[idx]; h != NULL; h = h->next)
+      // check for match
+      if (a->chrom == h->chrom && a->pos[0] == h->pos
+          && a->pos[1] == h->pos1)
+{
+/* if (r->alnLen > 1) {
+//if (!strcmp(r->name, "SRR5427888.159319")) {
+  fprintf(stderr, "  dup! %s at %s:%d - %d\n", r->name, a->chrom->name, a->pos[0], a->pos[1]);
+  while (!getchar()) ;
+}*/
+        return true;
+}
+  }
+  return false;
+}
+
+/* void findDupsPr()
+ * Find PCR duplicates among properly paired
+ *   alignment sets.
+ */
+void findDupsPr(Read** readPr, int readIdxPr, int readLenPr,
+    int* countPr, int* dupsPr, bool singleOpt, int* pairedPr,
+    double* totalLen, float asDiff, bool atacOpt, int atacLen5,
+    int atacLen3, File bed, bool bedOpt, bool gzOut, bool ctrl,
+    int sample, bool verbose) {
+
+  // calculate hash table size (power of 2 >= 4/3 #reads)
+  int expPr = (int) ceil(log2(4 * (readIdxPr * MAX_SIZE
+    + readLenPr) / 3.0));
+  if (expPr > 31)
+    expPr = 31;   // max size 2^31
+  uint32_t hashSize = (uint32_t) pow(2, expPr);
+
+  // initialize hash table
+  HashPr** table = (HashPr**) memalloc(hashSize
+    * sizeof(HashPr*));
+  for (int i = 0; i < hashSize; i++)
+    table[i] = NULL;
+
+  // loop through paired reads
+  for (int i = 0; i <= readIdxPr; i++) {
+    int end = (i == readIdxPr ? readLenPr : MAX_SIZE);
+    for (int j = 0; j < end; j++) {
+      Read* r = readPr[i] + j;
+//fprintf(stderr, "  read #%d: %s\n", i*MAX_SIZE + j, r->name);
+      // check hash for matches
+      if (findMatch(r, table, hashSize))
+{
+        (*dupsPr)++;
+printf("%s\n", r->name);
+}
+      else {
+        // add alignments to hash
+        addToHash(r, table, hashSize);
+        // process alignments too
+        *pairedPr += processPair(r->name, r->aln,
+          r->alnLen, totalLen, r->score, asDiff,
+          atacOpt, atacLen5, atacLen3, bed, bedOpt,
+          gzOut, ctrl, sample, verbose);
+      }
+
+      (*countPr)++;
+    }
+  }
+//fprintf(stderr, "hashSizePr %u\n", hashSizePr);
+//fprintf(stderr, "HashPr size: %ld\n", sizeof(HashPr));
+//exit(0);
+
+  // free memory
+  for (int i = 0; i < hashSize; i++) {
+    HashPr* tmp;
+    HashPr* h = table[i];
+    while (h != NULL) {
+      tmp = h->next;
+      free(h);
+      h = tmp;
+    }
+  }
+  free(table);
+}
+
 /* void findDups()
- * Control elucidation of PCR duplicates.
+ * Control elucidation of PCR duplicates. That's right,
+ *   this is the big leagues! No more "finding" or "searching"
+ *   for duplicates, we're *elucidating* them. Yeah.
  */
 void findDups(Read** readPr, int readIdxPr, int readLenPr,
     Read** readDc, int readIdxDc, int readLenDc,
     Read** readSn, int readIdxSn, int readLenSn,
     int* countPr, int* dupsPr, int* countDc, int* dupsDc,
-    int* countSn, int* dupsSn, bool singleOpt) {
+    int* countSn, int* dupsSn, bool singleOpt,
+    int* pairedPr, int* singlePr, double* totalLen,
+    float asDiff, bool atacOpt, int atacLen5, int atacLen3,
+    File bed, bool bedOpt, bool gzOut, bool ctrl,
+    int sample, bool verbose) {
 
-  for (int i = 0; i <= readIdxPr; i++) {
-    int end = (i == readIdxPr ? readLenPr : MAX_SIZE);
-    for (int j = 0; j < end; j++) {
-      (*countPr)++;
-    }
+  if (readIdxPr || readLenPr) {
+    findDupsPr(readPr, readIdxPr, readLenPr, countPr,
+      dupsPr, singleOpt, pairedPr, totalLen, asDiff, atacOpt,
+      atacLen5, atacLen3, bed, bedOpt, gzOut, ctrl,
+      sample, verbose);
   }
+///////////////////////////////////////////
+
   if (singleOpt) {
-    for (int i = 0; i <= readIdxDc; i++) {
-      int end = (i == readIdxDc ? readLenDc : MAX_SIZE);
-      for (int j = 0; j < end; j++) {
-        (*countDc)++;
+    if (readIdxDc || readLenDc) {
+      for (int i = 0; i <= readIdxDc; i++) {
+        int end = (i == readIdxDc ? readLenDc : MAX_SIZE);
+        for (int j = 0; j < end; j++) {
+          (*countDc)++;
+        }
       }
     }
-    for (int i = 0; i <= readIdxSn; i++) {
-      int end = (i == readIdxSn ? readLenSn : MAX_SIZE);
-      for (int j = 0; j < end; j++) {
-        (*countSn)++;
+    if (readIdxSn || readLenSn) {
+      for (int i = 0; i <= readIdxSn; i++) {
+        int end = (i == readIdxSn ? readLenSn : MAX_SIZE);
+        for (int j = 0; j < end; j++) {
+          (*countSn)++;
+        }
       }
     }
   }
-/*fprintf(stderr, "readsPr: %d\n", *countPr);
-fprintf(stderr, "readsDc: %d\n", *countDc);
-fprintf(stderr, "readsSn: %d\n", *countSn);
+/*fprintf(stderr, "readsPr: %d (%d)\n", *countPr, readIdxPr*MAX_SIZE + readLenPr);
+fprintf(stderr, "  log=%f (%d)\n", log2(*countPr), (int) ceil(log2(*countPr)));
+fprintf(stderr, "readsDc: %d (%d)\n", *countDc, readIdxDc*MAX_SIZE + readLenDc);
+fprintf(stderr, "readsSn: %d (%d)\n", *countSn, readIdxSn*MAX_SIZE + readLenSn);
 exit(0);*/
-if (readLenPr) {
+/*if (readLenPr) {
   fprintf(stderr, "properly paired alns\n");
   //for (int i = 0; i < readLenPr; i++) {
   for (int i = 0; i < 5; i++) {
@@ -2738,7 +2893,7 @@ if (readLenPr) {
       fprintf(stderr, "    %s: %d - %d\n", a->chrom->name, a->pos[0], a->pos[1]);
     }
   }
-}
+}*/
 /*if (readLenDc) {
   fprintf(stderr, "discordant alns\n");
   //for (int i = 0; i < readLenDc; i++) {
@@ -3699,7 +3854,9 @@ int parseBAM(gzFile in, char* line, Aln** aln,
     findDups(*readPr, readIdxPr, readLenPr, *readDc,
       readIdxDc, readLenDc, *readSn, readIdxSn, readLenSn,
       countPr, dupsPr, countDc, dupsDc, countSn, dupsSn,
-      singleOpt);
+      singleOpt, pairedPr, singlePr, totalLen, asDiff,
+      atacOpt, atacLen5, atacLen3, bed, bedOpt, gzOut,
+      ctrl, sample, verbose);
     // process remaining alignments
   }
 
@@ -4007,7 +4164,7 @@ void logCounts(int count, int unmapped, int supp,
   if (secSingle)
     fprintf(stderr, "      secondary alns:   %10d\n", secSingle);
   if (dupsOpt) {
-    fprintf(stderr, "  PCR duplicates identified\n");
+    fprintf(stderr, "  PCR duplicates --\n");
     fprintf(stderr, "    Prop. paired alns:  %10d\n", countPr);
     fprintf(stderr, "      duplicates:       %10d\n", dupsPr);
     if (singleOpt) {

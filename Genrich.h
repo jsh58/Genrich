@@ -186,8 +186,18 @@ typedef struct aln {
   Chrom* chrom;     // reference sequence
 } Aln;
 
+typedef struct hashpr {
+  Chrom* chrom;     // reference sequence
+  uint32_t pos;     // position of the alignment
+  uint32_t pos1;    // other position of the aln (paired and discordant only)
+  Chrom* chrom1;    // other reference sequence (discordant only)
+  bool strand;      // strand of aln (discordant and singletons only)
+  bool strand1;     // other strand of aln (discordant only)
+  struct hashpr* next;
+} HashPr;
+
 typedef struct read {
-  char* name;
+  char* name;       // read name
   Aln* aln;         // array of alignments
   uint8_t alnLen;   // length of alignment array
   Aln* alnR2;       // array of alignments for R2 (discordant alns only)
