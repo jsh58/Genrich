@@ -2310,6 +2310,7 @@ void saveAlnsSingle(char* qname, Aln* aln, int alnLen,
   r->name = (char*) memalloc(1 + strlen(qname));
   strcpy(r->name, qname);
   r->qual = 0;      /* need to sum quality scores */
+  r->first = first;
   r->score = score;
 
   // copy alignments to struct
@@ -2706,11 +2707,16 @@ void processAlns(char* qname, Aln* aln, int alnLen,
 
 /*** PCR duplicate removal ***/
 
+/* uint32_t calcHashSize()
+ * Calculate a size for a hashtable:
+ *   a power of 2 >= the given count * 4/3.
+ * The given count is the number of reads, which
+ *   will not necessarily be the same as the number
+ *   of alignments. Some reads will have multiple
+ *   alignments, but they will be counterbalanced
+ *   by PCR duplicates (which will be discarded).
+ */
 uint32_t calcHashSize(int count) {
-  // calculate hash table size (power of 2 >= 4/3 #reads)
-  // NOTE: #reads != #alns strictly speaking;
-  //   some reads will have >1 aln, but that will be
-  //   counterbalanced by dups (whose alns will be discarded)
   uint32_t size = 2;
   uint32_t val = 4 * count / 3;
   for (int i = 1; i < 31; i++) {
@@ -2722,7 +2728,12 @@ uint32_t calcHashSize(int count) {
   return size;
 }
 
-// hash elements of an alignment, depending on type
+/* uint32_t jenkins_hash_aln()
+ * Adapted from http://www.burtleburtle.net/bob/hash/doobs.html
+ *   Modified to take an alignment as input, hashed
+ *   differently depending on alignment type.
+ *   Returns index into hashtable.
+ */
 uint32_t jenkins_hash_aln(Chrom* chrom, Chrom* chrom1,
     uint32_t pos, uint32_t pos1, bool strand, bool strand1,
     int alignType, uint32_t hashSize) {
@@ -2785,8 +2796,9 @@ if (verb)
   return hash % hashSize;
 }
 
-// void addToHash()
-// add new node *with idx already calculated*
+/* void addToHash()
+ * Add a new node (alignment) to hashtable.
+ */
 void addToHash(Chrom* chrom, Chrom* chrom1, uint32_t pos,
     uint32_t pos1, bool strand, bool strand1,
     HashAln** table, uint32_t idx) {
@@ -2801,13 +2813,15 @@ void addToHash(Chrom* chrom, Chrom* chrom1, uint32_t pos,
   table[idx] = h;
 }
 
-// bool checkHash()
-// check for match *with idx already calculated*
+/* bool checkHash()
+ * Check hashtable for a match to an alignment
+ *   (based on alignment type).
+ */
 bool checkHash(Chrom* chrom, Chrom* chrom1, uint32_t pos,
     uint32_t pos1, bool strand, bool strand1,
     int alignType, HashAln** table, uint32_t idx) {
   for (HashAln* h = table[idx]; h != NULL; h = h->next) {
-    // check for match
+    // check for match, based on alignment type
     switch (alignType) {
       case PAIRED:
         if (chrom == h->chrom && pos == h->pos
@@ -2824,11 +2838,6 @@ bool checkHash(Chrom* chrom, Chrom* chrom1, uint32_t pos,
             && pos == h->pos && pos1 == h->pos1
             && strand == h->strand && strand1 == h->strand1)
           return true;
-        // check reverse also
-/*        if (chrom == h->chrom1 && chrom1 == h->chrom
-            && pos == h->pos1 && pos1 == h->pos
-            && strand == h->strand1 && strand1 == h->strand)
-          return true;*/
         break;
       default:
         exit(error("", ERRALNTYPE));
@@ -2837,6 +2846,10 @@ bool checkHash(Chrom* chrom, Chrom* chrom1, uint32_t pos,
   return false;
 }
 
+/* void checkAndAdd()
+ * Check a singleton alignment for a match to the
+ *   hashtable; if there is none, add it to the table.
+ */
 void checkAndAdd(HashAln** tableSn, uint32_t hashSizeSn,
     Chrom* chrom, uint32_t pos, bool strand) {
   uint32_t idx = jenkins_hash_aln(chrom, NULL, pos, 0,
@@ -2851,6 +2864,10 @@ void checkAndAdd(HashAln** tableSn, uint32_t hashSizeSn,
 }*/
 }
 
+/* void saveHashPrSn()
+ * Save individual alignments of paired alns as
+ *   singletons, via checkAndAdd().
+ */
 void saveHashPrSn(HashAln** table, uint32_t hashSize,
     HashAln** tableSn, uint32_t hashSizeSn) {
   for (int i = 0; i < hashSize; i++) {
@@ -2864,6 +2881,10 @@ void saveHashPrSn(HashAln** table, uint32_t hashSize,
   }
 }
 
+/* void saveHashDcSn()
+ * Save individual alignments of discordant alns as
+ *   singletons, via checkAndAdd().
+ */
 void saveHashDcSn(HashAln** table, uint32_t hashSize,
     HashAln** tableSn, uint32_t hashSizeSn) {
   for (int i = 0; i < hashSize; i++) {
@@ -2877,8 +2898,9 @@ void saveHashDcSn(HashAln** table, uint32_t hashSize,
   }
 }
 
-
-// add *all* paired read alignments to the hashtable
+/* void addHashPr()
+ * Add all paired alignments for a Read* to the hashtable.
+ */
 void addHashPr(Read* r, HashAln** table,
     uint32_t hashSize) {
   for (int k = 0; k < r->alnLen; k++) {
@@ -2921,9 +2943,10 @@ while (!getchar()) ;*/
  */
 void findDupsPr(Read** readPr, int readIdxPr, int readLenPr,
     int* countPr, int* dupsPr, int* pairedPr,
-    double* totalLen, float asDiff, bool atacOpt, int atacLen5,
-    int atacLen3, File bed, bool bedOpt, bool gzOut, bool ctrl,
-    int sample, HashAln** tableSn, uint32_t hashSizeSn, bool verbose) {
+    double* totalLen, float asDiff, bool atacOpt,
+    int atacLen5, int atacLen3, File bed, bool bedOpt,
+    bool gzOut, bool ctrl, int sample, HashAln** tableSn,
+    uint32_t hashSizeSn, bool verbose) {
 
   // initialize hashtable
   uint32_t hashSize = calcHashSize(readIdxPr * MAX_SIZE
@@ -2938,15 +2961,13 @@ void findDupsPr(Read** readPr, int readIdxPr, int readLenPr,
     int end = (i == readIdxPr ? readLenPr : MAX_SIZE);
     for (int j = 0; j < end; j++) {
       Read* r = readPr[i] + j;
-//fprintf(stderr, "  read #%d: %s\n", i*MAX_SIZE + j, r->name);
-      // check hash for matches
-      if (checkHashPr(r, table, hashSize))
-{
+
+      // check hashtable for matches
+      if (checkHashPr(r, table, hashSize)) {
         (*dupsPr)++;
 //printf("%s\n", r->name);
-}
-      else {
-        // add alignments to hash
+      } else {
+        // add alignments to hashtable
         addHashPr(r, table, hashSize);
         // process alignments too
         *pairedPr += processPair(r->name, r->aln,
@@ -2963,51 +2984,9 @@ void findDupsPr(Read** readPr, int readIdxPr, int readLenPr,
     }
   }
 
-int c[100000] = { 0 };
-for (int i = 0; i < hashSize; i++) {
-  int n = 0;
-  for (HashAln* h = table[i]; h != NULL; h = h->next)
-    n++;
-  /*if (n > 2) {
-    printf("idx %d\n", i);
-    for (HashAln* h = table[i]; h != NULL; h = h->next)
-      printf("  %s: %d - %d\n", h->chrom->name, h->pos, h->pos1);
-    while (!getchar()) ;
-  }*/
-  c[n]++;
-}
-int i;
-for (i = 100000 - 1; i > -1; i--)
-  if (c[i])
-    break;
-for (int j = 0; j <= i; j++)
-  printf("%d\t%d\n", j, c[j]);
-
-  // save alns to singleton hash
-  if (tableSn != NULL) {
+  // save alns to singleton hashtable
+  if (tableSn != NULL)
     saveHashPrSn(table, hashSize, tableSn, hashSizeSn);
-/*printf("\nsingletons (size %d)\n", hashSizeSn);
-int c[100000] = { 0 };
-for (int i = 0; i < hashSizeSn; i++) {
-  int n = 0;
-  for (HashAln* h = tableSn[i]; h != NULL; h = h->next)
-    n++;
-  /*if (n > 2) {
-    printf("idx %d\n", i);
-    for (HashAln* h = tableSn[i]; h != NULL; h = h->next)
-      printf("  %s: %d %c\n", h->chrom->name, h->pos, h->strand ? '+' : '-');
-    while (!getchar()) ;
-  }*
-  c[n]++;
-}
-int i;
-for (i = 100000 - 1; i > -1; i--)
-  if (c[i])
-    break;
-for (int j = 0; j <= i; j++)
-  printf("%d\t%d\n", j, c[j]);
-*/
-  }
 
   // free hashtable
   for (int i = 0; i < hashSize; i++) {
@@ -3022,7 +3001,10 @@ for (int j = 0; j <= i; j++)
   free(table);
 }
 
-// add *all* combinations of discordant read alignments to the hashtable
+/* void addHashDc()
+ * Add all combinations of discordant alignments for a
+ *   Read* to the hashtable.
+ */
 void addHashDc(Read* r, HashAln** table,
     uint32_t hashSize) {
   for (int k = 0; k < r->alnLen; k++) {
@@ -3091,15 +3073,12 @@ void findDupsDc(Read** readDc, int readIdxDc, int readLenDc,
     for (int j = 0; j < end; j++) {
       Read* r = readDc[i] + j;
 
-      // check hash for matches
-      if (checkHashDc(r, table, hashSize))
-{
+      // check hashtable for matches
+      if (checkHashDc(r, table, hashSize)) {
         (*dupsDc)++;
-printf("duplicate: %s\n", r->name);
-while(!getchar()) ;
-}
-      else {
-        // add alignments to hash
+//printf("duplicate: %s\n", r->name);
+      } else {
+        // add alignments to hashtable
         addHashDc(r, table, hashSize);
         // process alignments too
         *singlePr += processSingle(r->name, r->aln,
@@ -3126,10 +3105,9 @@ while(!getchar()) ;
 
   }
 
-  // save alns to singleton hash
-  if (tableSn != NULL) {
+  // save alns to singleton hashtable
+  if (tableSn != NULL)
     saveHashDcSn(table, hashSize, tableSn, hashSizeSn);
-  }
 
   // free hashtable
   for (int i = 0; i < hashSize; i++) {
@@ -3144,6 +3122,114 @@ while(!getchar()) ;
   free(table);
 }
 
+
+// add *all* singleton read alignments to the hashtable
+void addHashSn(Read* r, HashAln** table,
+    uint32_t hashSize) {
+  for (int k = 0; k < r->alnLen; k++) {
+    Aln* a = r->aln + k;
+    uint32_t pos = (a->strand ? a->pos[0] : a->pos[1]);
+    uint32_t idx = jenkins_hash_aln(a->chrom, NULL,
+      pos, 0, a->strand, 0, SINGLE, hashSize);
+    addToHash(a->chrom, NULL, pos, 0, a->strand, 0,
+      table, idx);
+  }
+}
+
+// bool checkHashSn()
+// check set of singleton alignments for match
+bool checkHashSn(Read* r, HashAln** table,
+    uint32_t hashSize) {
+  for (int k = 0; k < r->alnLen; k++) {
+    Aln* a = r->aln + k;
+    uint32_t pos = (a->strand ? a->pos[0] : a->pos[1]);
+    uint32_t idx = jenkins_hash_aln(a->chrom, NULL,
+      pos, 0, a->strand, 0, SINGLE, hashSize);
+    if (checkHash(a->chrom, NULL, pos, 0, a->strand, 0,
+        SINGLE, table, idx))
+      return true;
+  }
+  return false;
+}
+
+/* void findDupsSn()
+ * Find PCR duplicates among singleton
+ *   alignment sets.
+ * Note: the hashtable is already created, and
+ *   populated by paired and discordant alns.
+ */
+void findDupsSn(Read** readSn, int readIdxSn, int readLenSn,
+    int* countSn, int* dupsSn, int* singlePr,
+    bool extendOpt, int extend, float asDiff,
+    bool atacOpt, int atacLen5, int atacLen3,
+    File bed, bool bedOpt, bool gzOut, bool ctrl,
+    int sample, HashAln** table, uint32_t hashSize,
+    bool verbose) {
+
+  // loop through singleton reads
+  for (int i = 0; i <= readIdxSn; i++) {
+    int end = (i == readIdxSn ? readLenSn : MAX_SIZE);
+    for (int j = 0; j < end; j++) {
+      Read* r = readSn[i] + j;
+
+      // check hashtable for matches
+      if (checkHashSn(r, table, hashSize)) {
+        (*dupsSn)++;
+//printf("duplicate: %s\n", r->name);
+      } else {
+        // add alignments to hashtable
+        addHashSn(r, table, hashSize);
+        // process alignments too
+        *singlePr += processSingle(r->name, r->aln,
+          r->alnLen, extendOpt, extend, false,
+          NULL, NULL, NULL, NULL,
+          r->score, asDiff, r->first,
+          atacOpt, atacLen5, atacLen3, bed, bedOpt,
+          gzOut, ctrl, sample, verbose);
+      }
+
+      // free Read
+      free(r->name);
+      free(r->aln);
+
+      (*countSn)++;
+    }
+
+  }
+
+printf("\nsingletons (size %d)\n", hashSize);
+int c[100000] = { 0 };
+for (int i = 0; i < hashSize; i++) {
+  int n = 0;
+  for (HashAln* h = table[i]; h != NULL; h = h->next)
+    n++;
+  /*if (n > 2) {
+    printf("idx %d\n", i);
+    for (HashAln* h = table[i]; h != NULL; h = h->next)
+      printf("  %s: %d %c\n", h->chrom->name, h->pos, h->strand ? '+' : '-');
+    while (!getchar()) ;
+  }*/
+  c[n]++;
+}
+int i;
+for (i = 100000 - 1; i > -1; i--)
+  if (c[i])
+    break;
+for (int j = 0; j <= i; j++)
+  printf("%d\t%d\n", j, c[j]);
+
+  // free hashtable
+  for (int i = 0; i < hashSize; i++) {
+    HashAln* tmp;
+    HashAln* h = table[i];
+    while (h != NULL) {
+      tmp = h->next;
+      free(h);
+      h = tmp;
+    }
+  }
+  free(table);
+}
 
 /* void findDups()
  * Control elucidation of PCR duplicates. That's right,
@@ -3176,79 +3262,36 @@ void findDups(Read** readPr, int readIdxPr, int readLenPr,
       tableSn[i] = NULL;
   }
 
-  if (readIdxPr || readLenPr) {
-    // evaluate paired alignments
+  if (readIdxPr || readLenPr)
+    // evaluate and process paired alignments
     findDupsPr(readPr, readIdxPr, readLenPr, countPr,
       dupsPr, pairedPr, totalLen, asDiff, atacOpt,
       atacLen5, atacLen3, bed, bedOpt, gzOut, ctrl,
       sample, tableSn, hashSizeSn, verbose);
-  }
 
   if (singleOpt) {
-    // determine average fragment length
-    //   (hide in 'extend' with extendOpt)
+    // with avgExtOpt, calculate average fragment length
+    //   and hide it in 'extend' with extendOpt=true
     if (avgExtOpt) {
       extend = calcAvgLen(*totalLen, *pairedPr, verbose);
       if (extend)
         extendOpt = true;
     }
 
-    // evaluate discordant alignments
-    if (readIdxDc || readLenDc) {
+    // evaluate and process discordant alignments
+    if (readIdxDc || readLenDc)
       findDupsDc(readDc, readIdxDc, readLenDc, countDc,
         dupsDc, singlePr, extendOpt, extend, asDiff,
         atacOpt, atacLen5, atacLen3, bed, bedOpt, gzOut,
         ctrl, sample, tableSn, hashSizeSn, verbose);
-    }
 
-///////////////////////////////////////////
+    // evaluate and process singleton alignments
+    if (readIdxSn || readLenSn)
+      findDupsSn(readSn, readIdxSn, readLenSn, countSn,
+        dupsSn, singlePr, extendOpt, extend, asDiff,
+        atacOpt, atacLen5, atacLen3, bed, bedOpt, gzOut,
+        ctrl, sample, tableSn, hashSizeSn, verbose);
 
-    // evaluate singleton alignments
-    if (readIdxSn || readLenSn) {
-      for (int i = 0; i <= readIdxSn; i++) {
-        int end = (i == readIdxSn ? readLenSn : MAX_SIZE);
-        for (int j = 0; j < end; j++) {
-          (*countSn)++;
-        }
-      }
-    }
-  }
-
-
-printf("\nsingletons (size %d)\n", hashSizeSn);
-int c[100000] = { 0 };
-for (int i = 0; i < hashSizeSn; i++) {
-  int n = 0;
-  for (HashAln* h = tableSn[i]; h != NULL; h = h->next)
-    n++;
-  /*if (n > 2) {
-    printf("idx %d\n", i);
-    for (HashAln* h = tableSn[i]; h != NULL; h = h->next)
-      printf("  %s: %d %c\n", h->chrom->name, h->pos, h->strand ? '+' : '-');
-    while (!getchar()) ;
-  }*/
-  c[n]++;
-}
-int i;
-for (i = 100000 - 1; i > -1; i--)
-  if (c[i])
-    break;
-for (int j = 0; j <= i; j++)
-  printf("%d\t%d\n", j, c[j]);
-// */
-
-  // free singleton hashtable
-  if (tableSn != NULL) {
-    for (int i = 0; i < hashSizeSn; i++) {
-      HashAln* tmp;
-      HashAln* h = tableSn[i];
-      while (h != NULL) {
-        tmp = h->next;
-        free(h);
-        h = tmp;
-      }
-    }
-    free(tableSn);
   }
 
 /*fprintf(stderr, "readsPr: %d (%d)\n", *countPr, readIdxPr*MAX_SIZE + readLenPr);

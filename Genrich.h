@@ -207,6 +207,7 @@ typedef struct read {
   Aln* alnR2;       // array of alignments for R2 (discordant alns only)
   uint8_t alnLenR2; // length of alnR2 array (discordant alns only)
   int qual;         // sum of quality scores
+  bool first;       // true -> R1; false -> R2 (singleton alns only)
   float score;      // min. alignment score
   float scoreR2;    // min. alignment score for R2 (discordant alns only)
 } Read;
