@@ -43,6 +43,7 @@ void usage(void) {
   fprintf(stderr, "  -%c  <file>       Output bedgraph-ish file for p/q values\n", LOGFILE);
   fprintf(stderr, "  -%c  <file>       Output bedgraph-ish file for pileups and p-values\n", PILEFILE);
   fprintf(stderr, "  -%c  <file>       Output BED file for reads/fragments/intervals\n", BEDFILE);
+  fprintf(stderr, "  -%c  <file>       Output file for PCR duplicates (must set -%c)\n", DUPSFILE, DUPSOPT);
   fprintf(stderr, "Filtering options:\n");
   fprintf(stderr, "  -%c               Remove PCR duplicates\n", DUPSOPT);
   fprintf(stderr, "  -%c  <arg>        Comma-separated list of chromosomes to ignore\n", XCHROM);
@@ -2797,11 +2798,12 @@ if (verb)
 }
 
 /* void addToHash()
- * Add a new node (alignment) to hashtable.
+ * Add a new node (HashAln) to hashtable, inserted
+ *   at given idx (already calculated).
  */
 void addToHash(Chrom* chrom, Chrom* chrom1, uint32_t pos,
     uint32_t pos1, bool strand, bool strand1,
-    HashAln** table, uint32_t idx) {
+    HashAln** table, uint32_t idx, char* name) {
   HashAln* h = (HashAln*) memalloc(sizeof(HashAln));
   h->chrom = chrom;
   h->chrom1 = chrom1;
@@ -2809,16 +2811,21 @@ void addToHash(Chrom* chrom, Chrom* chrom1, uint32_t pos,
   h->pos1 = pos1;
   h->strand = strand;
   h->strand1 = strand1;
+  h->name = NULL;
+  if (name) {
+    h->name = (char*) memalloc(1 + strlen(name));
+    strcpy(h->name, name);
+  }
   h->next = table[idx];
   table[idx] = h;
 }
 
-/* bool checkHash()
+/* HashAln* checkHash()
  * Check hashtable for a match to an alignment
  *   (based on alignment type).
  */
-bool checkHash(Chrom* chrom, Chrom* chrom1, uint32_t pos,
-    uint32_t pos1, bool strand, bool strand1,
+HashAln* checkHash(Chrom* chrom, Chrom* chrom1,
+    uint32_t pos, uint32_t pos1, bool strand, bool strand1,
     int alignType, HashAln** table, uint32_t idx) {
   for (HashAln* h = table[idx]; h != NULL; h = h->next) {
     // check for match, based on alignment type
@@ -2826,24 +2833,24 @@ bool checkHash(Chrom* chrom, Chrom* chrom1, uint32_t pos,
       case PAIRED:
         if (chrom == h->chrom && pos == h->pos
             && pos1 == h->pos1)
-          return true;
+          return h;
         break;
       case SINGLE:
         if (chrom == h->chrom && pos == h->pos
             && strand == h->strand)
-          return true;
+          return h;
         break;
       case DISCORD:
         if (chrom == h->chrom && chrom1 == h->chrom1
             && pos == h->pos && pos1 == h->pos1
             && strand == h->strand && strand1 == h->strand1)
-          return true;
+          return h;
         break;
       default:
         exit(error("", ERRALNTYPE));
     }
   }
-  return false;
+  return NULL;
 }
 
 /* void checkAndAdd()
@@ -2851,13 +2858,13 @@ bool checkHash(Chrom* chrom, Chrom* chrom1, uint32_t pos,
  *   hashtable; if there is none, add it to the table.
  */
 void checkAndAdd(HashAln** tableSn, uint32_t hashSizeSn,
-    Chrom* chrom, uint32_t pos, bool strand) {
+    Chrom* chrom, uint32_t pos, bool strand, char* name) {
   uint32_t idx = jenkins_hash_aln(chrom, NULL, pos, 0,
     strand, 0, SINGLE, hashSizeSn);
   if (! checkHash(chrom, NULL, pos, 0, strand, 0, SINGLE,
       tableSn, idx))
     addToHash(chrom, NULL, pos, 0, strand, 0, tableSn,
-      idx);
+      idx, name);
 }
 
 /* void saveHashDcSn()
@@ -2870,9 +2877,9 @@ void saveHashDcSn(HashAln** table, uint32_t hashSize,
     for (HashAln* h = table[i]; h != NULL; h = h->next) {
       // add both alignments as singletons
       checkAndAdd(tableSn, hashSizeSn, h->chrom, h->pos,
-        h->strand);
+        h->strand, h->name);
       checkAndAdd(tableSn, hashSizeSn, h->chrom1, h->pos1,
-        h->strand1);
+        h->strand1, h->name);
     }
   }
 }
@@ -2887,9 +2894,9 @@ void saveHashPrSn(HashAln** table, uint32_t hashSize,
     for (HashAln* h = table[i]; h != NULL; h = h->next) {
       // add both alignments as singletons
       checkAndAdd(tableSn, hashSizeSn, h->chrom, h->pos,
-        true);
+        true, h->name);
       checkAndAdd(tableSn, hashSizeSn, h->chrom, h->pos1,
-        false);
+        false, h->name);
     }
   }
 }
@@ -2901,33 +2908,35 @@ void saveHashPrSn(HashAln** table, uint32_t hashSize,
 void logDup(File dups, bool gzOut, char* name,
     Chrom* chrom, Chrom* chrom1, uint32_t pos,
     uint32_t pos1, bool strand, bool strand1,
-    int alignType) {
+    char* match, int alignType) {
   switch (alignType) {
     case PAIRED:
       if (gzOut)
-        gzprintf(dups.gzf, "%s\t%s:%d-%d\tpaired\n",
-          name, chrom->name, pos, pos1);
+        gzprintf(dups.gzf, "%s\t%s:%d-%d\t%s\tpaired\n",
+          name, chrom->name, pos, pos1, match);
       else
-        fprintf(dups.f, "%s\t%s:%d-%d\tpaired\n",
-          name, chrom->name, pos, pos1);
+        fprintf(dups.f, "%s\t%s:%d-%d\t%s\tpaired\n",
+          name, chrom->name, pos, pos1, match);
       break;
     case SINGLE:
       if (gzOut)
-        gzprintf(dups.gzf, "%s\t%s:%d,%c\tsingle\n",
-          name, chrom->name, pos, strand ? '+' : '-');
+        gzprintf(dups.gzf, "%s\t%s:%d,%c\t%s\tsingle\n",
+          name, chrom->name, pos, strand ? '+' : '-',
+          match);
       else
-        fprintf(dups.f, "%s\t%s:%d,%c\tsingle\n",
-          name, chrom->name, pos, strand ? '+' : '-');
+        fprintf(dups.f, "%s\t%s:%d,%c\t%s\tsingle\n",
+          name, chrom->name, pos, strand ? '+' : '-',
+          match);
       break;
     case DISCORD:
       if (gzOut)
-        gzprintf(dups.gzf, "%s\t%s:%d,%c;%s:%d,%c\tdiscordant\n",
+        gzprintf(dups.gzf, "%s\t%s:%d,%c;%s:%d,%c\t%s\tdiscordant\n",
           name, chrom->name, pos, strand ? '+' : '-',
-          chrom1->name, pos1, strand1 ? '+' : '-');
+          chrom1->name, pos1, strand1 ? '+' : '-', match);
       else
-        fprintf(dups.f, "%s\t%s:%d,%c;%s:%d,%c\tdiscordant\n",
+        fprintf(dups.f, "%s\t%s:%d,%c;%s:%d,%c\t%s\tdiscordant\n",
           name, chrom->name, pos, strand ? '+' : '-',
-          chrom1->name, pos1, strand1 ? '+' : '-');
+          chrom1->name, pos1, strand1 ? '+' : '-', match);
       break;
     default:
       exit(error("", ERRALNTYPE));
@@ -2938,13 +2947,13 @@ void logDup(File dups, bool gzOut, char* name,
  * Add all paired alignments for a Read* to the hashtable.
  */
 void addHashPr(Read* r, HashAln** table,
-    uint32_t hashSize) {
+    uint32_t hashSize, bool dupsVerb) {
   for (int k = 0; k < r->alnLen; k++) {
     Aln* a = r->aln + k;
     uint32_t idx = jenkins_hash_aln(a->chrom, NULL,
       a->pos[0], a->pos[1], 0, 0, PAIRED, hashSize);
     addToHash(a->chrom, NULL, a->pos[0], a->pos[1],
-      0, 0, table, idx);
+      0, 0, table, idx, dupsVerb ? r->name : NULL);
   }
 }
 
@@ -2959,13 +2968,12 @@ bool checkHashPr(Read* r, HashAln** table,
     Aln* a = r->aln + k;
     uint32_t idx = jenkins_hash_aln(a->chrom, NULL,
       a->pos[0], a->pos[1], 0, 0, PAIRED, hashSize);
-    //HashAln* h = checkHash(a->chrom, NULL, a->pos[0],
-    //    a->pos[1], 0, 0, PAIRED, table, idx);
-    if (checkHash(a->chrom, NULL, a->pos[0], a->pos[1],
-        0, 0, PAIRED, table, idx)) {
+    HashAln* h = checkHash(a->chrom, NULL, a->pos[0],
+      a->pos[1], 0, 0, PAIRED, table, idx);
+    if (h) {
       if (dupsVerb)
         logDup(dups, gzOut, r->name, a->chrom, NULL,
-          a->pos[0], a->pos[1], 0, 0, PAIRED);
+          a->pos[0], a->pos[1], 0, 0, h->name, PAIRED);
       return true;
     }
   }
@@ -3004,7 +3012,7 @@ void findDupsPr(Read** readPr, int readIdxPr, int readLenPr,
         (*dupsPr)++;
       else {
         // add alignments to hashtable
-        addHashPr(r, table, hashSize);
+        addHashPr(r, table, hashSize, dupsVerb);
         // process alignments too
         *pairedPr += processPair(r->name, r->aln,
           r->alnLen, totalLen, r->score, asDiff,
@@ -3029,6 +3037,7 @@ void findDupsPr(Read** readPr, int readIdxPr, int readLenPr,
     HashAln* tmp;
     HashAln* h = table[i];
     while (h != NULL) {
+      free(h->name);
       tmp = h->next;
       free(h);
       h = tmp;
@@ -3042,7 +3051,7 @@ void findDupsPr(Read** readPr, int readIdxPr, int readLenPr,
  *   Read* to the hashtable.
  */
 void addHashDc(Read* r, HashAln** table,
-    uint32_t hashSize) {
+    uint32_t hashSize, bool dupsVerb) {
   for (int k = 0; k < r->alnLen; k++) {
     Aln* a = r->aln + k;
     uint32_t pos = (a->strand ? a->pos[0] : a->pos[1]);
@@ -3052,7 +3061,7 @@ void addHashDc(Read* r, HashAln** table,
       uint32_t idx = jenkins_hash_aln(a->chrom, b->chrom,
         pos, pos1, a->strand, b->strand, DISCORD, hashSize);
       addToHash(a->chrom, b->chrom, pos, pos1, a->strand,
-        b->strand, table, idx);
+        b->strand, table, idx, dupsVerb ? r->name : NULL);
     }
   }
 }
@@ -3072,21 +3081,25 @@ bool checkHashDc(Read* r, HashAln** table,
       uint32_t pos1 = (b->strand ? b->pos[0] : b->pos[1]);
       uint32_t idx = jenkins_hash_aln(a->chrom, b->chrom,
         pos, pos1, a->strand, b->strand, DISCORD, hashSize);
-      if (checkHash(a->chrom, b->chrom, pos, pos1,
-          a->strand, b->strand, DISCORD, table, idx)) {
+      HashAln* h = checkHash(a->chrom, b->chrom, pos, pos1,
+        a->strand, b->strand, DISCORD, table, idx);
+      if (h) {
         if (dupsVerb)
           logDup(dups, gzOut, r->name, a->chrom, b->chrom,
-            pos, pos1, a->strand, b->strand, DISCORD);
+            pos, pos1, a->strand, b->strand, h->name,
+            DISCORD);
         return true;
       }
       // check the reverse also
       idx = jenkins_hash_aln(b->chrom, a->chrom,
         pos1, pos, b->strand, a->strand, DISCORD, hashSize);
-      if (checkHash(b->chrom, a->chrom, pos1, pos,
-          b->strand, a->strand, DISCORD, table, idx)) {
+      h = checkHash(b->chrom, a->chrom, pos1, pos,
+          b->strand, a->strand, DISCORD, table, idx);
+      if (h) {
         if (dupsVerb)
           logDup(dups, gzOut, r->name, b->chrom, a->chrom,
-            pos1, pos, b->strand, a->strand, DISCORD);
+            pos1, pos, b->strand, a->strand, h->name,
+            DISCORD);
         return true;
       }
     }
@@ -3126,7 +3139,7 @@ void findDupsDc(Read** readDc, int readIdxDc, int readLenDc,
         (*dupsDc)++;
       else {
         // add alignments to hashtable
-        addHashDc(r, table, hashSize);
+        addHashDc(r, table, hashSize, dupsVerb);
         // process alignments too
         *singlePr += processSingle(r->name, r->aln,
           r->alnLen, extendOpt, extend, false,
@@ -3160,6 +3173,7 @@ void findDupsDc(Read** readDc, int readIdxDc, int readLenDc,
     HashAln* tmp;
     HashAln* h = table[i];
     while (h != NULL) {
+      free(h->name);
       tmp = h->next;
       free(h);
       h = tmp;
@@ -3173,14 +3187,14 @@ void findDupsDc(Read** readDc, int readIdxDc, int readLenDc,
  *   hashtable.
  */
 void addHashSn(Read* r, HashAln** table,
-    uint32_t hashSize) {
+    uint32_t hashSize, bool dupsVerb) {
   for (int k = 0; k < r->alnLen; k++) {
     Aln* a = r->aln + k;
     uint32_t pos = (a->strand ? a->pos[0] : a->pos[1]);
     uint32_t idx = jenkins_hash_aln(a->chrom, NULL,
       pos, 0, a->strand, 0, SINGLE, hashSize);
     addToHash(a->chrom, NULL, pos, 0, a->strand, 0,
-      table, idx);
+      table, idx, dupsVerb ? r->name : NULL);
   }
 }
 
@@ -3196,11 +3210,12 @@ bool checkHashSn(Read* r, HashAln** table,
     uint32_t pos = (a->strand ? a->pos[0] : a->pos[1]);
     uint32_t idx = jenkins_hash_aln(a->chrom, NULL,
       pos, 0, a->strand, 0, SINGLE, hashSize);
-    if (checkHash(a->chrom, NULL, pos, 0, a->strand, 0,
-        SINGLE, table, idx)) {
+    HashAln* h = checkHash(a->chrom, NULL, pos, 0,
+      a->strand, 0, SINGLE, table, idx);
+    if (h) {
       if (dupsVerb)
         logDup(dups, gzOut, r->name, a->chrom, NULL,
-          pos, 0, a->strand, 0, SINGLE);
+          pos, 0, a->strand, 0, h->name, SINGLE);
       return true;
     }
   }
@@ -3232,7 +3247,7 @@ void findDupsSn(Read** readSn, int readIdxSn, int readLenSn,
         (*dupsSn)++;
       else {
         // add alignments to hashtable
-        addHashSn(r, table, hashSize);
+        addHashSn(r, table, hashSize, dupsVerb);
         // process alignments too
         *singlePr += processSingle(r->name, r->aln,
           r->alnLen, extendOpt, extend, false,
@@ -3250,6 +3265,7 @@ void findDupsSn(Read** readSn, int readIdxSn, int readLenSn,
     }
   }
 
+/*
 printf("\nsingletons (size %d)\n", hashSize);
 int c[100000] = { 0 };
 for (int i = 0; i < hashSize; i++) {
@@ -3261,7 +3277,7 @@ for (int i = 0; i < hashSize; i++) {
     for (HashAln* h = table[i]; h != NULL; h = h->next)
       printf("  %s: %d %c\n", h->chrom->name, h->pos, h->strand ? '+' : '-');
     while (!getchar()) ;
-  }*/
+  }* /
   c[n]++;
 }
 int i;
@@ -3270,12 +3286,14 @@ for (i = 100000 - 1; i > -1; i--)
     break;
 for (int j = 0; j <= i; j++)
   printf("%d\t%d\n", j, c[j]);
+*/
 
   // free hashtable
   for (int i = 0; i < hashSize; i++) {
     HashAln* tmp;
     HashAln* h = table[i];
     while (h != NULL) {
+      free(h->name);
       tmp = h->next;
       free(h);
       h = tmp;

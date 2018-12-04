@@ -192,6 +192,7 @@ typedef struct aln {
 } Aln;
 
 typedef struct hashAln {
+  char* name;       // read name
   Chrom* chrom;     // reference sequence
   Chrom* chrom1;    // other reference sequence (discordant only)
   uint32_t pos;     // position of the alignment
