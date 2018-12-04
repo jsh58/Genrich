@@ -2119,9 +2119,9 @@ void processAvgExt(Aln** unpair, int unpairIdx,
 }
 
 /* void saveAvgExt()
- * Save info for an unpaired alignment to list
- *   (for "extend to average length" option), for
- *   later processing by saveAvgExt().
+ * Save info for an unpaired alignment to an array,
+ *   for "extend to average length" option. Alignments
+ *   will be processed later by processAvgExt().
  */
 void saveAvgExt(char* qname, Aln* b, uint8_t count,
     Aln*** unpair, int* unpairIdx, int* unpairLen,
@@ -2858,27 +2858,6 @@ void checkAndAdd(HashAln** tableSn, uint32_t hashSizeSn,
       tableSn, idx))
     addToHash(chrom, NULL, pos, 0, strand, 0, tableSn,
       idx);
-/*else {
-  printf("%s: %d %c\n", chrom->name, pos, strand ? '+' : '-');
-  while(!getchar()) ;
-}*/
-}
-
-/* void saveHashPrSn()
- * Save individual alignments of paired alns as
- *   singletons, via checkAndAdd().
- */
-void saveHashPrSn(HashAln** table, uint32_t hashSize,
-    HashAln** tableSn, uint32_t hashSizeSn) {
-  for (int i = 0; i < hashSize; i++) {
-    for (HashAln* h = table[i]; h != NULL; h = h->next) {
-      // add both alignments as singletons
-      checkAndAdd(tableSn, hashSizeSn, h->chrom, h->pos,
-        true);
-      checkAndAdd(tableSn, hashSizeSn, h->chrom, h->pos1,
-        false);
-    }
-  }
 }
 
 /* void saveHashDcSn()
@@ -2898,6 +2877,63 @@ void saveHashDcSn(HashAln** table, uint32_t hashSize,
   }
 }
 
+/* void saveHashPrSn()
+ * Save individual alignments of paired alns as
+ *   singletons, via checkAndAdd().
+ */
+void saveHashPrSn(HashAln** table, uint32_t hashSize,
+    HashAln** tableSn, uint32_t hashSizeSn) {
+  for (int i = 0; i < hashSize; i++) {
+    for (HashAln* h = table[i]; h != NULL; h = h->next) {
+      // add both alignments as singletons
+      checkAndAdd(tableSn, hashSizeSn, h->chrom, h->pos,
+        true);
+      checkAndAdd(tableSn, hashSizeSn, h->chrom, h->pos1,
+        false);
+    }
+  }
+}
+
+/* void logDup()
+ * Print log information about a read identified as a
+ *   duplicate, based on alignment type.
+ */
+void logDup(File dups, bool gzOut, char* name,
+    Chrom* chrom, Chrom* chrom1, uint32_t pos,
+    uint32_t pos1, bool strand, bool strand1,
+    int alignType) {
+  switch (alignType) {
+    case PAIRED:
+      if (gzOut)
+        gzprintf(dups.gzf, "%s\t%s:%d-%d\tpaired\n",
+          name, chrom->name, pos, pos1);
+      else
+        fprintf(dups.f, "%s\t%s:%d-%d\tpaired\n",
+          name, chrom->name, pos, pos1);
+      break;
+    case SINGLE:
+      if (gzOut)
+        gzprintf(dups.gzf, "%s\t%s:%d,%c\tsingle\n",
+          name, chrom->name, pos, strand ? '+' : '-');
+      else
+        fprintf(dups.f, "%s\t%s:%d,%c\tsingle\n",
+          name, chrom->name, pos, strand ? '+' : '-');
+      break;
+    case DISCORD:
+      if (gzOut)
+        gzprintf(dups.gzf, "%s\t%s:%d,%c;%s:%d,%c\tdiscordant\n",
+          name, chrom->name, pos, strand ? '+' : '-',
+          chrom1->name, pos1, strand1 ? '+' : '-');
+      else
+        fprintf(dups.f, "%s\t%s:%d,%c;%s:%d,%c\tdiscordant\n",
+          name, chrom->name, pos, strand ? '+' : '-',
+          chrom1->name, pos1, strand1 ? '+' : '-');
+      break;
+    default:
+      exit(error("", ERRALNTYPE));
+  }
+}
+
 /* void addHashPr()
  * Add all paired alignments for a Read* to the hashtable.
  */
@@ -2912,27 +2948,26 @@ void addHashPr(Read* r, HashAln** table,
   }
 }
 
-// bool checkHashPr()
-// check set of paired alignments for match
+/* bool checkHashPr()
+ * Check a set of paired alignments for a match in the
+ *   hashtable. Return true if *any* match.
+ */
 bool checkHashPr(Read* r, HashAln** table,
-    uint32_t hashSize) {
+    uint32_t hashSize, File dups, bool dupsVerb,
+    bool gzOut) {
   for (int k = 0; k < r->alnLen; k++) {
     Aln* a = r->aln + k;
     uint32_t idx = jenkins_hash_aln(a->chrom, NULL,
       a->pos[0], a->pos[1], 0, 0, PAIRED, hashSize);
+    //HashAln* h = checkHash(a->chrom, NULL, a->pos[0],
+    //    a->pos[1], 0, 0, PAIRED, table, idx);
     if (checkHash(a->chrom, NULL, a->pos[0], a->pos[1],
-        0, 0, PAIRED, table, idx))
+        0, 0, PAIRED, table, idx)) {
+      if (dupsVerb)
+        logDup(dups, gzOut, r->name, a->chrom, NULL,
+          a->pos[0], a->pos[1], 0, 0, PAIRED);
       return true;
-
-/*fprintf(stderr, "    %s: %d - %d\n", a->chrom->name, a->pos[0], a->pos[1]);
-fprintf(stderr, "    %08x %04x %04x\n", a->chrom, a->pos[0], a->pos[1]);
-fprintf(stderr, "    idx: %d\n", idx);
-while (!getchar()) ;*/
-/* if (r->alnLen > 1) {
-//if (!strcmp(r->name, "SRR5427888.159319")) {
-  fprintf(stderr, "  dup! %s at %s:%d - %d\n", r->name, a->chrom->name, a->pos[0], a->pos[1]);
-  while (!getchar()) ;
-}*/
+    }
   }
   return false;
 }
@@ -2946,7 +2981,8 @@ void findDupsPr(Read** readPr, int readIdxPr, int readLenPr,
     double* totalLen, float asDiff, bool atacOpt,
     int atacLen5, int atacLen3, File bed, bool bedOpt,
     bool gzOut, bool ctrl, int sample, HashAln** tableSn,
-    uint32_t hashSizeSn, bool verbose) {
+    uint32_t hashSizeSn, File dups, bool dupsVerb,
+    bool verbose) {
 
   // initialize hashtable
   uint32_t hashSize = calcHashSize(readIdxPr * MAX_SIZE
@@ -2963,10 +2999,10 @@ void findDupsPr(Read** readPr, int readIdxPr, int readLenPr,
       Read* r = readPr[i] + j;
 
       // check hashtable for matches
-      if (checkHashPr(r, table, hashSize)) {
+      if (checkHashPr(r, table, hashSize, dups,
+          dupsVerb, gzOut))
         (*dupsPr)++;
-//printf("%s\n", r->name);
-      } else {
+      else {
         // add alignments to hashtable
         addHashPr(r, table, hashSize);
         // process alignments too
@@ -3021,10 +3057,13 @@ void addHashDc(Read* r, HashAln** table,
   }
 }
 
-// bool checkHashDc()
-// check each combination of discordant alignments for match
+/* bool checkHashDc()
+ * Check each combination of discordant alignments for a
+ *   match in the hashtable. Return true if *any* match.
+ */
 bool checkHashDc(Read* r, HashAln** table,
-    uint32_t hashSize) {
+    uint32_t hashSize, File dups, bool dupsVerb,
+    bool gzOut) {
   for (int k = 0; k < r->alnLen; k++) {
     Aln* a = r->aln + k;
     uint32_t pos = (a->strand ? a->pos[0] : a->pos[1]);
@@ -3034,14 +3073,22 @@ bool checkHashDc(Read* r, HashAln** table,
       uint32_t idx = jenkins_hash_aln(a->chrom, b->chrom,
         pos, pos1, a->strand, b->strand, DISCORD, hashSize);
       if (checkHash(a->chrom, b->chrom, pos, pos1,
-          a->strand, b->strand, DISCORD, table, idx))
+          a->strand, b->strand, DISCORD, table, idx)) {
+        if (dupsVerb)
+          logDup(dups, gzOut, r->name, a->chrom, b->chrom,
+            pos, pos1, a->strand, b->strand, DISCORD);
         return true;
-      // check reverse also
+      }
+      // check the reverse also
       idx = jenkins_hash_aln(b->chrom, a->chrom,
         pos1, pos, b->strand, a->strand, DISCORD, hashSize);
       if (checkHash(b->chrom, a->chrom, pos1, pos,
-          b->strand, a->strand, DISCORD, table, idx))
+          b->strand, a->strand, DISCORD, table, idx)) {
+        if (dupsVerb)
+          logDup(dups, gzOut, r->name, b->chrom, a->chrom,
+            pos1, pos, b->strand, a->strand, DISCORD);
         return true;
+      }
     }
   }
   return false;
@@ -3057,7 +3104,7 @@ void findDupsDc(Read** readDc, int readIdxDc, int readLenDc,
     bool atacOpt, int atacLen5, int atacLen3,
     File bed, bool bedOpt, bool gzOut, bool ctrl,
     int sample, HashAln** tableSn, uint32_t hashSizeSn,
-    bool verbose) {
+    File dups, bool dupsVerb, bool verbose) {
 
   // initialize hashtable
   uint32_t hashSize = calcHashSize(readIdxDc * MAX_SIZE
@@ -3074,10 +3121,10 @@ void findDupsDc(Read** readDc, int readIdxDc, int readLenDc,
       Read* r = readDc[i] + j;
 
       // check hashtable for matches
-      if (checkHashDc(r, table, hashSize)) {
+      if (checkHashDc(r, table, hashSize, dups,
+          dupsVerb, gzOut))
         (*dupsDc)++;
-//printf("duplicate: %s\n", r->name);
-      } else {
+      else {
         // add alignments to hashtable
         addHashDc(r, table, hashSize);
         // process alignments too
@@ -3102,7 +3149,6 @@ void findDupsDc(Read** readDc, int readIdxDc, int readLenDc,
 
       (*countDc)++;
     }
-
   }
 
   // save alns to singleton hashtable
@@ -3122,8 +3168,10 @@ void findDupsDc(Read** readDc, int readIdxDc, int readLenDc,
   free(table);
 }
 
-
-// add *all* singleton read alignments to the hashtable
+/* void addHashSn()
+ * Add all singleton alignments for a Read* to the
+ *   hashtable.
+ */
 void addHashSn(Read* r, HashAln** table,
     uint32_t hashSize) {
   for (int k = 0; k < r->alnLen; k++) {
@@ -3136,26 +3184,32 @@ void addHashSn(Read* r, HashAln** table,
   }
 }
 
-// bool checkHashSn()
-// check set of singleton alignments for match
+/* bool checkHashSn()
+ * Check a set of singleton alignments for a match in the
+ *   hashtable. Return true if *any* match.
+ */
 bool checkHashSn(Read* r, HashAln** table,
-    uint32_t hashSize) {
+    uint32_t hashSize, File dups, bool dupsVerb,
+    bool gzOut) {
   for (int k = 0; k < r->alnLen; k++) {
     Aln* a = r->aln + k;
     uint32_t pos = (a->strand ? a->pos[0] : a->pos[1]);
     uint32_t idx = jenkins_hash_aln(a->chrom, NULL,
       pos, 0, a->strand, 0, SINGLE, hashSize);
     if (checkHash(a->chrom, NULL, pos, 0, a->strand, 0,
-        SINGLE, table, idx))
+        SINGLE, table, idx)) {
+      if (dupsVerb)
+        logDup(dups, gzOut, r->name, a->chrom, NULL,
+          pos, 0, a->strand, 0, SINGLE);
       return true;
+    }
   }
   return false;
 }
 
 /* void findDupsSn()
- * Find PCR duplicates among singleton
- *   alignment sets.
- * Note: the hashtable is already created, and
+ * Find PCR duplicates among singleton alignment sets.
+ * Note: the hashtable was already created and
  *   populated by paired and discordant alns.
  */
 void findDupsSn(Read** readSn, int readIdxSn, int readLenSn,
@@ -3164,7 +3218,7 @@ void findDupsSn(Read** readSn, int readIdxSn, int readLenSn,
     bool atacOpt, int atacLen5, int atacLen3,
     File bed, bool bedOpt, bool gzOut, bool ctrl,
     int sample, HashAln** table, uint32_t hashSize,
-    bool verbose) {
+    File dups, bool dupsVerb, bool verbose) {
 
   // loop through singleton reads
   for (int i = 0; i <= readIdxSn; i++) {
@@ -3173,10 +3227,10 @@ void findDupsSn(Read** readSn, int readIdxSn, int readLenSn,
       Read* r = readSn[i] + j;
 
       // check hashtable for matches
-      if (checkHashSn(r, table, hashSize)) {
+      if (checkHashSn(r, table, hashSize, dups,
+          dupsVerb, gzOut))
         (*dupsSn)++;
-//printf("duplicate: %s\n", r->name);
-      } else {
+      else {
         // add alignments to hashtable
         addHashSn(r, table, hashSize);
         // process alignments too
@@ -3194,7 +3248,6 @@ void findDupsSn(Read** readSn, int readIdxSn, int readLenSn,
 
       (*countSn)++;
     }
-
   }
 
 printf("\nsingletons (size %d)\n", hashSize);
@@ -3232,9 +3285,8 @@ for (int j = 0; j <= i; j++)
 }
 
 /* void findDups()
- * Control elucidation of PCR duplicates. That's right,
- *   this is the big leagues! No more "finding" or "searching"
- *   for duplicates, we're *elucidating* them. Yeah.
+ * Control elucidation of PCR duplicates. Process reads
+ *   that are determined not to be duplicates.
  */
 void findDups(Read** readPr, int readIdxPr, int readLenPr,
     Read** readDc, int readIdxDc, int readLenDc,
@@ -3244,8 +3296,8 @@ void findDups(Read** readPr, int readIdxPr, int readLenPr,
     int* pairedPr, int* singlePr, double* totalLen,
     bool extendOpt, int extend, bool avgExtOpt,
     float asDiff, bool atacOpt, int atacLen5, int atacLen3,
-    File bed, bool bedOpt, bool gzOut, bool ctrl,
-    int sample, bool verbose) {
+    File bed, bool bedOpt, bool gzOut, File dups,
+    bool dupsVerb, bool ctrl, int sample, bool verbose) {
 
   // initialize hash table for singletons
   HashAln** tableSn = NULL;
@@ -3262,16 +3314,17 @@ void findDups(Read** readPr, int readIdxPr, int readLenPr,
       tableSn[i] = NULL;
   }
 
+  // evaluate and process paired alignments
   if (readIdxPr || readLenPr)
-    // evaluate and process paired alignments
     findDupsPr(readPr, readIdxPr, readLenPr, countPr,
       dupsPr, pairedPr, totalLen, asDiff, atacOpt,
       atacLen5, atacLen3, bed, bedOpt, gzOut, ctrl,
-      sample, tableSn, hashSizeSn, verbose);
+      sample, tableSn, hashSizeSn, dups, dupsVerb,
+      verbose);
 
   if (singleOpt) {
     // with avgExtOpt, calculate average fragment length
-    //   and hide it in 'extend' with extendOpt=true
+    //   and save it as 'extend' with extendOpt=true
     if (avgExtOpt) {
       extend = calcAvgLen(*totalLen, *pairedPr, verbose);
       if (extend)
@@ -3283,21 +3336,18 @@ void findDups(Read** readPr, int readIdxPr, int readLenPr,
       findDupsDc(readDc, readIdxDc, readLenDc, countDc,
         dupsDc, singlePr, extendOpt, extend, asDiff,
         atacOpt, atacLen5, atacLen3, bed, bedOpt, gzOut,
-        ctrl, sample, tableSn, hashSizeSn, verbose);
+        ctrl, sample, tableSn, hashSizeSn, dups, dupsVerb,
+        verbose);
 
     // evaluate and process singleton alignments
     if (readIdxSn || readLenSn)
       findDupsSn(readSn, readIdxSn, readLenSn, countSn,
         dupsSn, singlePr, extendOpt, extend, asDiff,
         atacOpt, atacLen5, atacLen3, bed, bedOpt, gzOut,
-        ctrl, sample, tableSn, hashSizeSn, verbose);
-
+        ctrl, sample, tableSn, hashSizeSn, dups, dupsVerb,
+        verbose);
   }
 
-/*fprintf(stderr, "readsPr: %d (%d)\n", *countPr, readIdxPr*MAX_SIZE + readLenPr);
-fprintf(stderr, "readsDc: %d (%d)\n", *countDc, readIdxDc*MAX_SIZE + readLenDc);
-fprintf(stderr, "readsSn: %d (%d)\n", *countSn, readIdxSn*MAX_SIZE + readLenSn);
-exit(0);*/
 /*if (readLenPr) {
   fprintf(stderr, "properly paired alns\n");
   //for (int i = 0; i < readLenPr; i++) {
@@ -3815,10 +3865,11 @@ int readSAM(File in, bool gz, char* line, Aln** aln,
     Aln*** unpair, int* unpairMem, float asDiff,
     bool atacOpt, int atacLen5, int atacLen3, File bed,
     bool bedOpt, bool gzOut, bool ctrl, int sample,
-    bool dupsOpt, Read*** readPr, int* readMemPr,
-    Read*** readDc, int* readMemDc, Read*** readSn,
-    int* readMemSn, int* countPr, int* dupsPr, int* countDc,
-    int* dupsDc, int* countSn, int* dupsSn, bool verbose) {
+    bool dupsOpt, File dups, bool dupsVerb, Read*** readPr,
+    int* readMemPr, Read*** readDc, int* readMemDc,
+    Read*** readSn, int* readMemSn, int* countPr,
+    int* dupsPr, int* countDc, int* dupsDc, int* countSn,
+    int* dupsSn, bool verbose) {
 
   // SAM fields to save
   char* qname, *rname, *cigar, *rnext, *seq, *qual, *extra;
@@ -4154,11 +4205,12 @@ int parseBAM(gzFile in, char* line, Aln** aln,
     bool avgExtOpt, Aln*** unpair, int* unpairMem,
     float asDiff, bool atacOpt, int atacLen5,
     int atacLen3, File bed, bool bedOpt, bool gzOut,
-    bool ctrl, int sample, bool dupsOpt, Read*** readPr,
-    int* readMemPr, Read*** readDc, int* readMemDc,
-    Read*** readSn, int* readMemSn, int* countPr,
-    int* dupsPr, int* countDc, int* dupsDc, int* countSn,
-    int* dupsSn, bool verbose) {
+    bool ctrl, int sample, bool dupsOpt, File dups,
+    bool dupsVerb, Read*** readPr, int* readMemPr,
+    Read*** readDc, int* readMemDc, Read*** readSn,
+    int* readMemSn, int* countPr, int* dupsPr,
+    int* countDc, int* dupsDc, int* countSn, int* dupsSn,
+    bool verbose) {
 
   // BAM fields to save
   int32_t refID, pos, l_seq, next_refID, next_pos, tlen;
@@ -4273,7 +4325,7 @@ int parseBAM(gzFile in, char* line, Aln** aln,
       singleOpt, pairedPr, singlePr, totalLen,
       extendOpt, extend, avgExtOpt, asDiff,
       atacOpt, atacLen5, atacLen3, bed, bedOpt, gzOut,
-      ctrl, sample, verbose);
+      dups, dupsVerb, ctrl, sample, verbose);
 
   else if (avgExtOpt)
     // process single alignments w/ avgExtOpt
@@ -4299,10 +4351,11 @@ int readBAM(gzFile in, char* line, Aln** aln,
     Aln*** unpair, int* unpairMem, float asDiff,
     bool atacOpt, int atacLen5, int atacLen3, File bed,
     bool bedOpt, bool gzOut, bool ctrl, int sample,
-    bool dupsOpt, Read*** readPr, int* readMemPr,
-    Read*** readDc, int* readMemDc, Read*** readSn,
-    int* readMemSn, int* countPr, int* dupsPr, int* countDc,
-    int* dupsDc, int* countSn, int* dupsSn, bool verbose) {
+    bool dupsOpt, File dups, bool dupsVerb, Read*** readPr,
+    int* readMemPr, Read*** readDc, int* readMemDc,
+    Read*** readSn, int* readMemSn, int* countPr,
+    int* dupsPr, int* countDc, int* dupsDc, int* countSn,
+    int* dupsSn, bool verbose) {
 
   // load first line from header
   int32_t l_text = readInt32(in, true);
@@ -4360,8 +4413,8 @@ int readBAM(gzFile in, char* line, Aln** aln,
     singleOpt, extendOpt, extend, avgExtOpt,
     unpair, unpairMem, asDiff, atacOpt, atacLen5,
     atacLen3, bed, bedOpt, gzOut, ctrl, sample, dupsOpt,
-    readPr, readMemPr, readDc, readMemDc, readSn,
-    readMemSn, countPr, dupsPr, countDc, dupsDc,
+    dups, dupsVerb, readPr, readMemPr, readDc, readMemDc,
+    readSn, readMemSn, countPr, dupsPr, countDc, dupsDc,
     countSn, dupsSn, verbose);
 }
 
@@ -4622,14 +4675,20 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
     char** xchrList, char* xFile, float pqvalue,
     bool qvalOpt, int minLen, bool minLenOpt, int maxGap,
     float minAUC, float asDiff, bool atacOpt, int atacLen5,
-    int atacLen3, bool dupsOpt, bool verbose) {
+    int atacLen3, bool dupsOpt, char* dupsFile,
+    bool verbose) {
 
   // open optional output files
-  File bed, pile;
+  File bed, pile, dups;
   if (bedFile != NULL)
     openWrite(bedFile, &bed, gzOut);
   if (pileFile != NULL)
     openWrite(pileFile, &pile, gzOut);
+  bool dupsVerb = false;
+  if (dupsOpt && dupsFile != NULL) {
+    openWrite(dupsFile, &dups, gzOut);
+    dupsVerb = true;
+  }
 
   // initialize variables
   char* line = (char*) memalloc(MAX_SIZE);
@@ -4722,9 +4781,10 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
           singleOpt, extendOpt, extend, avgExtOpt, &unpair,
           &unpairMem, asDiff, atacOpt, atacLen5, atacLen3,
           bed, bedFile != NULL, gzOut, i, sample, dupsOpt,
-          &readPr, &readMemPr, &readDc, &readMemDc,
-          &readSn, &readMemSn, &countPr, &dupsPr, &countDc,
-          &dupsDc, &countSn, &dupsSn, verbose);
+          dups, dupsVerb, &readPr, &readMemPr, &readDc,
+          &readMemDc, &readSn, &readMemSn, &countPr,
+          &dupsPr, &countDc, &dupsDc, &countSn, &dupsSn,
+          verbose);
       else
         count = readSAM(in, gz, line, &aln, readName,
           &totalLen, &unmapped, &paired, &single,
@@ -4734,9 +4794,10 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
           singleOpt, extendOpt, extend, avgExtOpt, &unpair,
           &unpairMem, asDiff, atacOpt, atacLen5, atacLen3,
           bed, bedFile != NULL, gzOut, i, sample, dupsOpt,
-          &readPr, &readMemPr, &readDc, &readMemDc,
-          &readSn, &readMemSn, &countPr, &dupsPr, &countDc,
-          &dupsDc, &countSn, &dupsSn, verbose);
+          dups, dupsVerb, &readPr, &readMemPr, &readDc,
+          &readMemDc, &readSn, &readMemSn, &countPr,
+          &dupsPr, &countDc, &dupsDc, &countSn, &dupsSn,
+          verbose);
 
       // log counts
       if (verbose)
@@ -4864,6 +4925,9 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
   if (bedFile != NULL && ( ( ! gzOut && fclose(bed.f) )
       || ( gzOut && gzclose(bed.gzf) != Z_OK ) ) )
     exit(error(bedFile, ERRCLOSE));
+  if (dupsVerb && ( ( ! gzOut && fclose(dups.f) )
+      || ( gzOut && gzclose(dups.gzf) != Z_OK ) ) )
+    exit(error(dupsFile, ERRCLOSE));
 }
 
 /* int saveXChrom()
@@ -4892,7 +4956,7 @@ void getArgs(int argc, char** argv) {
   // default parameters/filenames
   char* outFile = NULL, *inFile = NULL, *ctrlFile = NULL,
     *logFile = NULL, *pileFile = NULL, *bedFile = NULL,
-    *xFile = NULL;
+    *xFile = NULL, *dupsFile = NULL;
   char* xchrom = NULL;
   int extend = 0, minMapQ = 0, minLen = 0,
     maxGap = DEFMAXGAP, atacLen5 = DEFATAC, atacLen3 = 0;
@@ -4928,6 +4992,7 @@ void getArgs(int argc, char** argv) {
       case MINLEN: minLen = getInt(optarg); minLenOpt = true; break;
       case MAXGAP: maxGap = getInt(optarg); break;
       case DUPSOPT: dupsOpt = true; break;
+      case DUPSFILE: dupsFile = optarg; break;
       case VERBOSE: verbose = true; break;
       case VERSOPT: printVersion(); break;
       case HELP: usage(); break;
@@ -4981,7 +5046,8 @@ void getArgs(int argc, char** argv) {
     bedFile, gzOut, singleOpt, extendOpt, extend,
     avgExtOpt, minMapQ, xcount, xchrList, xFile, pqvalue,
     qvalOpt, minLen, minLenOpt, maxGap, minAUC, asDiff,
-    atacOpt, atacLen5, atacLen3, dupsOpt, verbose);
+    atacOpt, atacLen5, atacLen3, dupsOpt, dupsFile,
+    verbose);
 }
 
 /* int main()

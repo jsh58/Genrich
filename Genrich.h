@@ -41,7 +41,7 @@ enum sam { NIL, QNAME, FLAG, RNAME, POS, MAPQ, CIGAR, RNEXT,
 enum alignType { PAIRED, SINGLE, DISCORD };
 
 // command-line options
-#define OPTIONS     "ht:c:o:f:k:b:zyw:xjd:e:E:m:s:p:q:a:l:g:rvV"
+#define OPTIONS     "ht:c:o:f:k:b:zyw:xjd:e:E:m:s:p:q:a:l:g:rR:vV"
 #define HELP        'h'
 #define INFILE      't'
 #define CTRLFILE    'c'
@@ -65,6 +65,7 @@ enum alignType { PAIRED, SINGLE, DISCORD };
 #define MINLEN      'l'
 #define MAXGAP      'g'
 #define DUPSOPT     'r'
+#define DUPSFILE    'R'
 #define VERBOSE     'v'
 #define VERSOPT     'V'
 
