@@ -34,6 +34,7 @@
 // SAM fields
 enum sam { NIL, QNAME, FLAG, RNAME, POS, MAPQ, CIGAR, RNEXT,
   PNEXT, TLEN, SEQ, QUAL };
+#define SAMQUAL     33        // quality score offset
 #define SCORE       "AS"      // extra field: alignment score
 #define NOSCORE     -FLT_MAX  // for alignments with no alignment score(s)
 

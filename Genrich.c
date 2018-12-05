@@ -2306,11 +2306,12 @@ void copyAlns(Aln* aln, int alnLen, float score,
  * Save a set of singleton alignments.
  */
 void saveAlnsSingle(char* qname, Aln* aln, int alnLen,
-    float score, float asDiff, bool first, Read* r) {
+    float score, float asDiff, bool first, Read* r,
+    int qual) {
   // populate Read* struct
   r->name = (char*) memalloc(1 + strlen(qname));
   strcpy(r->name, qname);
-  r->qual = 0;      /* need to sum quality scores */
+  r->qual = qual;
   r->first = first;
   r->score = score;
 
@@ -2324,13 +2325,14 @@ void saveAlnsSingle(char* qname, Aln* aln, int alnLen,
  */
 void saveAlnsDiscord(char* qname, Aln* aln, int alnLen,
     float scoreR1, float scoreR2, float asDiff,
-    Read* r) {
+    Read* r, int qualR1, int qualR2) {
   // save R1 alignments
   saveAlnsSingle(qname, aln, alnLen, scoreR1, asDiff,
-    true, r);
+    true, r, qualR1);
   // save R2 alignments
   copyAlns(aln, alnLen, scoreR2, asDiff, false, &r->alnR2,
     &r->alnLenR2);
+  r->qual += qualR2;
   r->scoreR2 = scoreR2;
 }
 
@@ -2338,11 +2340,12 @@ void saveAlnsDiscord(char* qname, Aln* aln, int alnLen,
  * Save a set of properly paired alignments.
  */
 void saveAlnsPair(char* qname, Aln* aln, int alnLen,
-    float score, float asDiff, Read* r) {
+    float score, float asDiff, Read* r, int qualR1,
+    int qualR2) {
   // populate Read* struct
   r->name = (char*) memalloc(1 + strlen(qname));
   strcpy(r->name, qname);
-  r->qual = 0;      /* need to sum quality scores */
+  r->qual = qualR1 + qualR2;
   r->score = score;
 
   // adjust AS tolerance for secondary alns
@@ -2395,31 +2398,32 @@ void saveAlns(char* qname, Aln* aln, int alnLen, bool pair,
     int* readLenPr, int* readMemPr, Read*** readDc,
     int* readIdxDc, int* readLenDc, int* readMemDc,
     Read*** readSn, int* readIdxSn, int* readLenSn,
-    int* readMemSn) {
+    int* readMemSn, int qualR1, int qualR2) {
   if (pair) {
     // properly paired alignment(s)
     Read* r = createRead(readPr, readIdxPr, readLenPr,
       readMemPr);
-    saveAlnsPair(qname, aln, alnLen, scorePr, asDiff, r);
+    saveAlnsPair(qname, aln, alnLen, scorePr, asDiff, r,
+      qualR1, qualR2);
   } else if (singleOpt) {
     if (singleR1 && singleR2) {
       // both reads aligned (discordant)
       Read* r = createRead(readDc, readIdxDc, readLenDc,
         readMemDc);
       saveAlnsDiscord(qname, aln, alnLen, scoreR1,
-        scoreR2, asDiff, r);
+        scoreR2, asDiff, r, qualR1, qualR2);
     } else if (singleR1) {
       // only R1 read aligned
       Read* r = createRead(readSn, readIdxSn, readLenSn,
         readMemSn);
       saveAlnsSingle(qname, aln, alnLen, scoreR1, asDiff,
-        true, r);
+        true, r, qualR1);
     } else if (singleR2) {
       // only R2 read aligned
       Read* r = createRead(readSn, readIdxSn, readLenSn,
         readMemSn);
       saveAlnsSingle(qname, aln, alnLen, scoreR2, asDiff,
-        false, r);
+        false, r, qualR2);
     }
   }
 }
@@ -2627,7 +2631,7 @@ int processPair(char* qname, Aln* aln, int alnLen,
  *   Determine if the set has complete paired
  *   alignments or not, and what the best alignment
  *   scores are.
- * If duplicate removal is required, pass results to
+ * If duplicate removal is required, save alignments via
  *   saveAlns(), else pass results to processPair()
  *   or processSingle() directly.
  */
@@ -2642,7 +2646,8 @@ void processAlns(char* qname, Aln* aln, int alnLen,
     int* readIdxPr, int* readLenPr, int* readMemPr,
     Read*** readDc, int* readIdxDc, int* readLenDc,
     int* readMemDc, Read*** readSn, int* readIdxSn,
-    int* readLenSn, int* readMemSn, bool verbose) {
+    int* readLenSn, int* readMemSn, int qualR1,
+    int qualR2, bool verbose) {
 
   // determine if paired alns are valid, and best score
   float scorePr = NOSCORE, scoreR1 = NOSCORE,
@@ -2676,7 +2681,8 @@ void processAlns(char* qname, Aln* aln, int alnLen,
       singleR2, scorePr, scoreR1, scoreR2, asDiff,
       readPr, readIdxPr, readLenPr, readMemPr,
       readDc, readIdxDc, readLenDc, readMemDc,
-      readSn, readIdxSn, readLenSn, readMemSn);
+      readSn, readIdxSn, readLenSn, readMemSn,
+      qualR1, qualR2);
 
   else {
     // process alns directly
@@ -2993,8 +2999,8 @@ void findDupsPr(Read** readPr, int readIdxPr, int readLenPr,
     bool verbose) {
 
   // initialize hashtable
-  uint32_t hashSize = calcHashSize(readIdxPr * MAX_SIZE
-    + readLenPr);
+  int count = readIdxPr * MAX_SIZE + readLenPr;
+  uint32_t hashSize = calcHashSize(count);
   HashAln** table = (HashAln**) memalloc(hashSize
     * sizeof(HashAln*));
   for (int i = 0; i < hashSize; i++)
@@ -3366,53 +3372,7 @@ void findDups(Read** readPr, int readIdxPr, int readLenPr,
         verbose);
   }
 
-/*if (readLenPr) {
-  fprintf(stderr, "properly paired alns\n");
-  //for (int i = 0; i < readLenPr; i++) {
-  for (int i = 0; i < 5; i++) {
-    Read* r = readPr[0] + i;
-    fprintf(stderr, "  read #%d: %s\n", i, r->name);
-    for (int j = 0; j < r->alnLen; j++) {
-      Aln* a = r->aln + j;
-      fprintf(stderr, "    %s: %d - %d\n", a->chrom->name, a->pos[0], a->pos[1]);
-    }
-  }
-}*/
-/*if (readLenDc) {
-  fprintf(stderr, "discordant alns\n");
-  //for (int i = 0; i < readLenDc; i++) {
-  for (int i = 0; i < 5; i++) {
-    Read* r = readDc[0] + i;
-    fprintf(stderr, "  read #%d: %s\n", i, r->name);
-    for (int j = 0; j < r->alnLen; j++) {
-      Aln* a = r->aln + j;
-      fprintf(stderr, "    %s: %d - %d, %c R1\n", a->chrom->name, a->pos[0], a->pos[1],
-        a->strand ? '+' : '-');
-    }
-    for (int j = 0; j < r->alnLenR2; j++) {
-      Aln* a = r->alnR2 + j;
-      fprintf(stderr, "    %s: %d - %d, %c R2\n", a->chrom->name, a->pos[0], a->pos[1],
-        a->strand ? '+' : '-');
-    }
-  }
-//while(!getchar()) ;
 }
-if (readLenSn) {
-  fprintf(stderr, "singleton alns\n");
-  //for (int i = 0; i < readLenSn; i++) {
-  for (int i = 0; i < 5; i++) {
-    Read* r = readSn[0] + i;
-    fprintf(stderr, "  read #%d: %s\n", i, r->name);
-    for (int j = 0; j < r->alnLen; j++) {
-      Aln* a = r->aln + j;
-      fprintf(stderr, "    %s: %d - %d, %c\n", a->chrom->name, a->pos[0], a->pos[1],
-        a->strand ? '+' : '-');
-    }
-  }
-}
-while(!getchar()) ;*/
-}
-
 
 /*** Save alignment information ***/
 
@@ -3494,6 +3454,18 @@ bool saveSingleAln(Aln** aln, int* alnLen,
   return true;
 }
 
+/* int sumQual()
+ * Sum an array/string of quality scores.
+ */
+int sumQual(char* qual, int len, int offset) {
+  if (qual[0] == 0xFF)  // BAM 'null' value
+    return 0;
+  int sum = 0;
+  for (int i = 0; i < len; i++)
+    sum += qual[i] - offset;
+  return sum;
+}
+
 /* bool parseAlign()
  * Parse a SAM/BAM alignment record. Save alignment
  *   info to Aln* array. Return true unless the max.
@@ -3502,10 +3474,23 @@ bool saveSingleAln(Aln** aln, int* alnLen,
 bool parseAlign(Aln** aln, int* alnLen, uint16_t flag,
     Chrom* chrom, uint32_t pos, int length, uint32_t pnext,
     int* paired, int* single, int* secPair, int* secSingle,
-    int* skipped, bool singleOpt, float score) {
+    int* skipped, bool singleOpt, float score,
+    bool dupsOpt, char* qual, int qualLen, int offset,
+    int* qualR1, int* qualR2) {
 
+  // save sum of quality scores (only if removing dups)
+  if (dupsOpt) {
+    if (flag & 0x40) {
+      if (! *qualR1 && strcmp(qual, "*"))
+        *qualR1 = sumQual(qual, qualLen, offset);
+    } else {
+      if (! *qualR2 && strcmp(qual, "*"))
+        *qualR2 = sumQual(qual, qualLen, offset);
+    }
+  }
+
+  // paired alignment: save alignment information
   if ((flag & 0x3) == 0x3) {
-    // paired alignment: save alignment information
     if (chrom->skip || ! chrom->save)
       (*skipped)++;
     else {
@@ -3905,7 +3890,8 @@ int readSAM(File in, bool gz, char* line, Aln** aln,
   int readLenDc = 0;  // /   (with dupsOpt)
   int readIdxSn = 0;  // \ indexes into read array readSn
   int readLenSn = 0;  // /   (with dupsOpt)
-  bool pastHeader = false;  // to check for misplaced header lines
+  int qualR1 = 0, qualR2 = 0; // sums of quality scores
+  bool pastHeader = false;    // to check for misplaced header lines
   int count = 0;
   while (getLine(line, MAX_SIZE, in, gz) != NULL) {
 
@@ -3969,8 +3955,9 @@ int readSAM(File in, bool gz, char* line, Aln** aln,
           readPr, &readIdxPr, &readLenPr, readMemPr,
           readDc, &readIdxDc, &readLenDc, readMemDc,
           readSn, &readIdxSn, &readLenSn, readMemSn,
-          verbose);
+          qualR1, qualR2, verbose);
       alnLen = 0;
+      qualR1 = qualR2 = 0;
       strncpy(readName, qname, MAX_ALNS);
     }
 
@@ -3979,11 +3966,12 @@ int readSAM(File in, bool gz, char* line, Aln** aln,
     float score = getScore(extra);
     if (! parseAlign(aln, &alnLen, flag, ref, pos, length,
         pnext, paired, single, secPair, secSingle, skipped,
-        singleOpt, score) && verbose)
+        singleOpt, score, dupsOpt, qual, strlen(qual),
+        SAMQUAL, &qualR1, &qualR2) && verbose)
       fprintf(stderr, "Warning! Read %s has more than %d alignments\n",
         qname, MAX_ALNS);
     // NOTE: the following SAM fields are ignored:
-    //   rnext, tlen, qual
+    //   rnext, tlen
   }
 
   // process last set of alns
@@ -3997,15 +3985,20 @@ int readSAM(File in, bool gz, char* line, Aln** aln,
       readPr, &readIdxPr, &readLenPr, readMemPr,
       readDc, &readIdxDc, &readLenDc, readMemDc,
       readSn, &readIdxSn, &readLenSn, readMemSn,
-      verbose);
+      qualR1, qualR2, verbose);
 
-  // remove duplicates
-  if (dupsOpt) {
-    // process remaining alignments
-  }
+  if (dupsOpt)
+    // remove duplicates and process all alignments
+    findDups(*readPr, readIdxPr, readLenPr, *readDc,
+      readIdxDc, readLenDc, *readSn, readIdxSn, readLenSn,
+      countPr, dupsPr, countDc, dupsDc, countSn, dupsSn,
+      singleOpt, pairedPr, singlePr, totalLen,
+      extendOpt, extend, avgExtOpt, asDiff,
+      atacOpt, atacLen5, atacLen3, bed, bedOpt, gzOut,
+      dups, dupsVerb, ctrl, sample, verbose);
 
-  // process single alignments w/ avgExtOpt
-  if (avgExtOpt)
+  else if (avgExtOpt)
+    // process single alignments w/ avgExtOpt
     processAvgExt(*unpair, unpairIdx, unpairLen,
       *totalLen, *pairedPr, bed, bedOpt, gzOut,
       ctrl, sample, verbose);
@@ -4247,6 +4240,7 @@ int parseBAM(gzFile in, char* line, Aln** aln,
   int readLenDc = 0;  // /   (with dupsOpt)
   int readIdxSn = 0;  // \ indexes into read array readSn
   int readLenSn = 0;  // /   (with dupsOpt)
+  int qualR1 = 0, qualR2 = 0; // sums of quality scores
   int count = 0;
   int32_t block_size;
   while ((block_size = readInt32(in, false)) != EOF) {
@@ -4305,21 +4299,24 @@ int parseBAM(gzFile in, char* line, Aln** aln,
           readPr, &readIdxPr, &readLenPr, readMemPr,
           readDc, &readIdxDc, &readLenDc, readMemDc,
           readSn, &readIdxSn, &readLenSn, readMemSn,
-          verbose);
+          qualR1, qualR2, verbose);
       alnLen = 0;
+      qualR1 = qualR2 = 0;
       strncpy(readName, read_name, MAX_ALNS);
     }
 
     // save alignment information
     int length = calcDistBAM(l_seq, n_cigar_op, cigar); // distance to 3' end
-    float score = getBAMscore(extra, block_size - (int) (extra - line));
+    float score = getBAMscore(extra, block_size
+      - (int) (extra - line));
     if (! parseAlign(aln, &alnLen, flag, chrom + idx[refID],
         pos, length, next_pos, paired, single, secPair,
-        secSingle, skipped, singleOpt, score) && verbose)
+        secSingle, skipped, singleOpt, score, dupsOpt,
+        qual, l_seq, 0, &qualR1, &qualR2) && verbose)
       fprintf(stderr, "Warning! Read %s has more than %d alignments\n",
         read_name, MAX_ALNS);
     // NOTE: the following BAM fields are ignored:
-    //   next_refID, tlen, seq, qual
+    //   next_refID, tlen, seq
   }
 
   // process last set of alns
@@ -4333,7 +4330,7 @@ int parseBAM(gzFile in, char* line, Aln** aln,
       readPr, &readIdxPr, &readLenPr, readMemPr,
       readDc, &readIdxDc, &readLenDc, readMemDc,
       readSn, &readIdxSn, &readLenSn, readMemSn,
-      verbose);
+      qualR1, qualR2, verbose);
 
   if (dupsOpt)
     // remove duplicates and process all alignments
