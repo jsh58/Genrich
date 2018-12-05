@@ -2986,6 +2986,124 @@ bool checkHashPr(Read* r, HashAln** table,
   return false;
 }
 
+//////////////////////////////////////////////////////////
+
+#include <time.h>
+int johnPartition(int* qual, int* order, int low, int high,
+    int* qual0, int* qual1, int* qual2, int* order0,
+    int* order1, int* order2, int* idxHigh) {
+  int pivot = qual[high - 1];  // pivot value: last elt
+  int idx0 = 0, idx1 = 0, idx2 = 0;
+
+  for (int j = low; j < high; j++) {
+    if (qual[j] > pivot) {
+      qual0[idx0] = qual[j];
+      order0[idx0] = order[j];
+      idx0++;
+    } else if (qual[j] == pivot) {
+      qual1[idx1] = qual[j];
+      order1[idx1] = order[j];
+      idx1++;
+    } else {
+      qual2[idx2] = qual[j];
+      order2[idx2] = order[j];
+      idx2++;
+    }
+  }
+//fprintf(stderr, "pivotVal=%d on [%d, %d)\n", pivot, low, high);
+//fprintf(stderr, "  idx0=%d, idx1=%d, idx2=%d\n", idx0, idx1, idx2);
+  if (! idx0 && ! idx2)
+    return 0;
+
+  // recombine that shit
+  int i = 0;
+  bool val0 = (bool) idx0, val1 = true;
+  for (int j = low; j < high; j++) {
+    if (val0) {
+      qual[j] = qual0[i];
+      order[j] = order0[i];
+      if (++i == idx0) {
+        val0 = false;
+        i = 0;
+      }
+    } else if (val1) {
+      qual[j] = qual1[i];
+      order[j] = order1[i];
+      if (++i == idx1) {
+        val1 = false;
+        i = 0;
+      }
+    } else {
+      qual[j] = qual2[i];
+      order[j] = order2[i];
+      i++;
+    }
+  }
+
+// 1-2 check
+/*fprintf(stderr, "  below=%d, (%d - %d), above=%d",
+  idx0 ? qual[low+idx0-1] : -1, qual[low+idx0],
+  qual[low+idx0+idx1-1], qual[low+idx0+idx1]);
+while(!getchar()) ;*/
+  *idxHigh = low + idx0 + idx1;
+  return low + idx0;
+}
+void johnSort(int* qual, int* order, int low, int high,
+    int* qual0, int* qual1, int* qual2, int* order0,
+    int* order1, int* order2) {
+  if (low < high) {
+//fprintf(stderr, "partition of value %d, [%d, %d]", qual[high], low, high-1);
+    int idx1 = 0;
+    int idx = johnPartition(qual, order, low, high, qual0,
+      qual1, qual2, order0, order1, order2, &idx1);
+//fprintf(stderr, " -> idx %d", idx);
+//for (int i = 0; i < 5; i++)
+//  fprintf(stderr, "%d: %d\n", i, qual[i]);
+//while(!getchar()) ;
+    if (idx) {
+      johnSort(qual, order, low, idx, qual0, qual1,
+        qual2, order0, order1, order2);
+      johnSort(qual, order, idx1, high, qual0, qual1,
+        qual2, order0, order1, order2);
+    }
+  }
+}
+void sortReads(Read** arr, int count, int* order,
+    int* qual, int* order0, int* order1, int* order2,
+    int* qual0, int* qual1, int* qual2) {
+  // initialize order and qual arrays
+  for (int i = 0; i < count; i++) {
+    order[i] = i;
+    qual[i] = (arr[i / MAX_SIZE] + i % MAX_SIZE)->qual;
+  }
+
+fprintf(stderr, "sorting...\n");
+time_t sec = time(NULL);
+  johnSort(qual, order, 0, count, qual0, qual1, qual2,
+    order0, order1, order2);
+time_t sec2 = time(NULL);
+
+/*int q = 0, c = 0;
+for (int i = 0; i < count; i++) {
+  if (qual[i] != q) {
+    if (q) {
+      fprintf(stderr, "%d\t%d", q, c);
+      while(!getchar()) ;
+    }
+    q = qual[i];
+    c = 1;
+  } else
+    c++;
+}
+/*for (int i = 9999; i > -1; i--)
+  if (c[i]) {
+    fprintf(stderr, "%d\t%d", i, c[i]);
+    while(!getchar()) ;
+  }*/
+fprintf(stderr, "time taken: %ld sec\n", sec2 - sec);
+
+}
+
 /* void findDupsPr()
  * Find PCR duplicates among properly paired
  *   alignment sets.
@@ -2996,6 +3114,8 @@ void findDupsPr(Read** readPr, int readIdxPr, int readLenPr,
     int atacLen5, int atacLen3, File bed, bool bedOpt,
     bool gzOut, bool ctrl, int sample, HashAln** tableSn,
     uint32_t hashSizeSn, File dups, bool dupsVerb,
+    int* order, int* qual, int* order0, int* order1,
+    int* order2, int* qual0, int* qual1, int* qual2,
     bool verbose) {
 
   // initialize hashtable
@@ -3007,6 +3127,15 @@ void findDupsPr(Read** readPr, int readIdxPr, int readLenPr,
     table[i] = NULL;
 
   // loop through paired reads
+  sortReads(readPr, count, order, qual, order0, order1,
+    order2, qual0, qual1, qual2);
+for (int i = 0; i < count; i++) {
+  Read* r = readPr[order[i] / MAX_SIZE] + order[i] % MAX_SIZE;
+  fprintf(stderr, "%d\t%d\t%s", i, r->qual, r->name);
+  while(!getchar()) ;
+}
+exit(0);
+
   for (int i = 0; i <= readIdxPr; i++) {
     int end = (i == readIdxPr ? readLenPr : MAX_SIZE);
     for (int j = 0; j < end; j++) {
@@ -3338,13 +3467,27 @@ void findDups(Read** readPr, int readIdxPr, int readLenPr,
       tableSn[i] = NULL;
   }
 
+  // malloc variables for efficient sorting
+  int count = MAX(readIdxPr * MAX_SIZE + readLenPr,
+    MAX(readIdxDc * MAX_SIZE + readLenDc,
+    readIdxSn * MAX_SIZE + readLenSn));
+  int* order = (int*) memalloc(count * sizeof(int));
+  int* qual = (int*) memalloc(count * sizeof(int));
+  int* order0 = (int*) memalloc(count * sizeof(int));
+  int* order1 = (int*) memalloc(count * sizeof(int));
+  int* order2 = (int*) memalloc(count * sizeof(int));
+  int* qual0 = (int*) memalloc(count * sizeof(int));
+  int* qual1 = (int*) memalloc(count * sizeof(int));
+  int* qual2 = (int*) memalloc(count * sizeof(int));
+
   // evaluate and process paired alignments
   if (readIdxPr || readLenPr)
     findDupsPr(readPr, readIdxPr, readLenPr, countPr,
       dupsPr, pairedPr, totalLen, asDiff, atacOpt,
       atacLen5, atacLen3, bed, bedOpt, gzOut, ctrl,
       sample, tableSn, hashSizeSn, dups, dupsVerb,
-      verbose);
+      order, qual, order0, order1, order2, qual0, qual1,
+      qual2, verbose);
 
   if (singleOpt) {
     // with avgExtOpt, calculate average fragment length
@@ -3372,6 +3515,15 @@ void findDups(Read** readPr, int readIdxPr, int readLenPr,
         verbose);
   }
 
+  // free memory
+  free(order);
+  free(qual);
+  free(order0);
+  free(order1);
+  free(order2);
+  free(qual0);
+  free(qual1);
+  free(qual2);
 }
 
 /*** Save alignment information ***/
