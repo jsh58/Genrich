@@ -81,7 +81,7 @@ int error(const char* msg, enum errCode err) {
 /* void* memalloc()
  * Allocates a heap block.
  */
-void* memalloc(int size) {
+void* memalloc(size_t size) {
   void* ans = malloc(size);
   if (ans == NULL)
     exit(error("", ERRMEM));
@@ -91,7 +91,7 @@ void* memalloc(int size) {
 /* void* memrealloc()
  * Changes the size of a heap block.
  */
-void* memrealloc(void* ptr, int size) {
+void* memrealloc(void* ptr, size_t size) {
   void* ans = realloc(ptr, size);
   if (ans == NULL)
     exit(error("", ERRMEM));
@@ -357,7 +357,7 @@ void computeQval(Chrom* chrom, int chromLen,
 
   // check that collected p-value lengths match genomeLen
   if (checkLen != genomeLen) {
-    char* msg = (char*) memalloc(MAX_ALNS);
+    char msg[MAX_ALNS];
     sprintf(msg, "Genome length (%ld) does not match p-value length (%ld)",
       genomeLen, checkLen);
     exit(error(msg, ERRISSUE));
@@ -1622,7 +1622,7 @@ void savePileupCtrl(Chrom* chrom, int chromLen,
 
     // update array length
     if (pos >= chr->ctrlLen) {
-      char* msg = (char*) memalloc(MAX_ALNS);
+      char msg[MAX_ALNS];
       sprintf(msg, "%s (%s)", errMsg[ERRARRC], chr->name);
       exit(error(msg, ERRISSUE));
     }
@@ -1631,7 +1631,7 @@ void savePileupCtrl(Chrom* chrom, int chromLen,
     // check for val error (should end at 0)
     val = updateVal(d->cov[j], d->frac[j], &cov, &frac);
     if (val) {
-      char* msg = (char*) memalloc(MAX_ALNS);
+      char msg[MAX_ALNS];
       sprintf(msg, "Control pileup for ref %s finishes at %f (not 0.0)",
         chr->name, val);
       exit(error(msg, ERRISSUE));
@@ -1754,7 +1754,7 @@ double savePileupTreat(Chrom* chrom, int chromLen) {
 
     // verify array length
     if (pos + 1 != chr->treatLen) {
-      char* msg = (char*) memalloc(MAX_ALNS);
+      char msg[MAX_ALNS];
       sprintf(msg, "%s (%s)", errMsg[ERRARR], chr->name);
       exit(error(msg, ERRISSUE));
     }
@@ -1762,7 +1762,7 @@ double savePileupTreat(Chrom* chrom, int chromLen) {
     // check for val error (should end at 0)
     val = updateVal(d->cov[j], d->frac[j], &cov, &frac);
     if (val) {
-      char* msg = (char*) memalloc(MAX_ALNS);
+      char msg[MAX_ALNS];
       sprintf(msg, "Treatment pileup for ref %s finishes at %f (not 0.0)",
         chr->name, val);
       exit(error(msg, ERRISSUE));
@@ -1878,7 +1878,7 @@ void addFrac(int16_t* cov, uint8_t* frac, uint8_t count) {
         *frac += 0x40;
       break;
     default: ;
-      char* msg = (char*) memalloc(MAX_ALNS);
+      char msg[MAX_ALNS];
       sprintf(msg, "%s (%d)", errMsg[ERRALNS], count);
       exit(error(msg, ERRISSUE));
   }
@@ -1961,7 +1961,7 @@ void subFrac(int16_t* cov, uint8_t* frac, uint8_t count) {
       }
       break;
     default: ;
-      char* msg = (char*) memalloc(MAX_ALNS);
+      char msg[MAX_ALNS];
       sprintf(msg, "%s (%d)", errMsg[ERRALNS], count);
       exit(error(msg, ERRISSUE));
   }
@@ -2005,7 +2005,7 @@ uint32_t saveInterval(Chrom* c, int64_t start, int64_t end,
     start = 0;
   }
   if (start >= c->len) {
-    char* msg = (char*) memalloc(MAX_ALNS);
+    char msg[MAX_ALNS];
     sprintf(msg, "Read %s, ref. %s", qname, c->name);
     exit(error(msg, ERRPOS));
   }
@@ -2028,7 +2028,7 @@ uint32_t saveInterval(Chrom* c, int64_t start, int64_t end,
   }
 
   // check for overflow/underflow (c->diff->cov is int16_t)
-  if (c->diff->cov[start] == SHRT_MAX) {
+  if (c->diff->cov[start] == INT16_MAX) {
     if (verbose) {
       fprintf(stderr, "Warning! Read %s, alignment at (%s, %ld-%ld)",
         qname, c->name, start, end);
@@ -2036,7 +2036,7 @@ uint32_t saveInterval(Chrom* c, int64_t start, int64_t end,
     }
     return 0;
   }
-  if (c->diff->cov[end] == SHRT_MIN) {
+  if (c->diff->cov[end] == INT16_MIN) {
     if (verbose) {
       fprintf(stderr, "Warning! Read %s, alignment at (%s, %ld-%ld)",
         qname, c->name, start, end);
@@ -2243,6 +2243,14 @@ Read* createRead(Read*** read, int* readIdx,
     int* readLen, int* readMem) {
   // alloc memory if necessary
   if (*readLen == 0 && *readIdx == *readMem) {
+    // check if max. number of reads exceeded
+    if ((*readMem + 1) * MAX_SIZE > UINT32_MAX) {
+      char msg[MAX_ALNS];
+      sprintf(msg, "Exceeded max. number of reads (%u)",
+        UINT32_MAX);
+      exit(error(msg, ERRISSUE));
+    }
+
     *read = (Read**) memrealloc(*read,
       (*readMem + 1) * sizeof(Read*));
     (*read)[*readMem] = (Read*) memalloc(MAX_SIZE
@@ -2524,7 +2532,7 @@ int processSingle(char* qname, Aln* aln, int alnLen,
 
   // check for error saving alignments
   if (saved != count) {
-    char* msg = (char*) memalloc(MAX_ALNS);
+    char msg[MAX_ALNS];
     sprintf(msg, "Saved %d alignments for read %s; should have been %d",
       saved, qname, count);
     exit(error(msg, ERRISSUE));
@@ -2616,7 +2624,7 @@ int processPair(char* qname, Aln* aln, int alnLen,
 
   // check for error saving alignments
   if (saved != count) {
-    char* msg = (char*) memalloc(MAX_ALNS);
+    char msg[MAX_ALNS];
     sprintf(msg, "Saved %d alignments for read %s; should have been %d",
       saved, qname, count);
     exit(error(msg, ERRISSUE));
@@ -2714,20 +2722,20 @@ void processAlns(char* qname, Aln* aln, int alnLen,
 
 /*** Efficient read sorting ***/
 
-/* int johnPartition()
+/* uint32_t johnPartition()
  * Partition the reads of a section of the qual/order
  *   arrays based on one value into 3 bins (greater,
  *   equal, and lower).
  */
-int johnPartition(int* qual, int* order, int low, int high,
-    int* qual0, int* qual1, int* qual2, int* order0,
-    int* order1, int* order2, int* idxHigh) {
+uint32_t johnPartition(int* qual, uint32_t* order, uint32_t low,
+    uint32_t high, int* qual0, int* qual1, int* qual2,
+    uint32_t* order0, uint32_t* order1, uint32_t* order2, uint32_t* idxHigh) {
   int pivot = qual[high - 1];  // pivot value: last elt
 
   // separate qual values into temp arrays --
   //   qual0 for higher values, qual1 equal, qual2 lower
-  int idx0 = 0, idx1 = 0, idx2 = 0; // indexes into temp arrays
-  for (int j = low; j < high; j++) {
+  uint32_t idx0 = 0, idx1 = 0, idx2 = 0; // indexes into temp arrays
+  for (uint32_t j = low; j < high; j++) {
     if (qual[j] > pivot) {
       qual0[idx0] = qual[j];
       order0[idx0] = order[j];
@@ -2749,9 +2757,9 @@ int johnPartition(int* qual, int* order, int low, int high,
     return 0; // all equal values, no need to shuffle
 
   // recombine temp arrays back into qual/order
-  int i = 0;
+  uint32_t i = 0;
   bool val0 = (bool) idx0, val1 = true;
-  for (int j = low; j < high; j++) {
+  for (uint32_t j = low; j < high; j++) {
     if (val0) {
       qual[j] = qual0[i];
       order[j] = order0[i];
@@ -2787,13 +2795,13 @@ int johnPartition(int* qual, int* order, int low, int high,
  * Variation of quicksort that is stable and optimized
  *   for repeated qual values.
  */
-void johnSort(int* qual, int* order, int low, int high,
-    int* qual0, int* qual1, int* qual2, int* order0,
-    int* order1, int* order2) {
-  if (low < high - 1) {
-    int idx1 = 0; // new low index for upper recursive call
-    int idx = johnPartition(qual, order, low, high, qual0,
-      qual1, qual2, order0, order1, order2, &idx1);
+void johnSort(int* qual, uint32_t* order, uint32_t low,
+    uint32_t high, int* qual0, int* qual1, int* qual2,
+    uint32_t* order0, uint32_t* order1, uint32_t* order2) {
+  if (low + 1 < high) {
+    uint32_t idx1 = 0; // new low index for upper recursive call
+    uint32_t idx = johnPartition(qual, order, low, high,
+      qual0, qual1, qual2, order0, order1, order2, &idx1);
     if (idx)
       // lower recursive call
       johnSort(qual, order, low, idx, qual0, qual1,
@@ -2812,12 +2820,12 @@ void johnSort(int* qual, int* order, int low, int high,
  *   *stable* quicksort that is optimized for these
  *   arrays in which values are frequently repeated.
  */
-void sortReads(Read** arr, int count, int* order,
-    int* qual, int* order0, int* order1, int* order2,
+void sortReads(Read** arr, uint32_t count, uint32_t* order,
+    int* qual, uint32_t* order0, uint32_t* order1, uint32_t* order2,
     int* qual0, int* qual1, int* qual2) {
 
   // initialize order and qual arrays
-  for (int i = 0; i < count; i++) {
+  for (uint32_t i = 0; i < count; i++) {
     order[i] = i;
     qual[i] = (arr[i / MAX_SIZE] + i % MAX_SIZE)->qual;
   }
@@ -2875,9 +2883,9 @@ for (int i = 9999; i > -1; i--)
  *   alignments, but they will be counterbalanced
  *   by PCR duplicates (which will be discarded).
  */
-uint32_t calcHashSize(int count) {
+uint32_t calcHashSize(uint32_t count) {
   uint32_t size = 2;
-  uint32_t val = 4 * count / 3;
+  uint32_t val = MIN(UINT32_MAX, 4 * count / 3);
   for (int i = 1; i < 31; i++) {
     if (size >= val)
       return size;
@@ -3032,7 +3040,7 @@ void checkAndAdd(HashAln** tableSn, uint32_t hashSizeSn,
  */
 void saveHashDcSn(HashAln** table, uint32_t hashSize,
     HashAln** tableSn, uint32_t hashSizeSn) {
-  for (int i = 0; i < hashSize; i++) {
+  for (uint32_t i = 0; i < hashSize; i++) {
     for (HashAln* h = table[i]; h != NULL; h = h->next) {
       // add both alignments as singletons
       checkAndAdd(tableSn, hashSizeSn, h->chrom, h->pos,
@@ -3049,7 +3057,7 @@ void saveHashDcSn(HashAln** table, uint32_t hashSize,
  */
 void saveHashPrSn(HashAln** table, uint32_t hashSize,
     HashAln** tableSn, uint32_t hashSizeSn) {
-  for (int i = 0; i < hashSize; i++) {
+  for (uint32_t i = 0; i < hashSize; i++) {
     for (HashAln* h = table[i]; h != NULL; h = h->next) {
       // add both alignments as singletons
       checkAndAdd(tableSn, hashSizeSn, h->chrom, h->pos,
@@ -3149,16 +3157,16 @@ void findDupsPr(Read** readPr, int readIdxPr, int readLenPr,
     int atacLen5, int atacLen3, File bed, bool bedOpt,
     bool gzOut, bool ctrl, int sample, HashAln** tableSn,
     uint32_t hashSizeSn, File dups, bool dupsVerb,
-    int* order, int* qual, int* order0, int* order1,
-    int* order2, int* qual0, int* qual1, int* qual2,
+    uint32_t* order, int* qual, uint32_t* order0, uint32_t* order1,
+    uint32_t* order2, int* qual0, int* qual1, int* qual2,
     bool verbose) {
 
   // initialize hashtable
-  int count = readIdxPr * MAX_SIZE + readLenPr;
+  uint32_t count = readIdxPr * MAX_SIZE + readLenPr;
   uint32_t hashSize = calcHashSize(count);
   HashAln** table = (HashAln**) memalloc(hashSize
     * sizeof(HashAln*));
-  for (int i = 0; i < hashSize; i++)
+  for (uint32_t i = 0; i < hashSize; i++)
     table[i] = NULL;
 
   // sort reads by qual score sum
@@ -3166,7 +3174,7 @@ void findDupsPr(Read** readPr, int readIdxPr, int readLenPr,
     order2, qual0, qual1, qual2);
 
   // loop through paired reads
-  for (int i = 0; i < count; i++) {
+  for (uint32_t i = 0; i < count; i++) {
     Read* r = readPr[order[i] / MAX_SIZE]
       + order[i] % MAX_SIZE;
 
@@ -3196,7 +3204,7 @@ void findDupsPr(Read** readPr, int readIdxPr, int readLenPr,
     saveHashPrSn(table, hashSize, tableSn, hashSizeSn);
 
   // free hashtable
-  for (int i = 0; i < hashSize; i++) {
+  for (uint32_t i = 0; i < hashSize; i++) {
     HashAln* tmp;
     HashAln* h = table[i];
     while (h != NULL) {
@@ -3280,16 +3288,16 @@ void findDupsDc(Read** readDc, int readIdxDc, int readLenDc,
     bool atacOpt, int atacLen5, int atacLen3,
     File bed, bool bedOpt, bool gzOut, bool ctrl,
     int sample, HashAln** tableSn, uint32_t hashSizeSn,
-    File dups, bool dupsVerb, int* order, int* qual,
-    int* order0, int* order1, int* order2, int* qual0,
+    File dups, bool dupsVerb, uint32_t* order, int* qual,
+    uint32_t* order0, uint32_t* order1, uint32_t* order2, int* qual0,
     int* qual1, int* qual2, bool verbose) {
 
   // initialize hashtable
-  int count = readIdxDc * MAX_SIZE + readLenDc;
+  uint32_t count = readIdxDc * MAX_SIZE + readLenDc;
   uint32_t hashSize = calcHashSize(count);
   HashAln** table = (HashAln**) memalloc(hashSize
     * sizeof(HashAln*));
-  for (int i = 0; i < hashSize; i++)
+  for (uint32_t i = 0; i < hashSize; i++)
     table[i] = NULL;
 
   // sort reads by qual score sum
@@ -3297,7 +3305,7 @@ void findDupsDc(Read** readDc, int readIdxDc, int readLenDc,
     order2, qual0, qual1, qual2);
 
   // loop through discordant reads
-  for (int i = 0; i < count; i++) {
+  for (uint32_t i = 0; i < count; i++) {
     Read* r = readDc[order[i] / MAX_SIZE]
       + order[i] % MAX_SIZE;
 
@@ -3336,7 +3344,7 @@ void findDupsDc(Read** readDc, int readIdxDc, int readLenDc,
     saveHashDcSn(table, hashSize, tableSn, hashSizeSn);
 
   // free hashtable
-  for (int i = 0; i < hashSize; i++) {
+  for (uint32_t i = 0; i < hashSize; i++) {
     HashAln* tmp;
     HashAln* h = table[i];
     while (h != NULL) {
@@ -3400,17 +3408,17 @@ void findDupsSn(Read** readSn, int readIdxSn, int readLenSn,
     bool atacOpt, int atacLen5, int atacLen3,
     File bed, bool bedOpt, bool gzOut, bool ctrl,
     int sample, HashAln** table, uint32_t hashSize,
-    File dups, bool dupsVerb, int* order, int* qual,
-    int* order0, int* order1, int* order2, int* qual0,
+    File dups, bool dupsVerb, uint32_t* order, int* qual,
+    uint32_t* order0, uint32_t* order1, uint32_t* order2, int* qual0,
     int* qual1, int* qual2, bool verbose) {
 
   // sort reads by qual score sum
-  int count = readIdxSn * MAX_SIZE + readLenSn;
+  uint32_t count = readIdxSn * MAX_SIZE + readLenSn;
   sortReads(readSn, count, order, qual, order0, order1,
     order2, qual0, qual1, qual2);
 
   // loop through singleton reads
-  for (int i = 0; i < count; i++) {
+  for (uint32_t i = 0; i < count; i++) {
     Read* r = readSn[order[i] / MAX_SIZE]
       + order[i] % MAX_SIZE;
 
@@ -3461,7 +3469,7 @@ for (int j = 0; j <= i; j++)
 */
 
   // free hashtable
-  for (int i = 0; i < hashSize; i++) {
+  for (uint32_t i = 0; i < hashSize; i++) {
     HashAln* tmp;
     HashAln* h = table[i];
     while (h != NULL) {
@@ -3494,25 +3502,27 @@ void findDups(Read** readPr, int readIdxPr, int readLenPr,
   uint32_t hashSizeSn = 0;
   if (singleOpt && (readIdxSn || readLenSn)) {
     // calculate hash size
-    int sum = 2 * (readIdxPr * MAX_SIZE + readLenPr)
+    uint32_t sum = MIN(UINT32_MAX,
+      2 * (readIdxPr * MAX_SIZE + readLenPr)
       + 2 * (readIdxDc * MAX_SIZE + readLenDc)
-      + readIdxSn * MAX_SIZE + readLenSn;
+      + readIdxSn * MAX_SIZE + readLenSn);
     hashSizeSn = calcHashSize(sum);
     tableSn = (HashAln**) memalloc(hashSizeSn
       * sizeof(HashAln*));
-    for (int i = 0; i < hashSizeSn; i++)
+    for (uint32_t i = 0; i < hashSizeSn; i++)
       tableSn[i] = NULL;
   }
 
   // malloc variables for efficient sorting
-  int count = MAX(readIdxPr * MAX_SIZE + readLenPr,
+  uint32_t count = MIN(UINT32_MAX,
+    MAX(readIdxPr * MAX_SIZE + readLenPr,
     MAX(readIdxDc * MAX_SIZE + readLenDc,
-    readIdxSn * MAX_SIZE + readLenSn));
-  int* order = (int*) memalloc(count * sizeof(int));
+    readIdxSn * MAX_SIZE + readLenSn)));
+  uint32_t* order = (uint32_t*) memalloc(count * sizeof(uint32_t));
   int* qual = (int*) memalloc(count * sizeof(int));
-  int* order0 = (int*) memalloc(count * sizeof(int));
-  int* order1 = (int*) memalloc(count * sizeof(int));
-  int* order2 = (int*) memalloc(count * sizeof(int));
+  uint32_t* order0 = (uint32_t*) memalloc(count * sizeof(uint32_t));
+  uint32_t* order1 = (uint32_t*) memalloc(count * sizeof(uint32_t));
+  uint32_t* order2 = (uint32_t*) memalloc(count * sizeof(uint32_t));
   int* qual0 = (int*) memalloc(count * sizeof(int));
   int* qual1 = (int*) memalloc(count * sizeof(int));
   int* qual2 = (int*) memalloc(count * sizeof(int));
@@ -4768,7 +4778,7 @@ int loadBED(char* xFile, char* line, Bed** xBed) {
         pos[i] = getInt(val);
       }
       if (pos[1] <= pos[0] || pos[0] < 0 || pos[1] < 0) {
-        char* msg = (char*) memalloc(MAX_ALNS);
+        char msg[MAX_ALNS];
         sprintf(msg, "%s, %d - %d", name, pos[0], pos[1]);
         exit(error(msg, ERRBED));
       }
