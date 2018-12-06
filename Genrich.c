@@ -43,7 +43,7 @@ void usage(void) {
   fprintf(stderr, "  -%c  <file>       Output bedgraph-ish file for p/q values\n", LOGFILE);
   fprintf(stderr, "  -%c  <file>       Output bedgraph-ish file for pileups and p-values\n", PILEFILE);
   fprintf(stderr, "  -%c  <file>       Output BED file for reads/fragments/intervals\n", BEDFILE);
-  fprintf(stderr, "  -%c  <file>       Output file for PCR duplicates (must set -%c)\n", DUPSFILE, DUPSOPT);
+  fprintf(stderr, "  -%c  <file>       Output file for PCR duplicates (only with -%c)\n", DUPSFILE, DUPSOPT);
   fprintf(stderr, "Filtering options:\n");
   fprintf(stderr, "  -%c               Remove PCR duplicates\n", DUPSOPT);
   fprintf(stderr, "  -%c  <arg>        Comma-separated list of chromosomes to ignore\n", XCHROM);
@@ -2712,6 +2712,158 @@ void processAlns(char* qname, Aln* aln, int alnLen,
   }
 }
 
+/*** Efficient read sorting ***/
+
+/* int johnPartition()
+ * Partition the reads of a section of the qual/order
+ *   arrays based on one value into 3 bins (greater,
+ *   equal, and lower).
+ */
+int johnPartition(int* qual, int* order, int low, int high,
+    int* qual0, int* qual1, int* qual2, int* order0,
+    int* order1, int* order2, int* idxHigh) {
+  int pivot = qual[high - 1];  // pivot value: last elt
+
+  // separate qual values into temp arrays --
+  //   qual0 for higher values, qual1 equal, qual2 lower
+  int idx0 = 0, idx1 = 0, idx2 = 0; // indexes into temp arrays
+  for (int j = low; j < high; j++) {
+    if (qual[j] > pivot) {
+      qual0[idx0] = qual[j];
+      order0[idx0] = order[j];
+      idx0++;
+    } else if (qual[j] == pivot) {
+      qual1[idx1] = qual[j];
+      order1[idx1] = order[j];
+      idx1++;
+    } else {
+      qual2[idx2] = qual[j];
+      order2[idx2] = order[j];
+      idx2++;
+    }
+  }
+
+//fprintf(stderr, "pivotVal=%d on [%d, %d)\n", pivot, low, high);
+//fprintf(stderr, "  idx0=%d, idx1=%d, idx2=%d\n", idx0, idx1, idx2);
+  if (! idx0 && ! idx2)
+    return 0; // all equal values, no need to shuffle
+
+  // recombine temp arrays back into qual/order
+  int i = 0;
+  bool val0 = (bool) idx0, val1 = true;
+  for (int j = low; j < high; j++) {
+    if (val0) {
+      qual[j] = qual0[i];
+      order[j] = order0[i];
+      if (++i == idx0) {
+        val0 = false;
+        i = 0;
+      }
+    } else if (val1) {
+      qual[j] = qual1[i];
+      order[j] = order1[i];
+      if (++i == idx1) {
+        val1 = false;
+        i = 0;
+      }
+    } else {
+      qual[j] = qual2[i];
+      order[j] = order2[i];
+      i++;
+    }
+  }
+
+// 1-2 check
+/*fprintf(stderr, "  below=%d, (%d - %d), above=%d\n",
+  idx0 ? qual[low+idx0-1] : -1, qual[low+idx0],
+  qual[low+idx0+idx1-1], qual[low+idx0+idx1]);
+*/
+  // return low/high indexes
+  *idxHigh = low + idx0 + idx1;
+  return low + idx0;
+}
+
+/* void johnSort()
+ * Variation of quicksort that is stable and optimized
+ *   for repeated qual values.
+ */
+void johnSort(int* qual, int* order, int low, int high,
+    int* qual0, int* qual1, int* qual2, int* order0,
+    int* order1, int* order2) {
+  if (low < high - 1) {
+    int idx1 = 0; // new low index for upper recursive call
+    int idx = johnPartition(qual, order, low, high, qual0,
+      qual1, qual2, order0, order1, order2, &idx1);
+    if (idx)
+      // lower recursive call
+      johnSort(qual, order, low, idx, qual0, qual1,
+        qual2, order0, order1, order2);
+    if (idx1)
+      // upper recursive call
+      johnSort(qual, order, idx1, high, qual0, qual1,
+        qual2, order0, order1, order2);
+  }
+}
+
+/* void sortReads()
+ * Determine sort order of a Read** array, based on
+ *   sums of quality scores.
+ * Sorting performed by johnSort(), an efficient,
+ *   *stable* quicksort that is optimized for these
+ *   arrays in which values are frequently repeated.
+ */
+void sortReads(Read** arr, int count, int* order,
+    int* qual, int* order0, int* order1, int* order2,
+    int* qual0, int* qual1, int* qual2) {
+
+  // initialize order and qual arrays
+  for (int i = 0; i < count; i++) {
+    order[i] = i;
+    qual[i] = (arr[i / MAX_SIZE] + i % MAX_SIZE)->qual;
+  }
+int d[10000] = { 0 };
+for (int i = 0; i < count; i++)
+  d[qual[i]]++;
+
+//fprintf(stderr, "sorting...\n");
+//time_t sec = time(NULL);
+  // initialize johnSort()
+  johnSort(qual, order, 0, count, qual0, qual1, qual2,
+    order0, order1, order2);
+//time_t sec2 = time(NULL);
+
+int q = 0;
+int c[10000] = {0};
+int sum = 0;
+for (int i = 0; i < count; i++) {
+  if (qual[i] != q) {
+    if (q) {
+      //fprintf(stderr, "%d\t%d\n", q, c);
+      if (qual[i] > q) {
+        fprintf(stderr, "  out of order!  %d  %d\n", qual[i], q);
+        while(!getchar()) ;
+      }
+      //while(!getchar()) ;
+    }
+//    sum += c;
+    q = qual[i];
+//    c = 1;
+//  } else
+//    c++;
+  }
+  c[qual[i]]++;
+}
+//sum += c;
+//fprintf(stderr, "sum: %d\n", sum);
+for (int i = 9999; i > -1; i--)
+  if (c[i] != d[i]) {
+    fprintf(stderr, " not a match %d\t%d\t%d\n", i, c[i], d[i]);
+    //while(!getchar()) ;
+  }
+//fprintf(stderr, "time taken: %ld sec\n", sec2 - sec);
+
+}
+
 /*** PCR duplicate removal ***/
 
 /* uint32_t calcHashSize()
@@ -2827,8 +2979,9 @@ void addToHash(Chrom* chrom, Chrom* chrom1, uint32_t pos,
 }
 
 /* HashAln* checkHash()
- * Check hashtable for a match to an alignment
- *   (based on alignment type).
+ * Check hashtable for a match to an alignment.
+ *   The alignment attributes are defined by the
+ *   alignment type.
  */
 HashAln* checkHash(Chrom* chrom, Chrom* chrom1,
     uint32_t pos, uint32_t pos1, bool strand, bool strand1,
@@ -2986,124 +3139,6 @@ bool checkHashPr(Read* r, HashAln** table,
   return false;
 }
 
-//////////////////////////////////////////////////////////
-
-#include <time.h>
-int johnPartition(int* qual, int* order, int low, int high,
-    int* qual0, int* qual1, int* qual2, int* order0,
-    int* order1, int* order2, int* idxHigh) {
-  int pivot = qual[high - 1];  // pivot value: last elt
-  int idx0 = 0, idx1 = 0, idx2 = 0;
-
-  for (int j = low; j < high; j++) {
-    if (qual[j] > pivot) {
-      qual0[idx0] = qual[j];
-      order0[idx0] = order[j];
-      idx0++;
-    } else if (qual[j] == pivot) {
-      qual1[idx1] = qual[j];
-      order1[idx1] = order[j];
-      idx1++;
-    } else {
-      qual2[idx2] = qual[j];
-      order2[idx2] = order[j];
-      idx2++;
-    }
-  }
-//fprintf(stderr, "pivotVal=%d on [%d, %d)\n", pivot, low, high);
-//fprintf(stderr, "  idx0=%d, idx1=%d, idx2=%d\n", idx0, idx1, idx2);
-  if (! idx0 && ! idx2)
-    return 0;
-
-  // recombine that shit
-  int i = 0;
-  bool val0 = (bool) idx0, val1 = true;
-  for (int j = low; j < high; j++) {
-    if (val0) {
-      qual[j] = qual0[i];
-      order[j] = order0[i];
-      if (++i == idx0) {
-        val0 = false;
-        i = 0;
-      }
-    } else if (val1) {
-      qual[j] = qual1[i];
-      order[j] = order1[i];
-      if (++i == idx1) {
-        val1 = false;
-        i = 0;
-      }
-    } else {
-      qual[j] = qual2[i];
-      order[j] = order2[i];
-      i++;
-    }
-  }
-
-// 1-2 check
-/*fprintf(stderr, "  below=%d, (%d - %d), above=%d",
-  idx0 ? qual[low+idx0-1] : -1, qual[low+idx0],
-  qual[low+idx0+idx1-1], qual[low+idx0+idx1]);
-while(!getchar()) ;*/
-  *idxHigh = low + idx0 + idx1;
-  return low + idx0;
-}
-void johnSort(int* qual, int* order, int low, int high,
-    int* qual0, int* qual1, int* qual2, int* order0,
-    int* order1, int* order2) {
-  if (low < high) {
-//fprintf(stderr, "partition of value %d, [%d, %d]", qual[high], low, high-1);
-    int idx1 = 0;
-    int idx = johnPartition(qual, order, low, high, qual0,
-      qual1, qual2, order0, order1, order2, &idx1);
-//fprintf(stderr, " -> idx %d", idx);
-//for (int i = 0; i < 5; i++)
-//  fprintf(stderr, "%d: %d\n", i, qual[i]);
-//while(!getchar()) ;
-    if (idx) {
-      johnSort(qual, order, low, idx, qual0, qual1,
-        qual2, order0, order1, order2);
-      johnSort(qual, order, idx1, high, qual0, qual1,
-        qual2, order0, order1, order2);
-    }
-  }
-}
-void sortReads(Read** arr, int count, int* order,
-    int* qual, int* order0, int* order1, int* order2,
-    int* qual0, int* qual1, int* qual2) {
-  // initialize order and qual arrays
-  for (int i = 0; i < count; i++) {
-    order[i] = i;
-    qual[i] = (arr[i / MAX_SIZE] + i % MAX_SIZE)->qual;
-  }
-
-fprintf(stderr, "sorting...\n");
-time_t sec = time(NULL);
-  johnSort(qual, order, 0, count, qual0, qual1, qual2,
-    order0, order1, order2);
-time_t sec2 = time(NULL);
-
-/*int q = 0, c = 0;
-for (int i = 0; i < count; i++) {
-  if (qual[i] != q) {
-    if (q) {
-      fprintf(stderr, "%d\t%d", q, c);
-      while(!getchar()) ;
-    }
-    q = qual[i];
-    c = 1;
-  } else
-    c++;
-}
-/*for (int i = 9999; i > -1; i--)
-  if (c[i]) {
-    fprintf(stderr, "%d\t%d", i, c[i]);
-    while(!getchar()) ;
-  }*/
-fprintf(stderr, "time taken: %ld sec\n", sec2 - sec);
-
-}
-
 /* void findDupsPr()
  * Find PCR duplicates among properly paired
  *   alignment sets.
@@ -3126,41 +3161,34 @@ void findDupsPr(Read** readPr, int readIdxPr, int readLenPr,
   for (int i = 0; i < hashSize; i++)
     table[i] = NULL;
 
-  // loop through paired reads
+  // sort reads by qual score sum
   sortReads(readPr, count, order, qual, order0, order1,
     order2, qual0, qual1, qual2);
-for (int i = 0; i < count; i++) {
-  Read* r = readPr[order[i] / MAX_SIZE] + order[i] % MAX_SIZE;
-  fprintf(stderr, "%d\t%d\t%s", i, r->qual, r->name);
-  while(!getchar()) ;
-}
-exit(0);
 
-  for (int i = 0; i <= readIdxPr; i++) {
-    int end = (i == readIdxPr ? readLenPr : MAX_SIZE);
-    for (int j = 0; j < end; j++) {
-      Read* r = readPr[i] + j;
+  // loop through paired reads
+  for (int i = 0; i < count; i++) {
+    Read* r = readPr[order[i] / MAX_SIZE]
+      + order[i] % MAX_SIZE;
 
-      // check hashtable for matches
-      if (checkHashPr(r, table, hashSize, dups,
-          dupsVerb, gzOut))
-        (*dupsPr)++;
-      else {
-        // add alignments to hashtable
-        addHashPr(r, table, hashSize, dupsVerb);
-        // process alignments too
-        *pairedPr += processPair(r->name, r->aln,
-          r->alnLen, totalLen, r->score, asDiff,
-          atacOpt, atacLen5, atacLen3, bed, bedOpt,
-          gzOut, ctrl, sample, verbose);
-      }
-
-      // free Read
-      free(r->name);
-      free(r->aln);
-
-      (*countPr)++;
+    // check hashtable for matches
+    if (checkHashPr(r, table, hashSize, dups,
+        dupsVerb, gzOut))
+      (*dupsPr)++;
+    else {
+      // add alignments to hashtable
+      addHashPr(r, table, hashSize, dupsVerb);
+      // process alignments too
+      *pairedPr += processPair(r->name, r->aln,
+        r->alnLen, totalLen, r->score, asDiff,
+        atacOpt, atacLen5, atacLen3, bed, bedOpt,
+        gzOut, ctrl, sample, verbose);
     }
+
+    // free Read
+    free(r->name);
+    free(r->aln);
+
+    (*countPr)++;
   }
 
   // save alns to singleton hashtable
@@ -3252,51 +3280,55 @@ void findDupsDc(Read** readDc, int readIdxDc, int readLenDc,
     bool atacOpt, int atacLen5, int atacLen3,
     File bed, bool bedOpt, bool gzOut, bool ctrl,
     int sample, HashAln** tableSn, uint32_t hashSizeSn,
-    File dups, bool dupsVerb, bool verbose) {
+    File dups, bool dupsVerb, int* order, int* qual,
+    int* order0, int* order1, int* order2, int* qual0,
+    int* qual1, int* qual2, bool verbose) {
 
   // initialize hashtable
-  uint32_t hashSize = calcHashSize(readIdxDc * MAX_SIZE
-    + readLenDc);
+  int count = readIdxDc * MAX_SIZE + readLenDc;
+  uint32_t hashSize = calcHashSize(count);
   HashAln** table = (HashAln**) memalloc(hashSize
     * sizeof(HashAln*));
   for (int i = 0; i < hashSize; i++)
     table[i] = NULL;
 
+  // sort reads by qual score sum
+  sortReads(readDc, count, order, qual, order0, order1,
+    order2, qual0, qual1, qual2);
+
   // loop through discordant reads
-  for (int i = 0; i <= readIdxDc; i++) {
-    int end = (i == readIdxDc ? readLenDc : MAX_SIZE);
-    for (int j = 0; j < end; j++) {
-      Read* r = readDc[i] + j;
+  for (int i = 0; i < count; i++) {
+    Read* r = readDc[order[i] / MAX_SIZE]
+      + order[i] % MAX_SIZE;
 
-      // check hashtable for matches
-      if (checkHashDc(r, table, hashSize, dups,
-          dupsVerb, gzOut))
-        (*dupsDc)++;
-      else {
-        // add alignments to hashtable
-        addHashDc(r, table, hashSize, dupsVerb);
-        // process alignments too
-        *singlePr += processSingle(r->name, r->aln,
-          r->alnLen, extendOpt, extend, false,
-          NULL, NULL, NULL, NULL,
-          r->score, asDiff, true,
-          atacOpt, atacLen5, atacLen3, bed, bedOpt,
-          gzOut, ctrl, sample, verbose);
-        *singlePr += processSingle(r->name, r->alnR2,
-          r->alnLenR2, extendOpt, extend, false,
-          NULL, NULL, NULL, NULL,
-          r->scoreR2, asDiff, false,
-          atacOpt, atacLen5, atacLen3, bed, bedOpt,
-          gzOut, ctrl, sample, verbose);
-      }
-
-      // free Read
-      free(r->name);
-      free(r->aln);
-      free(r->alnR2);
-
-      (*countDc)++;
+    // check hashtable for matches
+    if (checkHashDc(r, table, hashSize, dups,
+        dupsVerb, gzOut))
+      (*dupsDc)++;
+    else {
+      // add alignments to hashtable
+      addHashDc(r, table, hashSize, dupsVerb);
+      // process alignments too
+      *singlePr += processSingle(r->name, r->aln,
+        r->alnLen, extendOpt, extend, false,
+        NULL, NULL, NULL, NULL,
+        r->score, asDiff, true,
+        atacOpt, atacLen5, atacLen3, bed, bedOpt,
+        gzOut, ctrl, sample, verbose);
+      *singlePr += processSingle(r->name, r->alnR2,
+        r->alnLenR2, extendOpt, extend, false,
+        NULL, NULL, NULL, NULL,
+        r->scoreR2, asDiff, false,
+        atacOpt, atacLen5, atacLen3, bed, bedOpt,
+        gzOut, ctrl, sample, verbose);
     }
+
+    // free Read
+    free(r->name);
+    free(r->aln);
+    free(r->alnR2);
+
+    (*countDc)++;
   }
 
   // save alns to singleton hashtable
@@ -3359,7 +3391,7 @@ bool checkHashSn(Read* r, HashAln** table,
 
 /* void findDupsSn()
  * Find PCR duplicates among singleton alignment sets.
- * Note: the hashtable was already created and
+ *   Note: the hashtable was already created and
  *   populated by paired and discordant alns.
  */
 void findDupsSn(Read** readSn, int readIdxSn, int readLenSn,
@@ -3368,36 +3400,41 @@ void findDupsSn(Read** readSn, int readIdxSn, int readLenSn,
     bool atacOpt, int atacLen5, int atacLen3,
     File bed, bool bedOpt, bool gzOut, bool ctrl,
     int sample, HashAln** table, uint32_t hashSize,
-    File dups, bool dupsVerb, bool verbose) {
+    File dups, bool dupsVerb, int* order, int* qual,
+    int* order0, int* order1, int* order2, int* qual0,
+    int* qual1, int* qual2, bool verbose) {
+
+  // sort reads by qual score sum
+  int count = readIdxSn * MAX_SIZE + readLenSn;
+  sortReads(readSn, count, order, qual, order0, order1,
+    order2, qual0, qual1, qual2);
 
   // loop through singleton reads
-  for (int i = 0; i <= readIdxSn; i++) {
-    int end = (i == readIdxSn ? readLenSn : MAX_SIZE);
-    for (int j = 0; j < end; j++) {
-      Read* r = readSn[i] + j;
+  for (int i = 0; i < count; i++) {
+    Read* r = readSn[order[i] / MAX_SIZE]
+      + order[i] % MAX_SIZE;
 
-      // check hashtable for matches
-      if (checkHashSn(r, table, hashSize, dups,
-          dupsVerb, gzOut))
-        (*dupsSn)++;
-      else {
-        // add alignments to hashtable
-        addHashSn(r, table, hashSize, dupsVerb);
-        // process alignments too
-        *singlePr += processSingle(r->name, r->aln,
-          r->alnLen, extendOpt, extend, false,
-          NULL, NULL, NULL, NULL,
-          r->score, asDiff, r->first,
-          atacOpt, atacLen5, atacLen3, bed, bedOpt,
-          gzOut, ctrl, sample, verbose);
-      }
-
-      // free Read
-      free(r->name);
-      free(r->aln);
-
-      (*countSn)++;
+    // check hashtable for matches
+    if (checkHashSn(r, table, hashSize, dups,
+        dupsVerb, gzOut))
+      (*dupsSn)++;
+    else {
+      // add alignments to hashtable
+      addHashSn(r, table, hashSize, dupsVerb);
+      // process alignments too
+      *singlePr += processSingle(r->name, r->aln,
+        r->alnLen, extendOpt, extend, false,
+        NULL, NULL, NULL, NULL,
+        r->score, asDiff, r->first,
+        atacOpt, atacLen5, atacLen3, bed, bedOpt,
+        gzOut, ctrl, sample, verbose);
     }
+
+    // free Read
+    free(r->name);
+    free(r->aln);
+
+    (*countSn)++;
   }
 
 /*
@@ -3407,7 +3444,7 @@ for (int i = 0; i < hashSize; i++) {
   int n = 0;
   for (HashAln* h = table[i]; h != NULL; h = h->next)
     n++;
-  /*if (n > 2) {
+  / *if (n > 2) {
     printf("idx %d\n", i);
     for (HashAln* h = table[i]; h != NULL; h = h->next)
       printf("  %s: %d %c\n", h->chrom->name, h->pos, h->strand ? '+' : '-');
@@ -3504,7 +3541,8 @@ void findDups(Read** readPr, int readIdxPr, int readLenPr,
         dupsDc, singlePr, extendOpt, extend, asDiff,
         atacOpt, atacLen5, atacLen3, bed, bedOpt, gzOut,
         ctrl, sample, tableSn, hashSizeSn, dups, dupsVerb,
-        verbose);
+        order, qual, order0, order1, order2, qual0, qual1,
+        qual2, verbose);
 
     // evaluate and process singleton alignments
     if (readIdxSn || readLenSn)
@@ -3512,7 +3550,8 @@ void findDups(Read** readPr, int readIdxPr, int readLenPr,
         dupsSn, singlePr, extendOpt, extend, asDiff,
         atacOpt, atacLen5, atacLen3, bed, bedOpt, gzOut,
         ctrl, sample, tableSn, hashSizeSn, dups, dupsVerb,
-        verbose);
+        order, qual, order0, order1, order2, qual0, qual1,
+        qual2, verbose);
   }
 
   // free memory
