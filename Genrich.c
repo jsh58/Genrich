@@ -3041,7 +3041,7 @@ void checkAndAdd(HashAln** tableSn, uint32_t hashSizeSn,
 /* void saveHashDcSn()
  * Save individual alignments of discordant alns as
  *   singletons, via checkAndAdd().
- */
+ *
 void saveHashDcSn(HashAln** table, uint32_t hashSize,
     HashAln** tableSn, uint32_t hashSizeSn) {
   for (uint32_t i = 0; i < hashSize; i++) {
@@ -3058,7 +3058,7 @@ void saveHashDcSn(HashAln** table, uint32_t hashSize,
 /* void saveHashPrSn()
  * Save individual alignments of paired alns as
  *   singletons, via checkAndAdd().
- */
+ *
 void saveHashPrSn(HashAln** table, uint32_t hashSize,
     HashAln** tableSn, uint32_t hashSizeSn) {
   for (uint32_t i = 0; i < hashSize; i++) {
@@ -3118,13 +3118,22 @@ void logDup(File dups, bool gzOut, char* name,
  * Add all paired alignments for a Read* to the hashtable.
  */
 void addHashPr(Read* r, HashAln** table,
-    uint32_t hashSize, bool dupsVerb) {
+    uint32_t hashSize, bool dupsVerb,
+    HashAln** tableSn, uint32_t hashSizeSn) {
   for (int k = 0; k < r->alnLen; k++) {
     Aln* a = r->aln + k;
     uint32_t idx = jenkins_hash_aln(a->chrom, NULL,
       a->pos[0], a->pos[1], 0, 0, PAIRED, hashSize);
     addToHash(a->chrom, NULL, a->pos[0], a->pos[1],
       0, 0, table, idx, dupsVerb ? r->name : NULL);
+
+    // also add both alignments as singletons to hashtable
+    if (tableSn != NULL) {
+      checkAndAdd(tableSn, hashSizeSn, a->chrom, a->pos[0],
+        true, dupsVerb ? r->name : NULL);
+      checkAndAdd(tableSn, hashSizeSn, a->chrom, a->pos[1],
+        false, dupsVerb ? r->name : NULL);
+    }
   }
 }
 
@@ -3174,7 +3183,7 @@ void findDupsPr(Read** readPr, int readIdxPr,
   for (uint32_t i = 0; i < hashSize; i++)
     table[i] = NULL;
 
-  // sort reads by qual score sum
+  // get sort order of reads by qual score sum
   sortReads(readPr, count, order, qual, order0, order1,
     order2, qual0, qual1, qual2);
 
@@ -3188,8 +3197,9 @@ void findDupsPr(Read** readPr, int readIdxPr,
         dupsVerb, gzOut))
       (*dupsPr)++;
     else {
-      // add alignments to hashtable
-      addHashPr(r, table, hashSize, dupsVerb);
+      // add alignments to hashtable(s)
+      addHashPr(r, table, hashSize, dupsVerb,
+        tableSn, hashSizeSn);
       // process alignments too
       *pairedPr += processPair(r->name, r->aln,
         r->alnLen, totalLen, r->score, asDiff,
@@ -3205,8 +3215,8 @@ void findDupsPr(Read** readPr, int readIdxPr,
   }
 
   // save alns to singleton hashtable
-  if (tableSn != NULL)
-    saveHashPrSn(table, hashSize, tableSn, hashSizeSn);
+//  if (tableSn != NULL)
+//    saveHashPrSn(table, hashSize, tableSn, hashSizeSn);
 
   // free hashtable
   for (uint32_t i = 0; i < hashSize; i++) {
@@ -3227,7 +3237,8 @@ void findDupsPr(Read** readPr, int readIdxPr,
  *   Read* to the hashtable.
  */
 void addHashDc(Read* r, HashAln** table,
-    uint32_t hashSize, bool dupsVerb) {
+    uint32_t hashSize, bool dupsVerb,
+    HashAln** tableSn, uint32_t hashSizeSn) {
   for (int k = 0; k < r->alnLen; k++) {
     Aln* a = r->aln + k;
     uint32_t pos = (a->strand ? a->pos[0] : a->pos[1]);
@@ -3238,6 +3249,16 @@ void addHashDc(Read* r, HashAln** table,
         pos, pos1, a->strand, b->strand, DISCORD, hashSize);
       addToHash(a->chrom, b->chrom, pos, pos1, a->strand,
         b->strand, table, idx, dupsVerb ? r->name : NULL);
+
+      // also add both alignments as singletons to hashtable
+      if (tableSn != NULL) {
+        if (! j)
+          checkAndAdd(tableSn, hashSizeSn, a->chrom, pos,
+            a->strand, dupsVerb ? r->name : NULL);
+        if (! k)
+          checkAndAdd(tableSn, hashSizeSn, b->chrom, pos1,
+            b->strand, dupsVerb ? r->name : NULL);
+      }
     }
   }
 }
@@ -3270,7 +3291,7 @@ bool checkHashDc(Read* r, HashAln** table,
       idx = jenkins_hash_aln(b->chrom, a->chrom,
         pos1, pos, b->strand, a->strand, DISCORD, hashSize);
       h = checkHash(b->chrom, a->chrom, pos1, pos,
-          b->strand, a->strand, DISCORD, table, idx);
+        b->strand, a->strand, DISCORD, table, idx);
       if (h) {
         if (dupsVerb)
           logDup(dups, gzOut, r->name, b->chrom, a->chrom,
@@ -3320,9 +3341,10 @@ void findDupsDc(Read** readDc, int readIdxDc,
         dupsVerb, gzOut))
       (*dupsDc)++;
     else {
-      // add alignments to hashtable
-      addHashDc(r, table, hashSize, dupsVerb);
-      // process alignments too
+      // add alignments to hashtable(s)
+      addHashDc(r, table, hashSize, dupsVerb,
+        tableSn, hashSizeSn);
+      // process alignments too (as singletons)
       *singlePr += processSingle(r->name, r->aln,
         r->alnLen, extendOpt, extend, false,
         NULL, NULL, NULL, NULL,
@@ -3346,8 +3368,8 @@ void findDupsDc(Read** readDc, int readIdxDc,
   }
 
   // save alns to singleton hashtable
-  if (tableSn != NULL)
-    saveHashDcSn(table, hashSize, tableSn, hashSizeSn);
+//  if (tableSn != NULL)
+//    saveHashDcSn(table, hashSize, tableSn, hashSizeSn);
 
   // free hashtable
   for (uint32_t i = 0; i < hashSize; i++) {
@@ -4857,12 +4879,15 @@ void logCounts(int count, int unmapped, int supp,
   if (dupsOpt) {
     fprintf(stderr, "  PCR duplicates --\n");
     fprintf(stderr, "    Paired aln sets:    %10d\n", countPr);
-    fprintf(stderr, "      duplicates:       %10d\n", dupsPr);
+    fprintf(stderr, "      duplicates:       %10d (%.1f%%)\n",
+      dupsPr, countPr ? 100.0f * dupsPr / countPr : 0.0f);
     if (singleOpt) {
       fprintf(stderr, "    Discordant aln sets:%10d\n", countDc);
-      fprintf(stderr, "      duplicates:       %10d\n", dupsDc);
+      fprintf(stderr, "      duplicates:       %10d (%.1f%%)\n",
+        dupsDc, countDc ? 100.0f * dupsDc / countDc : 0.0f);
       fprintf(stderr, "    Singleton aln sets: %10d\n", countSn);
-      fprintf(stderr, "      duplicates:       %10d\n", dupsSn);
+      fprintf(stderr, "      duplicates:       %10d (%.1f%%)\n",
+        dupsSn, countSn ? 100.0f * dupsSn / countSn : 0.0f);
     }
   }
   fprintf(stderr, "  Fragments analyzed:   %10d\n", singlePr + pairedPr);
@@ -4931,6 +4956,10 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
   int readMemDc = 0;    // index into readDc array
   Read** readSn = NULL; // array of reads with singleton aln(s)
   int readMemSn = 0;    // index into readSn array
+  HashAln** table = NULL;
+  uint32_t hashMem = 0;
+  HashAln** tableSn = NULL;
+  uint32_t hashMemSn = 0;
 
   // save genomic regions to ignore
   Bed* xBed = NULL;
