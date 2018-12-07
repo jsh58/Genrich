@@ -2315,7 +2315,7 @@ void copyAlns(Aln* aln, int alnLen, float score,
  */
 void saveAlnsSingle(char* qname, Aln* aln, int alnLen,
     float score, float asDiff, bool first, Read* r,
-    int qual) {
+    uint16_t qual) {
   // populate Read* struct
   r->name = (char*) memalloc(1 + strlen(qname));
   strcpy(r->name, qname);
@@ -2333,14 +2333,14 @@ void saveAlnsSingle(char* qname, Aln* aln, int alnLen,
  */
 void saveAlnsDiscord(char* qname, Aln* aln, int alnLen,
     float scoreR1, float scoreR2, float asDiff,
-    Read* r, int qualR1, int qualR2) {
+    Read* r, uint16_t qualR1, uint16_t qualR2) {
   // save R1 alignments
   saveAlnsSingle(qname, aln, alnLen, scoreR1, asDiff,
     true, r, qualR1);
   // save R2 alignments
   copyAlns(aln, alnLen, scoreR2, asDiff, false, &r->alnR2,
     &r->alnLenR2);
-  r->qual += qualR2;
+  r->qual = MIN(qualR1 + qualR2, UINT16_MAX);
   r->scoreR2 = scoreR2;
 }
 
@@ -2348,12 +2348,12 @@ void saveAlnsDiscord(char* qname, Aln* aln, int alnLen,
  * Save a set of properly paired alignments.
  */
 void saveAlnsPair(char* qname, Aln* aln, int alnLen,
-    float score, float asDiff, Read* r, int qualR1,
-    int qualR2) {
+    float score, float asDiff, Read* r, uint16_t qualR1,
+    uint16_t qualR2) {
   // populate Read* struct
   r->name = (char*) memalloc(1 + strlen(qname));
   strcpy(r->name, qname);
-  r->qual = qualR1 + qualR2;
+  r->qual = MIN(qualR1 + qualR2, UINT16_MAX);
   r->score = score;
 
   // adjust AS tolerance for secondary alns
@@ -2406,7 +2406,7 @@ void saveAlns(char* qname, Aln* aln, int alnLen, bool pair,
     int* readLenPr, int* readMemPr, Read*** readDc,
     int* readIdxDc, int* readLenDc, int* readMemDc,
     Read*** readSn, int* readIdxSn, int* readLenSn,
-    int* readMemSn, int qualR1, int qualR2) {
+    int* readMemSn, uint16_t qualR1, uint16_t qualR2) {
   if (pair) {
     // properly paired alignment(s)
     Read* r = createRead(readPr, readIdxPr, readLenPr,
@@ -2654,8 +2654,8 @@ void processAlns(char* qname, Aln* aln, int alnLen,
     int* readIdxPr, int* readLenPr, int* readMemPr,
     Read*** readDc, int* readIdxDc, int* readLenDc,
     int* readMemDc, Read*** readSn, int* readIdxSn,
-    int* readLenSn, int* readMemSn, int qualR1,
-    int qualR2, bool verbose) {
+    int* readLenSn, int* readMemSn, uint16_t qualR1,
+    uint16_t qualR2, bool verbose) {
 
   // determine if paired alns are valid, and best score
   float scorePr = NOSCORE, scoreR1 = NOSCORE,
@@ -2727,10 +2727,12 @@ void processAlns(char* qname, Aln* aln, int alnLen,
  *   arrays based on one value into 3 bins (greater,
  *   equal, and lower).
  */
-uint32_t johnPartition(int* qual, uint32_t* order, uint32_t low,
-    uint32_t high, int* qual0, int* qual1, int* qual2,
-    uint32_t* order0, uint32_t* order1, uint32_t* order2, uint32_t* idxHigh) {
-  int pivot = qual[high - 1];  // pivot value: last elt
+uint32_t johnPartition(uint16_t* qual, uint32_t* order,
+    uint32_t low, uint32_t high, uint16_t* qual0,
+    uint16_t* qual1, uint16_t* qual2, uint32_t* order0,
+    uint32_t* order1, uint32_t* order2,
+    uint32_t* idxHigh) {
+  uint16_t pivot = qual[high - 1];  // pivot value: last elt
 
   // separate qual values into temp arrays --
   //   qual0 for higher values, qual1 equal, qual2 lower
@@ -2795,9 +2797,10 @@ uint32_t johnPartition(int* qual, uint32_t* order, uint32_t low,
  * Variation of quicksort that is stable and optimized
  *   for repeated qual values.
  */
-void johnSort(int* qual, uint32_t* order, uint32_t low,
-    uint32_t high, int* qual0, int* qual1, int* qual2,
-    uint32_t* order0, uint32_t* order1, uint32_t* order2) {
+void johnSort(uint16_t* qual, uint32_t* order,
+    uint32_t low, uint32_t high, uint16_t* qual0,
+    uint16_t* qual1, uint16_t* qual2, uint32_t* order0,
+    uint32_t* order1, uint32_t* order2) {
   if (low + 1 < high) {
     uint32_t idx1 = 0; // new low index for upper recursive call
     uint32_t idx = johnPartition(qual, order, low, high,
@@ -2821,8 +2824,9 @@ void johnSort(int* qual, uint32_t* order, uint32_t low,
  *   arrays in which values are frequently repeated.
  */
 void sortReads(Read** arr, uint32_t count, uint32_t* order,
-    int* qual, uint32_t* order0, uint32_t* order1, uint32_t* order2,
-    int* qual0, int* qual1, int* qual2) {
+    uint16_t* qual, uint32_t* order0, uint32_t* order1,
+    uint32_t* order2, uint16_t* qual0, uint16_t* qual1,
+    uint16_t* qual2) {
 
   // initialize order and qual arrays
   for (uint32_t i = 0; i < count; i++) {
@@ -2842,7 +2846,7 @@ for (int i = 0; i < count; i++)
 
 int q = 0;
 int c[10000] = {0};
-int sum = 0;
+//int sum = 0;
 for (int i = 0; i < count; i++) {
   if (qual[i] != q) {
     if (q) {
@@ -3151,14 +3155,15 @@ bool checkHashPr(Read* r, HashAln** table,
  * Find PCR duplicates among properly paired
  *   alignment sets.
  */
-void findDupsPr(Read** readPr, int readIdxPr, int readLenPr,
-    int* countPr, int* dupsPr, int* pairedPr,
-    double* totalLen, float asDiff, bool atacOpt,
-    int atacLen5, int atacLen3, File bed, bool bedOpt,
-    bool gzOut, bool ctrl, int sample, HashAln** tableSn,
-    uint32_t hashSizeSn, File dups, bool dupsVerb,
-    uint32_t* order, int* qual, uint32_t* order0, uint32_t* order1,
-    uint32_t* order2, int* qual0, int* qual1, int* qual2,
+void findDupsPr(Read** readPr, int readIdxPr,
+    int readLenPr, int* countPr, int* dupsPr,
+    int* pairedPr, double* totalLen, float asDiff,
+    bool atacOpt, int atacLen5, int atacLen3, File bed,
+    bool bedOpt, bool gzOut, bool ctrl, int sample,
+    HashAln** tableSn, uint32_t hashSizeSn, File dups,
+    bool dupsVerb, uint32_t* order, uint16_t* qual,
+    uint32_t* order0, uint32_t* order1, uint32_t* order2,
+    uint16_t* qual0, uint16_t* qual1, uint16_t* qual2,
     bool verbose) {
 
   // initialize hashtable
@@ -3282,15 +3287,16 @@ bool checkHashDc(Read* r, HashAln** table,
  * Find PCR duplicates among discordant
  *   alignment sets.
  */
-void findDupsDc(Read** readDc, int readIdxDc, int readLenDc,
-    int* countDc, int* dupsDc, int* singlePr,
-    bool extendOpt, int extend, float asDiff,
-    bool atacOpt, int atacLen5, int atacLen3,
+void findDupsDc(Read** readDc, int readIdxDc,
+    int readLenDc, int* countDc, int* dupsDc,
+    int* singlePr, bool extendOpt, int extend,
+    float asDiff, bool atacOpt, int atacLen5, int atacLen3,
     File bed, bool bedOpt, bool gzOut, bool ctrl,
     int sample, HashAln** tableSn, uint32_t hashSizeSn,
-    File dups, bool dupsVerb, uint32_t* order, int* qual,
-    uint32_t* order0, uint32_t* order1, uint32_t* order2, int* qual0,
-    int* qual1, int* qual2, bool verbose) {
+    File dups, bool dupsVerb, uint32_t* order,
+    uint16_t* qual, uint32_t* order0, uint32_t* order1,
+    uint32_t* order2, uint16_t* qual0, uint16_t* qual1,
+    uint16_t* qual2, bool verbose) {
 
   // initialize hashtable
   uint32_t count = readIdxDc * MAX_SIZE + readLenDc;
@@ -3402,15 +3408,16 @@ bool checkHashSn(Read* r, HashAln** table,
  *   Note: the hashtable was already created and
  *   populated by paired and discordant alns.
  */
-void findDupsSn(Read** readSn, int readIdxSn, int readLenSn,
-    int* countSn, int* dupsSn, int* singlePr,
-    bool extendOpt, int extend, float asDiff,
-    bool atacOpt, int atacLen5, int atacLen3,
+void findDupsSn(Read** readSn, int readIdxSn,
+    int readLenSn, int* countSn, int* dupsSn,
+    int* singlePr, bool extendOpt, int extend,
+    float asDiff, bool atacOpt, int atacLen5, int atacLen3,
     File bed, bool bedOpt, bool gzOut, bool ctrl,
     int sample, HashAln** table, uint32_t hashSize,
-    File dups, bool dupsVerb, uint32_t* order, int* qual,
-    uint32_t* order0, uint32_t* order1, uint32_t* order2, int* qual0,
-    int* qual1, int* qual2, bool verbose) {
+    File dups, bool dupsVerb, uint32_t* order,
+    uint16_t* qual, uint32_t* order0, uint32_t* order1,
+    uint32_t* order2, uint16_t* qual0, uint16_t* qual1,
+    uint16_t* qual2, bool verbose) {
 
   // sort reads by qual score sum
   uint32_t count = readIdxSn * MAX_SIZE + readLenSn;
@@ -3519,13 +3526,13 @@ void findDups(Read** readPr, int readIdxPr, int readLenPr,
     MAX(readIdxDc * MAX_SIZE + readLenDc,
     readIdxSn * MAX_SIZE + readLenSn)));
   uint32_t* order = (uint32_t*) memalloc(count * sizeof(uint32_t));
-  int* qual = (int*) memalloc(count * sizeof(int));
+  uint16_t* qual = (uint16_t*) memalloc(count * sizeof(uint16_t));
   uint32_t* order0 = (uint32_t*) memalloc(count * sizeof(uint32_t));
   uint32_t* order1 = (uint32_t*) memalloc(count * sizeof(uint32_t));
   uint32_t* order2 = (uint32_t*) memalloc(count * sizeof(uint32_t));
-  int* qual0 = (int*) memalloc(count * sizeof(int));
-  int* qual1 = (int*) memalloc(count * sizeof(int));
-  int* qual2 = (int*) memalloc(count * sizeof(int));
+  uint16_t* qual0 = (uint16_t*) memalloc(count * sizeof(uint16_t));
+  uint16_t* qual1 = (uint16_t*) memalloc(count * sizeof(uint16_t));
+  uint16_t* qual2 = (uint16_t*) memalloc(count * sizeof(uint16_t));
 
   // evaluate and process paired alignments
   if (readIdxPr || readLenPr)
@@ -3655,16 +3662,16 @@ bool saveSingleAln(Aln** aln, int* alnLen,
   return true;
 }
 
-/* int sumQual()
+/* uint16_t sumQual()
  * Sum an array/string of quality scores.
  */
-int sumQual(char* qual, int len, int offset) {
+uint16_t sumQual(char* qual, int len, int offset) {
   if (qual[0] == 0xFF)  // BAM 'null' value
     return 0;
   int sum = 0;
   for (int i = 0; i < len; i++)
     sum += qual[i] - offset;
-  return sum;
+  return sum > UINT16_MAX ? UINT16_MAX : (uint16_t) sum;
 }
 
 /* bool parseAlign()
@@ -3677,7 +3684,7 @@ bool parseAlign(Aln** aln, int* alnLen, uint16_t flag,
     int* paired, int* single, int* secPair, int* secSingle,
     int* skipped, bool singleOpt, float score,
     bool dupsOpt, char* qual, int qualLen, int offset,
-    int* qualR1, int* qualR2) {
+    uint16_t* qualR1, uint16_t* qualR2) {
 
   // save sum of quality scores (only if removing dups)
   if (dupsOpt) {
@@ -4091,7 +4098,7 @@ int readSAM(File in, bool gz, char* line, Aln** aln,
   int readLenDc = 0;  // /   (with dupsOpt)
   int readIdxSn = 0;  // \ indexes into read array readSn
   int readLenSn = 0;  // /   (with dupsOpt)
-  int qualR1 = 0, qualR2 = 0; // sums of quality scores
+  uint16_t qualR1 = 0, qualR2 = 0; // sums of quality scores
   bool pastHeader = false;    // to check for misplaced header lines
   int count = 0;
   while (getLine(line, MAX_SIZE, in, gz) != NULL) {
@@ -4441,7 +4448,7 @@ int parseBAM(gzFile in, char* line, Aln** aln,
   int readLenDc = 0;  // /   (with dupsOpt)
   int readIdxSn = 0;  // \ indexes into read array readSn
   int readLenSn = 0;  // /   (with dupsOpt)
-  int qualR1 = 0, qualR2 = 0; // sums of quality scores
+  uint16_t qualR1 = 0, qualR2 = 0; // sums of quality scores
   int count = 0;
   int32_t block_size;
   while ((block_size = readInt32(in, false)) != EOF) {
