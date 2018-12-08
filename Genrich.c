@@ -4943,9 +4943,12 @@ void logCounts(int count, int unmapped, int supp,
 }
 
 /* void runProgram()
- * Controls the opening/closing of files,
- *   and analysis by readSAM() or readBAM().
- *   Passes results to findPeaks().
+ * Controls the opening/closing of files, and parsing
+ *   of input files by readSAM() or readBAM().
+ *   Pileup values are computed by savePileupTreat() or
+ *   savePileupCtrl(), and p-values for each treatment/
+ *   control pair are calculated by savePval().
+ *   Results for all replicates are passed to findPeaks().
  */
 void runProgram(char* inFile, char* ctrlFile, char* outFile,
     char* logFile, char* pileFile, char* bedFile,
@@ -5031,7 +5034,7 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
         if (filename == NULL) {
           if (verbose)
             fprintf(stderr, "- control file #%d not provided -\n",
-              sample + 1);
+              sample);
           savePileupNoCtrl(chrom, chromLen, fragLen);
           break;
         }
@@ -5043,8 +5046,15 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
       bool bam = checkBAM(in, gz);
       if (verbose)
         fprintf(stderr, "Processing %s file #%d: %s\n",
-          i ? "control" : "treatment", sample + 1,
-          filename);
+          i ? "control" : "treatment", sample, filename);
+      if (dupsVerb) {
+        if (gzOut)
+          gzprintf(dups.gzf, "# %s file #%d: %s\n",
+            i ? "control" : "treatment", sample, filename);
+        else
+          fprintf(dups.f, "# %s file #%d: %s\n",
+            i ? "control" : "treatment", sample, filename);
+      }
 
       // reset 'diff' array for each Chrom
       for (int j = 0; j < chromLen; j++) {
