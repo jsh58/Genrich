@@ -3169,19 +3169,24 @@ void findDupsPr(Read** readPr, int readIdxPr,
     int* pairedPr, double* totalLen, float asDiff,
     bool atacOpt, int atacLen5, int atacLen3, File bed,
     bool bedOpt, bool gzOut, bool ctrl, int sample,
+    HashAln*** table, uint32_t* tableMem,
     HashAln** tableSn, uint32_t hashSizeSn, File dups,
-    bool dupsVerb, uint32_t* order, uint16_t* qual,
-    uint32_t* order0, uint32_t* order1, uint32_t* order2,
+    bool dupsVerb, uint32_t* order, uint32_t* order0,
+    uint32_t* order1, uint32_t* order2, uint16_t* qual,
     uint16_t* qual0, uint16_t* qual1, uint16_t* qual2,
     bool verbose) {
 
   // initialize hashtable
   uint32_t count = readIdxPr * MAX_SIZE + readLenPr;
   uint32_t hashSize = calcHashSize(count);
-  HashAln** table = (HashAln**) memalloc(hashSize
-    * sizeof(HashAln*));
+  if (hashSize > *tableMem) {
+    *table = (HashAln**) memrealloc(*table,
+      hashSize * sizeof(HashAln*));
+    *tableMem = hashSize;
+  } else
+    hashSize = *tableMem;
   for (uint32_t i = 0; i < hashSize; i++)
-    table[i] = NULL;
+    (*table)[i] = NULL;
 
   // get sort order of reads by qual score sum
   sortReads(readPr, count, order, qual, order0, order1,
@@ -3193,12 +3198,12 @@ void findDupsPr(Read** readPr, int readIdxPr,
       + order[i] % MAX_SIZE;
 
     // check hashtable for matches
-    if (checkHashPr(r, table, hashSize, dups,
+    if (checkHashPr(r, *table, hashSize, dups,
         dupsVerb, gzOut))
       (*dupsPr)++;
     else {
       // add alignments to hashtable(s)
-      addHashPr(r, table, hashSize, dupsVerb,
+      addHashPr(r, *table, hashSize, dupsVerb,
         tableSn, hashSizeSn);
       // process alignments too
       *pairedPr += processPair(r->name, r->aln,
@@ -3218,10 +3223,10 @@ void findDupsPr(Read** readPr, int readIdxPr,
 //  if (tableSn != NULL)
 //    saveHashPrSn(table, hashSize, tableSn, hashSizeSn);
 
-  // free hashtable
+  // free nodes of hashtable
   for (uint32_t i = 0; i < hashSize; i++) {
     HashAln* tmp;
-    HashAln* h = table[i];
+    HashAln* h = (*table)[i];
     while (h != NULL) {
       free(h->name);
       tmp = h->next;
@@ -3229,7 +3234,6 @@ void findDupsPr(Read** readPr, int readIdxPr,
       h = tmp;
     }
   }
-  free(table);
 }
 
 /* void addHashDc()
@@ -3313,19 +3317,24 @@ void findDupsDc(Read** readDc, int readIdxDc,
     int* singlePr, bool extendOpt, int extend,
     float asDiff, bool atacOpt, int atacLen5, int atacLen3,
     File bed, bool bedOpt, bool gzOut, bool ctrl,
-    int sample, HashAln** tableSn, uint32_t hashSizeSn,
-    File dups, bool dupsVerb, uint32_t* order,
-    uint16_t* qual, uint32_t* order0, uint32_t* order1,
-    uint32_t* order2, uint16_t* qual0, uint16_t* qual1,
-    uint16_t* qual2, bool verbose) {
+    int sample, HashAln*** table, uint32_t* tableMem,
+    HashAln** tableSn, uint32_t hashSizeSn, File dups,
+    bool dupsVerb, uint32_t* order, uint32_t* order0,
+    uint32_t* order1, uint32_t* order2, uint16_t* qual,
+    uint16_t* qual0, uint16_t* qual1, uint16_t* qual2,
+    bool verbose) {
 
   // initialize hashtable
   uint32_t count = readIdxDc * MAX_SIZE + readLenDc;
   uint32_t hashSize = calcHashSize(count);
-  HashAln** table = (HashAln**) memalloc(hashSize
-    * sizeof(HashAln*));
+  if (hashSize > *tableMem) {
+    *table = (HashAln**) memrealloc(*table,
+      hashSize * sizeof(HashAln*));
+    *tableMem = hashSize;
+  } else
+    hashSize = *tableMem;
   for (uint32_t i = 0; i < hashSize; i++)
-    table[i] = NULL;
+    (*table)[i] = NULL;
 
   // sort reads by qual score sum
   sortReads(readDc, count, order, qual, order0, order1,
@@ -3337,12 +3346,12 @@ void findDupsDc(Read** readDc, int readIdxDc,
       + order[i] % MAX_SIZE;
 
     // check hashtable for matches
-    if (checkHashDc(r, table, hashSize, dups,
+    if (checkHashDc(r, *table, hashSize, dups,
         dupsVerb, gzOut))
       (*dupsDc)++;
     else {
       // add alignments to hashtable(s)
-      addHashDc(r, table, hashSize, dupsVerb,
+      addHashDc(r, *table, hashSize, dupsVerb,
         tableSn, hashSizeSn);
       // process alignments too (as singletons)
       *singlePr += processSingle(r->name, r->aln,
@@ -3371,10 +3380,10 @@ void findDupsDc(Read** readDc, int readIdxDc,
 //  if (tableSn != NULL)
 //    saveHashDcSn(table, hashSize, tableSn, hashSizeSn);
 
-  // free hashtable
+  // free nodes of hashtable
   for (uint32_t i = 0; i < hashSize; i++) {
     HashAln* tmp;
-    HashAln* h = table[i];
+    HashAln* h = (*table)[i];
     while (h != NULL) {
       free(h->name);
       tmp = h->next;
@@ -3382,7 +3391,6 @@ void findDupsDc(Read** readDc, int readIdxDc,
       h = tmp;
     }
   }
-  free(table);
 }
 
 /* void addHashSn()
@@ -3437,8 +3445,8 @@ void findDupsSn(Read** readSn, int readIdxSn,
     File bed, bool bedOpt, bool gzOut, bool ctrl,
     int sample, HashAln** table, uint32_t hashSize,
     File dups, bool dupsVerb, uint32_t* order,
-    uint16_t* qual, uint32_t* order0, uint32_t* order1,
-    uint32_t* order2, uint16_t* qual0, uint16_t* qual1,
+    uint32_t* order0, uint32_t* order1, uint32_t* order2,
+    uint16_t* qual, uint16_t* qual0, uint16_t* qual1,
     uint16_t* qual2, bool verbose) {
 
   // sort reads by qual score sum
@@ -3497,7 +3505,7 @@ for (int j = 0; j <= i; j++)
   printf("%d\t%d\n", j, c[j]);
 */
 
-  // free hashtable
+  // free nodes of hashtable
   for (uint32_t i = 0; i < hashSize; i++) {
     HashAln* tmp;
     HashAln* h = table[i];
@@ -3508,7 +3516,6 @@ for (int j = 0; j <= i; j++)
       h = tmp;
     }
   }
-  free(table);
 }
 
 /* void findDups()
@@ -3518,6 +3525,11 @@ for (int j = 0; j <= i; j++)
 void findDups(Read** readPr, int readIdxPr, int readLenPr,
     Read** readDc, int readIdxDc, int readLenDc,
     Read** readSn, int readIdxSn, int readLenSn,
+    HashAln*** table, uint32_t* tableMem,
+    HashAln*** tableSn, uint32_t* tableSnMem,
+    uint32_t** order, uint32_t** order0, uint32_t** order1,
+    uint32_t** order2, uint16_t** qual, uint16_t** qual0,
+    uint16_t** qual1, uint16_t** qual2, uint32_t* arrMem,
     int* countPr, int* dupsPr, int* countDc, int* dupsDc,
     int* countSn, int* dupsSn, bool singleOpt,
     int* pairedPr, int* singlePr, double* totalLen,
@@ -3527,43 +3539,51 @@ void findDups(Read** readPr, int readIdxPr, int readLenPr,
     bool dupsVerb, bool ctrl, int sample, bool verbose) {
 
   // initialize hash table for singletons
-  HashAln** tableSn = NULL;
   uint32_t hashSizeSn = 0;
   if (singleOpt && (readIdxSn || readLenSn)) {
-    // calculate hash size
+    // calculate hashtable size
     uint32_t sum = MIN(UINT32_MAX,
       2 * (readIdxPr * MAX_SIZE + readLenPr)
       + 2 * (readIdxDc * MAX_SIZE + readLenDc)
       + readIdxSn * MAX_SIZE + readLenSn);
     hashSizeSn = calcHashSize(sum);
-    tableSn = (HashAln**) memalloc(hashSizeSn
-      * sizeof(HashAln*));
+
+    // create/expand hashtable
+    if (hashSizeSn > *tableSnMem) {
+      *tableSn = (HashAln**) memrealloc(*tableSn,
+        hashSizeSn * sizeof(HashAln*));
+      *tableSnMem = hashSizeSn;
+    } else
+      hashSizeSn = *tableSnMem;
     for (uint32_t i = 0; i < hashSizeSn; i++)
-      tableSn[i] = NULL;
+      (*tableSn)[i] = NULL;
   }
 
-  // malloc variables for efficient sorting
+  // initialize arrays for efficient sorting
   uint32_t count = MIN(UINT32_MAX,
     MAX(readIdxPr * MAX_SIZE + readLenPr,
     MAX(readIdxDc * MAX_SIZE + readLenDc,
     readIdxSn * MAX_SIZE + readLenSn)));
-  uint32_t* order = (uint32_t*) memalloc(count * sizeof(uint32_t));
-  uint16_t* qual = (uint16_t*) memalloc(count * sizeof(uint16_t));
-  uint32_t* order0 = (uint32_t*) memalloc(count * sizeof(uint32_t));
-  uint32_t* order1 = (uint32_t*) memalloc(count * sizeof(uint32_t));
-  uint32_t* order2 = (uint32_t*) memalloc(count * sizeof(uint32_t));
-  uint16_t* qual0 = (uint16_t*) memalloc(count * sizeof(uint16_t));
-  uint16_t* qual1 = (uint16_t*) memalloc(count * sizeof(uint16_t));
-  uint16_t* qual2 = (uint16_t*) memalloc(count * sizeof(uint16_t));
+  if (count > *arrMem) {
+    *order = (uint32_t*) memrealloc(*order, count * sizeof(uint32_t));
+    *order0 = (uint32_t*) memrealloc(*order0, count * sizeof(uint32_t));
+    *order1 = (uint32_t*) memrealloc(*order1, count * sizeof(uint32_t));
+    *order2 = (uint32_t*) memrealloc(*order2, count * sizeof(uint32_t));
+    *qual = (uint16_t*) memrealloc(*qual, count * sizeof(uint16_t));
+    *qual0 = (uint16_t*) memrealloc(*qual0, count * sizeof(uint16_t));
+    *qual1 = (uint16_t*) memrealloc(*qual1, count * sizeof(uint16_t));
+    *qual2 = (uint16_t*) memrealloc(*qual2, count * sizeof(uint16_t));
+    *arrMem = count;
+  }
 
   // evaluate and process paired alignments
   if (readIdxPr || readLenPr)
     findDupsPr(readPr, readIdxPr, readLenPr, countPr,
       dupsPr, pairedPr, totalLen, asDiff, atacOpt,
       atacLen5, atacLen3, bed, bedOpt, gzOut, ctrl,
-      sample, tableSn, hashSizeSn, dups, dupsVerb,
-      order, qual, order0, order1, order2, qual0, qual1,
-      qual2, verbose);
+      sample, table, tableMem, *tableSn, hashSizeSn,
+      dups, dupsVerb, *order, *order0, *order1, *order2,
+      *qual, *qual0, *qual1, *qual2, verbose);
 
   if (singleOpt) {
     // with avgExtOpt, calculate average fragment length
@@ -3579,29 +3599,21 @@ void findDups(Read** readPr, int readIdxPr, int readLenPr,
       findDupsDc(readDc, readIdxDc, readLenDc, countDc,
         dupsDc, singlePr, extendOpt, extend, asDiff,
         atacOpt, atacLen5, atacLen3, bed, bedOpt, gzOut,
-        ctrl, sample, tableSn, hashSizeSn, dups, dupsVerb,
-        order, qual, order0, order1, order2, qual0, qual1,
-        qual2, verbose);
+        ctrl, sample, table, tableMem, *tableSn,
+        hashSizeSn, dups, dupsVerb, *order, *order0,
+        *order1, *order2, *qual, *qual0, *qual1, *qual2,
+        verbose);
 
     // evaluate and process singleton alignments
     if (readIdxSn || readLenSn)
       findDupsSn(readSn, readIdxSn, readLenSn, countSn,
         dupsSn, singlePr, extendOpt, extend, asDiff,
         atacOpt, atacLen5, atacLen3, bed, bedOpt, gzOut,
-        ctrl, sample, tableSn, hashSizeSn, dups, dupsVerb,
-        order, qual, order0, order1, order2, qual0, qual1,
-        qual2, verbose);
+        ctrl, sample, *tableSn, hashSizeSn, dups, dupsVerb,
+        *order, *order0, *order1, *order2, *qual, *qual0,
+        *qual1, *qual2, verbose);
   }
 
-  // free memory
-  free(order);
-  free(qual);
-  free(order0);
-  free(order1);
-  free(order2);
-  free(qual0);
-  free(qual1);
-  free(qual2);
 }
 
 /*** Save alignment information ***/
@@ -4100,9 +4112,14 @@ int readSAM(File in, bool gz, char* line, Aln** aln,
     bool bedOpt, bool gzOut, bool ctrl, int sample,
     bool dupsOpt, File dups, bool dupsVerb, Read*** readPr,
     int* readMemPr, Read*** readDc, int* readMemDc,
-    Read*** readSn, int* readMemSn, int* countPr,
-    int* dupsPr, int* countDc, int* dupsDc, int* countSn,
-    int* dupsSn, bool verbose) {
+    Read*** readSn, int* readMemSn, HashAln*** table,
+    uint32_t* tableMem, HashAln*** tableSn,
+    uint32_t* tableSnMem, uint32_t** order,
+    uint32_t** order0, uint32_t** order1,
+    uint32_t** order2, uint16_t** qualA, uint16_t** qual0,
+    uint16_t** qual1, uint16_t** qual2, uint32_t* arrMem,
+    int* countPr, int* dupsPr, int* countDc, int* dupsDc,
+    int* countSn, int* dupsSn, bool verbose) {
 
   // SAM fields to save
   char* qname, *rname, *cigar, *rnext, *seq, *qual, *extra;
@@ -4221,11 +4238,13 @@ int readSAM(File in, bool gz, char* line, Aln** aln,
     // remove duplicates and process all alignments
     findDups(*readPr, readIdxPr, readLenPr, *readDc,
       readIdxDc, readLenDc, *readSn, readIdxSn, readLenSn,
+      table, tableMem, tableSn, tableSnMem, order, order0,
+      order1, order2, qualA, qual0, qual1, qual2, arrMem,
       countPr, dupsPr, countDc, dupsDc, countSn, dupsSn,
-      singleOpt, pairedPr, singlePr, totalLen,
-      extendOpt, extend, avgExtOpt, asDiff,
-      atacOpt, atacLen5, atacLen3, bed, bedOpt, gzOut,
-      dups, dupsVerb, ctrl, sample, verbose);
+      singleOpt, pairedPr, singlePr, totalLen, extendOpt,
+      extend, avgExtOpt, asDiff, atacOpt, atacLen5,
+      atacLen3, bed, bedOpt, gzOut, dups, dupsVerb, ctrl,
+      sample, verbose);
 
   else if (avgExtOpt)
     // process single alignments w/ avgExtOpt
@@ -4449,9 +4468,13 @@ int parseBAM(gzFile in, char* line, Aln** aln,
     bool ctrl, int sample, bool dupsOpt, File dups,
     bool dupsVerb, Read*** readPr, int* readMemPr,
     Read*** readDc, int* readMemDc, Read*** readSn,
-    int* readMemSn, int* countPr, int* dupsPr,
-    int* countDc, int* dupsDc, int* countSn, int* dupsSn,
-    bool verbose) {
+    int* readMemSn, HashAln*** table, uint32_t* tableMem,
+    HashAln*** tableSn, uint32_t* tableSnMem,
+    uint32_t** order, uint32_t** order0, uint32_t** order1,
+    uint32_t** order2, uint16_t** qualA, uint16_t** qual0,
+    uint16_t** qual1, uint16_t** qual2, uint32_t* arrMem,
+    int* countPr, int* dupsPr, int* countDc, int* dupsDc,
+    int* countSn, int* dupsSn, bool verbose) {
 
   // BAM fields to save
   int32_t refID, pos, l_seq, next_refID, next_pos, tlen;
@@ -4566,11 +4589,13 @@ int parseBAM(gzFile in, char* line, Aln** aln,
     // remove duplicates and process all alignments
     findDups(*readPr, readIdxPr, readLenPr, *readDc,
       readIdxDc, readLenDc, *readSn, readIdxSn, readLenSn,
+      table, tableMem, tableSn, tableSnMem, order, order0,
+      order1, order2, qualA, qual0, qual1, qual2, arrMem,
       countPr, dupsPr, countDc, dupsDc, countSn, dupsSn,
-      singleOpt, pairedPr, singlePr, totalLen,
-      extendOpt, extend, avgExtOpt, asDiff,
-      atacOpt, atacLen5, atacLen3, bed, bedOpt, gzOut,
-      dups, dupsVerb, ctrl, sample, verbose);
+      singleOpt, pairedPr, singlePr, totalLen, extendOpt,
+      extend, avgExtOpt, asDiff, atacOpt, atacLen5,
+      atacLen3, bed, bedOpt, gzOut, dups, dupsVerb, ctrl,
+      sample, verbose);
 
   else if (avgExtOpt)
     // process single alignments w/ avgExtOpt
@@ -4598,9 +4623,14 @@ int readBAM(gzFile in, char* line, Aln** aln,
     bool bedOpt, bool gzOut, bool ctrl, int sample,
     bool dupsOpt, File dups, bool dupsVerb, Read*** readPr,
     int* readMemPr, Read*** readDc, int* readMemDc,
-    Read*** readSn, int* readMemSn, int* countPr,
-    int* dupsPr, int* countDc, int* dupsDc, int* countSn,
-    int* dupsSn, bool verbose) {
+    Read*** readSn, int* readMemSn, HashAln*** table,
+    uint32_t* tableMem, HashAln*** tableSn,
+    uint32_t* tableSnMem, uint32_t** order,
+    uint32_t** order0, uint32_t** order1,
+    uint32_t** order2, uint16_t** qual, uint16_t** qual0,
+    uint16_t** qual1, uint16_t** qual2, uint32_t* arrMem,
+    int* countPr, int* dupsPr, int* countDc, int* dupsDc,
+    int* countSn, int* dupsSn, bool verbose) {
 
   // load first line from header
   int32_t l_text = readInt32(in, true);
@@ -4619,14 +4649,14 @@ int readBAM(gzFile in, char* line, Aln** aln,
   char* tag = strtok(line, TAB);
   if (tag == NULL || strcmp(tag, "@HD"))
     exit(error("", ERRBAM));
-  char* order = NULL;
+  char* sortOrder = NULL;
   char* field = strtok(NULL, TAB);
   while (field != NULL) {
     if (!strncmp(field, "SO:", 3))
-      order = field + 3;
+      sortOrder = field + 3;
     field = strtok(NULL, TAB);
   }
-  if (order == NULL || strcmp(order, "queryname"))
+  if (sortOrder == NULL || strcmp(sortOrder, "queryname"))
     exit(error("", ERRSORT));
   if (gzseek(in, l_text - i - 1, SEEK_CUR) == -1)
     exit(error("", ERRBAM));
@@ -4651,15 +4681,16 @@ int readBAM(gzFile in, char* line, Aln** aln,
       ctrl, verbose);
   }
 
-  return parseBAM(in, line, aln, readName,
-    *chromLen, *chrom, n_ref, idx, totalLen, unmapped,
-    paired, single, pairedPr, singlePr, supp, skipped,
-    lowMapQ, minMapQ, secPair, secSingle, orphan,
-    singleOpt, extendOpt, extend, avgExtOpt,
-    unpair, unpairMem, asDiff, atacOpt, atacLen5,
-    atacLen3, bed, bedOpt, gzOut, ctrl, sample, dupsOpt,
-    dups, dupsVerb, readPr, readMemPr, readDc, readMemDc,
-    readSn, readMemSn, countPr, dupsPr, countDc, dupsDc,
+  return parseBAM(in, line, aln, readName, *chromLen,
+    *chrom, n_ref, idx, totalLen, unmapped, paired, single,
+    pairedPr, singlePr, supp, skipped, lowMapQ, minMapQ,
+    secPair, secSingle, orphan, singleOpt, extendOpt,
+    extend, avgExtOpt, unpair, unpairMem, asDiff, atacOpt,
+    atacLen5, atacLen3, bed, bedOpt, gzOut, ctrl, sample,
+    dupsOpt, dups, dupsVerb, readPr, readMemPr, readDc,
+    readMemDc, readSn, readMemSn, table, tableMem, tableSn,
+    tableSnMem, order, order0, order1, order2, qual, qual0,
+    qual1, qual2, arrMem, countPr, dupsPr, countDc, dupsDc,
     countSn, dupsSn, verbose);
 }
 
@@ -4950,16 +4981,25 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
   int sample = 0;       // number of sample pairs analyzed
 
   // variables for duplicate removal option
-  Read** readPr = NULL; // array of reads with properly paired aln(s)
-  int readMemPr = 0;    // index into readPr array
-  Read** readDc = NULL; // array of reads with discordant aln(s)
-  int readMemDc = 0;    // index into readDc array
-  Read** readSn = NULL; // array of reads with singleton aln(s)
-  int readMemSn = 0;    // index into readSn array
-  HashAln** table = NULL;
-  uint32_t hashMem = 0;
-  HashAln** tableSn = NULL;
-  uint32_t hashMemSn = 0;
+  Read** readPr = NULL;     // array of reads with properly paired aln(s)
+  int readMemPr = 0;        // index into readPr array
+  Read** readDc = NULL;     // array of reads with discordant aln(s)
+  int readMemDc = 0;        // index into readDc array
+  Read** readSn = NULL;     // array of reads with singleton aln(s)
+  int readMemSn = 0;        // index into readSn array
+  HashAln** table = NULL;   // hashtable for paired/discordant alns (recycled)
+  uint32_t tableMem = 0;    // size of above hashtable
+  HashAln** tableSn = NULL; // hashtable for singletons alns
+  uint32_t tableSnMem = 0;  // size of above hashtable
+  uint32_t* order = NULL;   // array for order of reads to be processed
+  uint32_t* order0 = NULL;  // |
+  uint32_t* order1 = NULL;  // | temp arrays for order
+  uint32_t* order2 = NULL;  // |
+  uint16_t* qual = NULL;    // array of quality score sums (sorting key)
+  uint16_t* qual0 = NULL;   // |
+  uint16_t* qual1 = NULL;   // | temp arrays for qual
+  uint16_t* qual2 = NULL;   // |
+  uint32_t arrMem = 0;      // length of above order/qual arrays
 
   // save genomic regions to ignore
   Bed* xBed = NULL;
@@ -5034,9 +5074,11 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
           &unpairMem, asDiff, atacOpt, atacLen5, atacLen3,
           bed, bedFile != NULL, gzOut, i, sample, dupsOpt,
           dups, dupsVerb, &readPr, &readMemPr, &readDc,
-          &readMemDc, &readSn, &readMemSn, &countPr,
-          &dupsPr, &countDc, &dupsDc, &countSn, &dupsSn,
-          verbose);
+          &readMemDc, &readSn, &readMemSn, &table,
+          &tableMem, &tableSn, &tableSnMem, &order,
+          &order0, &order1, &order2, &qual, &qual0, &qual1,
+          &qual2, &arrMem, &countPr, &dupsPr, &countDc,
+          &dupsDc, &countSn, &dupsSn, verbose);
       else
         count = readSAM(in, gz, line, &aln, readName,
           &totalLen, &unmapped, &paired, &single,
@@ -5047,9 +5089,11 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
           &unpairMem, asDiff, atacOpt, atacLen5, atacLen3,
           bed, bedFile != NULL, gzOut, i, sample, dupsOpt,
           dups, dupsVerb, &readPr, &readMemPr, &readDc,
-          &readMemDc, &readSn, &readMemSn, &countPr,
-          &dupsPr, &countDc, &dupsDc, &countSn, &dupsSn,
-          verbose);
+          &readMemDc, &readSn, &readMemSn, &table,
+          &tableMem, &tableSn, &tableSnMem, &order,
+          &order0, &order1, &order2, &qual, &qual0, &qual1,
+          &qual2, &arrMem, &countPr, &dupsPr, &countDc,
+          &dupsDc, &countSn, &dupsSn, verbose);
 
       // log counts
       if (verbose)
@@ -5130,6 +5174,16 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
     for (int i = 0; i < readMemSn; i++)
       free(readSn[i]);
     free(readSn);
+    free(table);
+    free(tableSn);
+    free(order);
+    free(order0);
+    free(order1);
+    free(order2);
+    free(qual);
+    free(qual0);
+    free(qual1);
+    free(qual2);
   }
   for (int i = 0; i < chromLen; i++) {
     Chrom* chr = chrom + i;
