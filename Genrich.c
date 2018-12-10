@@ -2732,10 +2732,10 @@ uint32_t johnPartition(uint16_t* qual, uint32_t* order,
     uint16_t* qual1, uint16_t* qual2, uint32_t* order0,
     uint32_t* order1, uint32_t* order2,
     uint32_t* idxHigh) {
-  uint16_t pivot = qual[high - 1];  // pivot value: last elt
 
   // separate qual values into temp arrays --
   //   qual0 for higher values, qual1 equal, qual2 lower
+  uint16_t pivot = qual[high - 1];  // pivot value: last elt
   uint32_t idx0 = 0, idx1 = 0, idx2 = 0; // indexes into temp arrays
   for (uint32_t j = low; j < high; j++) {
     if (qual[j] > pivot) {
@@ -2753,8 +2753,6 @@ uint32_t johnPartition(uint16_t* qual, uint32_t* order,
     }
   }
 
-//fprintf(stderr, "pivotVal=%d on [%d, %d)\n", pivot, low, high);
-//fprintf(stderr, "  idx0=%d, idx1=%d, idx2=%d\n", idx0, idx1, idx2);
   if (! idx0 && ! idx2)
     return 0; // all equal values, no need to shuffle
 
@@ -2783,11 +2781,6 @@ uint32_t johnPartition(uint16_t* qual, uint32_t* order,
     }
   }
 
-// 1-2 check
-/*fprintf(stderr, "  below=%d, (%d - %d), above=%d\n",
-  idx0 ? qual[low+idx0-1] : -1, qual[low+idx0],
-  qual[low+idx0+idx1-1], qual[low+idx0+idx1]);
-*/
   // return low/high indexes
   *idxHigh = low + idx0 + idx1;
   return low + idx0;
@@ -2833,47 +2826,10 @@ void sortReads(Read** arr, uint32_t count, uint32_t* order,
     order[i] = i;
     qual[i] = (arr[i / MAX_SIZE] + i % MAX_SIZE)->qual;
   }
-int d[10000] = { 0 };
-for (int i = 0; i < count; i++)
-  d[qual[i]]++;
 
-//fprintf(stderr, "sorting...\n");
-//time_t sec = time(NULL);
   // initialize johnSort()
   johnSort(qual, order, 0, count, qual0, qual1, qual2,
     order0, order1, order2);
-//time_t sec2 = time(NULL);
-
-int q = 0;
-int c[10000] = {0};
-//int sum = 0;
-for (int i = 0; i < count; i++) {
-  if (qual[i] != q) {
-    if (q) {
-      //fprintf(stderr, "%d\t%d\n", q, c);
-      if (qual[i] > q) {
-        fprintf(stderr, "  out of order!  %d  %d\n", qual[i], q);
-        while(!getchar()) ;
-      }
-      //while(!getchar()) ;
-    }
-//    sum += c;
-    q = qual[i];
-//    c = 1;
-//  } else
-//    c++;
-  }
-  c[qual[i]]++;
-}
-//sum += c;
-//fprintf(stderr, "sum: %d\n", sum);
-for (int i = 9999; i > -1; i--)
-  if (c[i] != d[i]) {
-    fprintf(stderr, " not a match %d\t%d\t%d\n", i, c[i], d[i]);
-    //while(!getchar()) ;
-  }
-//fprintf(stderr, "time taken: %ld sec\n", sec2 - sec);
-
 }
 
 /*** PCR duplicate removal ***/
@@ -2910,17 +2866,12 @@ uint32_t jenkins_hash_aln(Chrom* chrom, Chrom* chrom1,
     int alignType, uint32_t hashSize) {
   uint32_t hash = 0;
   unsigned char* p;
-bool verb = false; //(chrom1 != NULL); //true;
 
   // hash Chrom*
   int end = (alignType == DISCORD ? 2 : 1);
   for (int j = 0; j < end; j++) {
     p = (unsigned char*) (j ? chrom1 : chrom);
-if (verb)
-  fprintf(stderr, "\nChrom%c (%s): ", j ? '1' : ' ', j ? chrom1->name : chrom->name);
     for (int i = 0; i < sizeof(Chrom*); i++) {
-if (verb)
-  fprintf(stderr, "%02x ", p[i]);
       hash += p[i];
       hash += hash << 10;
       hash ^= hash >> 6;
@@ -2930,12 +2881,8 @@ if (verb)
   // hash pos
   end = (alignType == SINGLE ? 1 : 2);
   for (int j = 0; j < end; j++) {
-if (verb)
-  fprintf(stderr, "\n%s (%d): ", j ? "pos1" : "pos", j ? pos1 : pos);
     p = (unsigned char*) (j ? &pos1 : &pos);
     for (int i = 0; i < sizeof(uint32_t); i++) {
-if (verb)
-  fprintf(stderr, "%02x ", p[i]);
       hash += p[i];
       hash += hash << 10;
       hash ^= hash >> 6;
@@ -2945,21 +2892,13 @@ if (verb)
   // hash strand
   end = alignType;  // convenient!
   for (int j = 0; j < end; j++) {
-if (verb)
-  fprintf(stderr, "\n%s (%s): ", j ? "strand1" : "strand",
-    j ? (strand1 ? "true" : "false") : (strand ? "true" : "false"));
     p = (unsigned char*) (j ? &strand1 : &strand);
     for (int i = 0; i < sizeof(bool); i++) {
-if (verb)
-  fprintf(stderr, "%02x ", p[i]);
       hash += p[i];
       hash += hash << 10;
       hash ^= hash >> 6;
     }
   }
-if (verb)
-  //fprintf(stderr, "\n");
-  while(!getchar()) ;
 
   hash += hash << 3;
   hash ^= hash >> 11;
@@ -3036,40 +2975,6 @@ void checkAndAdd(HashAln** tableSn, uint32_t hashSizeSn,
       tableSn, idx))
     addToHash(chrom, NULL, pos, 0, strand, 0, tableSn,
       idx, name);
-}
-
-/* void saveHashDcSn()
- * Save individual alignments of discordant alns as
- *   singletons, via checkAndAdd().
- *
-void saveHashDcSn(HashAln** table, uint32_t hashSize,
-    HashAln** tableSn, uint32_t hashSizeSn) {
-  for (uint32_t i = 0; i < hashSize; i++) {
-    for (HashAln* h = table[i]; h != NULL; h = h->next) {
-      // add both alignments as singletons
-      checkAndAdd(tableSn, hashSizeSn, h->chrom, h->pos,
-        h->strand, h->name);
-      checkAndAdd(tableSn, hashSizeSn, h->chrom1, h->pos1,
-        h->strand1, h->name);
-    }
-  }
-}
-
-/* void saveHashPrSn()
- * Save individual alignments of paired alns as
- *   singletons, via checkAndAdd().
- *
-void saveHashPrSn(HashAln** table, uint32_t hashSize,
-    HashAln** tableSn, uint32_t hashSizeSn) {
-  for (uint32_t i = 0; i < hashSize; i++) {
-    for (HashAln* h = table[i]; h != NULL; h = h->next) {
-      // add both alignments as singletons
-      checkAndAdd(tableSn, hashSizeSn, h->chrom, h->pos,
-        true, h->name);
-      checkAndAdd(tableSn, hashSizeSn, h->chrom, h->pos1,
-        false, h->name);
-    }
-  }
 }
 
 /* void logDup()
@@ -3218,10 +3123,6 @@ void findDupsPr(Read** readPr, int readIdxPr,
 
     (*countPr)++;
   }
-
-  // save alns to singleton hashtable
-//  if (tableSn != NULL)
-//    saveHashPrSn(table, hashSize, tableSn, hashSizeSn);
 
   // free nodes of hashtable
   for (uint32_t i = 0; i < hashSize; i++) {
@@ -3376,10 +3277,6 @@ void findDupsDc(Read** readDc, int readIdxDc,
     (*countDc)++;
   }
 
-  // save alns to singleton hashtable
-//  if (tableSn != NULL)
-//    saveHashDcSn(table, hashSize, tableSn, hashSizeSn);
-
   // free nodes of hashtable
   for (uint32_t i = 0; i < hashSize; i++) {
     HashAln* tmp;
@@ -3481,29 +3378,6 @@ void findDupsSn(Read** readSn, int readIdxSn,
 
     (*countSn)++;
   }
-
-/*
-printf("\nsingletons (size %d)\n", hashSize);
-int c[100000] = { 0 };
-for (int i = 0; i < hashSize; i++) {
-  int n = 0;
-  for (HashAln* h = table[i]; h != NULL; h = h->next)
-    n++;
-  / *if (n > 2) {
-    printf("idx %d\n", i);
-    for (HashAln* h = table[i]; h != NULL; h = h->next)
-      printf("  %s: %d %c\n", h->chrom->name, h->pos, h->strand ? '+' : '-');
-    while (!getchar()) ;
-  }* /
-  c[n]++;
-}
-int i;
-for (i = 100000 - 1; i > -1; i--)
-  if (c[i])
-    break;
-for (int j = 0; j <= i; j++)
-  printf("%d\t%d\n", j, c[j]);
-*/
 
   // free nodes of hashtable
   for (uint32_t i = 0; i < hashSize; i++) {
