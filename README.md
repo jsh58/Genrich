@@ -10,6 +10,7 @@
   * [Alignment parsing](#alignment)
   * [Multiple replicates](#replicate)
   * [Multimapping reads](#multimap)
+  * [PCR duplicate removal](#duplicate)
   * [Genome length calculation](#genomelen)
   * [Control/background pileup calculation](#pileup)
   * [*p*-value calculation](#pvalue)
@@ -34,7 +35,7 @@ Genrich is a peak-caller for genomic enrichment assays (e.g. ChIP-seq, ATAC-seq)
 ### Quick start <a name="quick"></a>
 
 Given:
-* `sample.bam` (alignment file)
+* `sample.bam` (alignment file, sorted by queryname)
 * `Genrich` (compiled as described [below](#compile))
 
 To produce a file listing regions of genomic enrichment:
@@ -64,7 +65,9 @@ Optional I/O arguments:
   -f  <file>       Output bedgraph-ish file for p/q values
   -k  <file>       Output bedgraph-ish file for pileups and p-values
   -b  <file>       Output BED file for reads/fragments/intervals
+  -R  <file>       Output file for PCR duplicates (only with -r)
 Filtering options:
+  -r               Remove PCR duplicates
   -e  <arg>        Comma-separated list of chromosomes to ignore
   -E  <file>       Input BED file(s) of genomic regions to ignore
   -m  <int>        Minimum MAPQ to keep an alignment (def. 0)
@@ -124,6 +127,20 @@ Genrich analyzes reads/fragments that map to multiple locations in the genome by
   * The short read aligner [BWA](http://bio-bwa.sourceforge.net/bwa.shtml) does not produce secondary alignments.
 * To avoid excessive memory usage and the imprecision inherent in floating-point values, a maximum of 10 alignments per read is analyzed by Genrich.
 * Additional information can be found in the description of the [`-s` parameter](#sparam).
+
+
+### PCR duplicate removal <a name="duplicate"></a>
+
+Genrich provides an option (`-r`) for removing PCR duplicates.  In this process, it analyzes reads/fragments based on their alignments, in three separate groups, sequentially:
+* Proper pairs: A properly paired alignment is classified as a duplicate if the reference name (chromosome) and the 5' positions of the two reads match those of another properly paired alignment.
+* Discordant pairs (where both R1 and R2 reads align, but not in a proper pair): A discordant alignment is classified as a duplicate if the reference name, 5' position, and strand (orientation) of *both* alignments match those of another discordant alignment.
+* Singletons (where either R1 or R2 aligns): A singleton alignment is classified as a duplicate if the reference name, 5' position, and strand (orientation) match either end of a properly paired alignment, either end of a discordant pair, or another singleton alignment.
+
+Within each group, Genrich analyzes reads/fragments in order based on the total sums of the quality scores (sums of both R1's and R2's quality scores with paired alignments).  In case of ties (which are frequent), reads are analyzed in the order they appear in the SAM/BAM.  Note that discordant and singleton duplicates are evaluated only if [unpaired alignments](#unpaired) are to be kept.
+
+There is no consideration of read order (R1 vs. R2) by Genrich.  That is, if the 5' coordinates of R1 and R2 of one paired alignment match the coordinates of R2 and R1 of another paired alignment, respectively, it is classified as a duplicate.  The same applies to discordant and singleton duplicates.
+
+For reads/fragments with [multiple alignments](#multimap), all secondary alignments within the [`-s` threshold](#sparam) are considered.  If *any* of a read's/fragment's alignments is classified as a duplicate, then the whole read/fragment is classified as a duplicate, and *all* of its alignments are discarded.  Note that no maximum of 10 alignments per read/fragment is imposed at this stage, and all alignments to skipped chromosomes (`-e`) or genomic regions (`-E`) are still analyzed.
 
 
 ### Genome length calculation <a name="genomelen"></a>
@@ -240,7 +257,26 @@ chr1    1565720    1565733    2.000000    0.190111    4.568854    2.318294    *
 * This is an unsorted [BED file](https://genome.ucsc.edu/FAQ/FAQformat.html#format1) of the reads/fragments/intervals analyzed. The 4th column gives the read name, number of alignments, 'T'reatment or 'C'ontrol, and sample number (0-based), e.g. `SRR5427885.57_2_T_0`.
 <br><br>
 
+```
+  -R  <file>       Output file for PCR duplicates (only with -r)
+```
+* This log file lists the headers of reads classified as PCR duplicates, followed by the alignment, the header of the read it matched, and the alignment type. For example:
+```
+SRR5427888.426     chr11:40276009-40276085             SRR5427888.353     paired
+SRR5427888.9678    chr4:80273698,+;chr2:133028456,-    SRR5427888.9507    discordant
+SRR5427888.3109    chr8:103906034,-                    SRR5427888.3013    single
+```
+* This file can be used to filter the original SAM/BAM file, using a simple script such as [getReads.py](https://github.com/jsh58/rutgers/blob/master/getReads.py), for example.
+<br><br>
+
+
 ## Filtering options <a name="filter"></a>
+
+```
+  -r               Remove PCR duplicates
+```
+* With this option, all reads classified as PCR duplicates will be removed from further analysis, as described [above](#duplicate).
+<br><br>
 
 ```
   -e  <arg>        Comma-separated list of chromosomes to ignore
