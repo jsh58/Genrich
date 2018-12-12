@@ -24,6 +24,7 @@
 * [Peak-calling parameters](#peakcalling)
 * [Miscellaneous](#misc)
   * [Warning messages](#warning)
+  * [Computational requirements](#memory)
 * [Contact](#contact)
 <br><br>
 
@@ -123,7 +124,7 @@ Genrich calls peaks for multiple replicates collectively.  First, it analyzes th
 
 Genrich analyzes reads/fragments that map to multiple locations in the genome by adding a fractional count to each location.  This allows for peak detection in regions of the genome that are otherwise inaccessible to the assay.
 * The input SAM/BAM file(s) must list secondary alignments for multimapping reads/fragments.
-  * The short read aligner [Bowtie2](http://bowtie-bio.sourceforge.net/bowtie2/manual.shtml) produces secondary alignments in either [`-k <int>` mode](http://bowtie-bio.sourceforge.net/bowtie2/manual.shtml#k-mode-search-for-one-or-more-alignments-report-each) or [`-a` mode](http://bowtie-bio.sourceforge.net/bowtie2/manual.shtml#a-mode-search-for-and-report-all-alignments).
+  * The short read aligner [Bowtie2](http://bowtie-bio.sourceforge.net/bowtie2/manual.shtml) produces secondary alignments in either [`-k <int>` mode](http://bowtie-bio.sourceforge.net/bowtie2/manual.shtml#k-mode-search-for-one-or-more-alignments-report-each) or [`-a` mode](http://bowtie-bio.sourceforge.net/bowtie2/manual.shtml#a-mode-search-for-and-report-all-alignments).  Note that a [software bug](https://github.com/BenLangmead/bowtie2/issues/202) causes errors with some secondary alignments; perhaps it will be fixed at some point.
   * The short read aligner [BWA](http://bio-bwa.sourceforge.net/bwa.shtml) does not produce secondary alignments.
 * To avoid excessive memory usage and the imprecision inherent in floating-point values, a maximum of 10 alignments per read is analyzed by Genrich.
 * Additional information can be found in the description of the [`-s` parameter](#sparam).
@@ -260,7 +261,7 @@ chr1    1565720    1565733    2.000000    0.190111    4.568854    2.318294    *
 ```
   -R  <file>       Output file for PCR duplicates (only with -r)
 ```
-* This log file lists the headers of reads classified as PCR duplicates, followed by the alignment, the header of the read it matched, and the alignment type. For example:
+* This log file lists the header of each read/fragment classified as a PCR duplicate, followed by the alignment, the header of the read/fragment it matched, and the alignment type. For example:
 ```
 SRR5427888.426     chr11:40276009-40276085             SRR5427888.353     paired
 SRR5427888.9678    chr4:80273698,+;chr2:133028456,-    SRR5427888.9507    discordant
@@ -275,7 +276,7 @@ SRR5427888.3109    chr8:103906034,-                    SRR5427888.3013    single
 ```
   -r               Remove PCR duplicates
 ```
-* With this option, all reads classified as PCR duplicates will be removed from further analysis, as described [above](#duplicate).
+* With this option, all reads/fragments classified as PCR duplicates will be removed from further analysis, as described [above](#duplicate).
 <br><br>
 
 ```
@@ -400,23 +401,37 @@ Other options:
   -h/--help        Print the usage message and exit
   -V/--version     Print the version and exit
 ```
-* Here is the verbose output for the sample processed above (Fig. 1):
+* Here is the verbose output for a [sample](https://www.ncbi.nlm.nih.gov/sra/SRX2717913[accn]), analyzing using the options to remove PCR duplicates (`-r`) and alignments to chrM and chrY (`-e`), and to keep singletons, extended to the average fragment length (`-x`):
 ```
-$ ./Genrich  -t SRR5427884.bam  -o SRR5427884.narrowPeak  -f SRR5427884.log  -v
-Processing treatment file #1: SRR5427884.bam
-  BAM records analyzed:    6633684
-    Paired alignments:     6633684
-    Unpaired alignments:         0
-  Fragments analyzed:      3316842
-    Full fragments:        3316842
-      (avg. length: 174.0bp)
-- control file #1 not provided -
+$ ./Genrich  -t SRR5427888.bam  -o SRR5427888.narrowPeak  -f SRR5427888.log  -e chrM,chrY  -r  -x  -v
+Processing treatment file #0: SRR5427888.bam
+  BAM records analyzed:   17958292
+    Unmapped:               225635
+    To skipped refs:        557290
+      (chrM,chrY)
+    Paired alignments:    17016972
+      secondary alns:      5761608
+    Unpaired alignments:    158395
+      secondary alns:        82053
+  PCR duplicates --
+    Paired aln sets:       5837780
+      duplicates:          1453305 (24.9%)
+    Discordant aln sets:     10026
+      duplicates:             1638 (16.3%)
+    Singleton aln sets:      59321
+      duplicates:            22892 (38.6%)
+  Fragments analyzed:      4328363
+    Full fragments:        4276454
+      (avg. length: 148.4bp)
+    Singletons:              51909
+      (extended to length 148bp)
+- control file #0 not provided -
 Peak-calling parameters:
   Genome length: 3036303846bp
   Significance threshold: -log(q) > 1.301
   Min. AUC: 20.000
   Max. gap between sites: 100bp
-Peaks identified: 416514
+Peaks identified: 536812
 ```
 
 ### Warning messages <a name="warning"></a>
@@ -428,10 +443,18 @@ In verbose mode, Genrich may print one or more warnings to `stderr`:
 * `BED interval ignored - located off end of reference`: An excluded BED interval (`-E`) whose start coordinate is past the end of the reference sequence will be ignored.  One should ensure that the genome version that produced the BED intervals matches that of the SAM/BAM.
 * `BED interval extends past end of ref. - edited to <loc>`: An excluded BED interval (`-E`) whose end coordinate is past the end of the reference sequence will be adjusted as indicated.  Again, one should ensure that the genome version that produced the BED intervals matches that of the SAM/BAM.
 * `No paired alignments to calculate avg frag length -- Printing singletons "as is"`: When there are *no* properly paired alignments and the [`-x` average extension option](#unpaired) is selected, the unpaired alignments will be printed as they appear in the SAM/BAM.
-* `Read N, alignment at <loc> skipped due to overflow`: The maximum difference in pileup values from one genomic position to the next is +32767, and additional reads will be skipped due to this limitation.  Removing PCR duplicates may help reduce this issue.
-* `Read N, alignment at <loc> skipped due to underflow`: The minimum difference in pileup values from one genomic position to the next is -32768, and additional reads will be skipped due to this limitation.  Removing PCR duplicates may help reduce this issue.
+* `Read N, alignment at <loc> skipped due to overflow`: The maximum difference in pileup values from one genomic position to the next is +32767, and additional reads will be skipped due to this limitation.  Removing PCR duplicates (`-r`) may help reduce this issue.
+* `Read N, alignment at <loc> skipped due to underflow`: The minimum difference in pileup values from one genomic position to the next is -32768, and additional reads will be skipped due to this limitation.  Removing PCR duplicates (`-r`) may help reduce this issue.
 * `Read N has more than 128 alignments`: If a read has more than 128 alignments in the SAM/BAM, only the first 128 are considered.  As described [above](#sparam), the best 10 alignments are ultimately analyzed by Genrich.
 * `"orphan" alns`: An "orphan" alignment is one that the SAM/BAM indicates is properly paired, but its pair could not be found.  This could be due to a poorly formatted SAM/BAM, or possibly (but unlikely) a bug in alignment parsing by Genrich.  This is not a warning message *per se*, but if it appears in the verbose accounting of alignments analyzed, it should be treated as such.
+
+### Computational requirements <a name="memory"></a>
+
+Genrich runs very quickly but uses a considerable amount of memory.  At a minimum, it uses 3 bytes for every base-pair of the reference genome, i.e. ~9GB for a human sample.  The number of input files has little effect on memory, but certain analysis options (especially the option to remove PCR duplicates) can greatly increase the memory usage, especially with large SAM/BAM input files.  For example, when PCR duplicate removal was performed with a duplicate log file (`-R`), Genrich used a maximum of 25GB memory to analyze a human treatment/control pair of BAM files that contained a combined 302.1 million alignments.  The total run-time, including peak calling, was less than 20min.
+
+Genrich is not multi-threaded.
+<br><br>
+
 
 ## Contact <a name="contact"></a>
 
