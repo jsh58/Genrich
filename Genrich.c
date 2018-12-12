@@ -3594,6 +3594,14 @@ bool parseAlign(Aln** aln, int* alnLen, uint16_t flag,
     bool dupsOpt, char* qual, int qualLen, int offset,
     uint16_t* qualR1, uint16_t* qualR2) {
 
+  // check for linear template or missing index
+  if (flag & 0x1) {
+    if ((flag & 0xC0) == 0xC0)
+      exit(error("", ERRLINEAR));
+    if (!(flag & 0xC0))
+      exit(error("", ERRINDEX));
+  }
+
   // save sum of quality scores (only if removing dups)
   if (dupsOpt) {
     if (flag & 0x40) {
@@ -3607,6 +3615,8 @@ bool parseAlign(Aln** aln, int* alnLen, uint16_t flag,
 
   // paired alignment: save alignment information
   if ((flag & 0x3) == 0x3) {
+
+    // update counts
     if (chrom->skip || ! chrom->save)
       (*skipped)++;
     else {
