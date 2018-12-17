@@ -137,7 +137,9 @@ Genrich provides an option for removing PCR duplicates (`-r`).  In this process,
 * Discordant pairs (where both R1 and R2 reads align, but not in a proper pair): A discordant alignment is classified as a duplicate if the reference name, 5' position, and strand (orientation) of *both* alignments match those of another discordant alignment.
 * Singletons (where either R1 or R2 aligns): A singleton alignment is classified as a duplicate if the reference name, 5' position, and strand (orientation) match either end of a properly paired alignment, either end of a discordant pair, or another singleton alignment.
 
-Within each group, Genrich analyzes reads/fragments in order based on the total sums of the quality scores (sums of both R1's and R2's quality scores with paired alignments).  In case of ties (which are frequent), reads are analyzed in the order they appear in the SAM/BAM.  Note that discordant and singleton duplicates are evaluated only if [unpaired alignments](#unpaired) are to be kept.
+Note that discordant and singleton duplicates are evaluated only if [unpaired alignments](#unpaired) are to be kept.
+
+Within each group, Genrich analyzes reads/fragments in order based on the total sums of the quality scores (sums of both R1's and R2's quality scores with paired alignments).  In case of ties (which are frequent), reads are analyzed in the order they appear in the SAM/BAM.
 
 There is no consideration of read order (R1 vs. R2) by Genrich.  That is, if the 5' coordinates of R1 and R2 of one paired alignment match the coordinates of R2 and R1 of another paired alignment, respectively, it is classified as a duplicate.  The same applies to discordant and singleton duplicates.
 
@@ -268,7 +270,7 @@ SRR5427888.9678    chr4:80273698,+;chr2:133028456,-    SRR5427888.9507    discor
 SRR5427888.3109    chr8:103906034,-                    SRR5427888.3013    single
 ```
 * The duplicates from multiple input files are separated by a comment line listing the next filename, such as `# treatment file #0: SRR5427888.bam`.
-* This file can be used to filter the original SAM/BAM file, using a simple script such as [getReads.py](https://github.com/jsh58/rutgers/blob/master/getReads.py), for example.
+* This file can be used to filter the original SAM/BAM file, using a simple script such as [`getReads.py`](https://github.com/jsh58/rutgers/blob/master/getReads.py), for example.
 <br><br>
 
 
