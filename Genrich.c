@@ -4,7 +4,7 @@
 
   Finding sites of enrichment from genome-wide assays.
 
-  Version 0.4
+  Version 0.5
 */
 
 #include <stdio.h>
@@ -1126,7 +1126,172 @@ void findPeaks(File out, File log, bool logOpt, bool gzOut,
     fprintf(stderr, "Peaks identified: %d\n", count);
 }
 
-/*** Calculate p-values ***/
+/*** Calculate a p-value (log-normal distribution) ***/
+// adapted from R-3.5.0 source code, as noted below
+
+/* double do_del()
+ * Adapted from pnorm.c in R-3.5.0
+ *   (cf. do_del() and swap_tail).
+ */
+double do_del(double y, double temp, bool ret) {
+  double xsq = trunc(y * 16) / 16;
+  double del = (y - xsq) * (y + xsq);
+  if (ret)
+    return log1p(-exp((-xsq * xsq - del) / 2.0) * temp);
+  return (-xsq * xsq - del) / 2.0 + log(temp);
+}
+
+/* double pnorm()
+ * Adapted from pnorm.c in R-3.5.0
+ *   (cf. pnorm_both() with i_tail=1, log_p=TRUE).
+ */
+double pnorm(double x) {
+  double a[5] = {
+    2.2352520354606839287,
+    161.02823106855587881,
+    1067.6894854603709582,
+    18154.981253343561249,
+    0.065682337918207449113
+  };
+  double b[4] = {
+    47.20258190468824187,
+    976.09855173777669322,
+    10260.932208618978205,
+    45507.789335026729956
+  };
+  double c[9] = {
+    0.39894151208813466764,
+    8.8831497943883759412,
+    93.506656132177855979,
+    597.27027639480026226,
+    2494.5375852903726711,
+    6848.1904505362823326,
+    11602.651437647350124,
+    9842.7148383839780218,
+    1.0765576773720192317e-8
+  };
+  double d[8] = {
+    22.266688044328115691,
+    235.38790178262499861,
+    1519.377599407554805,
+    6485.558298266760755,
+    18615.571640885098091,
+    34900.952721145977266,
+    38912.003286093271411,
+    19685.429676859990727
+  };
+  double p[6] = {
+    0.21589853405795699,
+    0.1274011611602473639,
+    0.022235277870649807,
+    0.001421619193227893466,
+    2.9112874951168792e-5,
+    0.02307344176494017303
+  };
+  double q[5] = {
+    1.28426009614491121,
+    0.468238212480865118,
+    0.0659881378689285515,
+    0.00378239633202758244,
+    7.29751555083966205e-5
+  };
+
+  double xden, xnum, xsq, temp;
+  double y = fabs(x);
+  if (y <= 0.67448975) {
+
+    // small values of fabs(x)
+    if (y > DBL_EPSILON * 0.5) {
+      xsq = x * x;
+      xnum = a[4] * xsq;
+      xden = xsq;
+      for (int i = 0; i < 3; i++) {
+        xnum = (xnum + a[i]) * xsq;
+        xden = (xden + b[i]) * xsq;
+      }
+      temp = x * (xnum + a[3]) / (xden + b[3]);
+    } else
+      temp = x * a[3] / b[3];
+    return log(0.5 - temp);
+
+  } else if (y <= sqrt(32.0)) {
+
+    // slightly larger values of fabs(x)
+    xnum = c[8] * y;
+    xden = y;
+    for (int i = 0; i < 7; i++) {
+      xnum = (xnum + c[i]) * y;
+      xden = (xden + d[i]) * y;
+    }
+    temp = (xnum + c[7]) / (xden + d[7]);
+    return do_del(y, temp, x <= 0.0);
+
+  } else if (y < 1e170) {
+
+    // even larger values of fabs(x)
+    xsq = 1.0 / (x * x);
+    xnum = p[5] * xsq;
+    xden = xsq;
+    for (int i = 0; i < 4; i++) {
+      xnum = (xnum + p[i]) * xsq;
+      xden = (xden + q[i]) * xsq;
+    }
+    temp = xsq * (xnum + p[4]) / (xden + q[4]);
+    temp = (1/sqrt(2*M_PI) - temp) / y;
+    return do_del(x, temp, x <= 0.0);
+  }
+
+  // default
+  return -0.0;
+}
+
+/* double plnorm()
+ * Calculate a p-value for a log-normal distribution
+ *   with observation 'x' and parameters 'meanlog' and
+ *   'sdlog'.
+ * Adapted from plnorm.c and pnorm.c in R-3.5.0,
+ *   with lower_tail=FALSE and log_p=TRUE.
+ * Return value is -log10(p).
+ */
+double plnorm(double x, double meanlog, double sdlog) {
+  if (sdlog == 0.0)
+    return x < meanlog ? 0.0 : FLT_MAX;
+  return -pnorm((log(x) - meanlog) / sdlog) / M_LN10;
+}
+
+/* float calcPval()
+ * Calculate -log10(p) using a log-normal distribution
+ *   with mu=ctrlVal, sd={mu>7 ? 10*log10(mu) : 1.2*mu},
+ *   and observation treatVal.
+ */
+float calcPval(float treatVal, float ctrlVal) {
+  if (ctrlVal == -1.0f)
+    return -1.0f; // in a skipped region
+  if (ctrlVal == 0.0f)
+    return treatVal == 0.0f ? 0.0f : FLT_MAX;
+  if (treatVal == 0.0f)
+    return 0.0f;
+
+  // calculate meanlog and sdlog for plnorm()
+  double meanlog, sdlog;
+  double mu = ctrlVal;
+  if (mu > 7.0) {
+    double sd = 10.0 * log10(mu);
+    mu *= mu;
+    sd *= sd;
+    meanlog = log(mu / sqrt(sd + mu));
+    sdlog = sqrt(log1p(sd / mu));
+  } else {
+    meanlog = log(mu) - LOGSQRT;
+    sdlog = SQRTLOG;
+  }
+
+  // calculate pval by plnorm()
+  double pval = plnorm(treatVal, meanlog, sdlog);
+  return pval > FLT_MAX ? FLT_MAX : (float) pval;
+}
+
+/*** Create and save p-values genome-wide ***/
 
 /* uint32_t countIntervals()
  * Count the number of pileup intervals to create
@@ -1188,21 +1353,8 @@ void printPile(File pile, char* name, uint32_t start,
   }
 }
 
-/* float calcPval()
- * Calculate -log10(p) using an exponential distribution
- *   with parameter beta (ctrlVal) and observation treatVal.
- */
-float calcPval(float treatVal, float ctrlVal) {
-  if (ctrlVal == -1.0f)
-    return -1.0f; // in a skipped region
-  if (ctrlVal == 0.0f)
-    return treatVal == 0.0f ? 0.0f : FLT_MAX;
-  double pval = treatVal / ctrlVal * M_LOG10E;
-  return pval > FLT_MAX ? FLT_MAX : (float) pval;
-}
-
 /* void savePval()
- * Create and save p-values as pileups for each chrom.
+ * Create and save p-values as pileups for each Chrom*.
  */
 void savePval(Chrom* chrom, int chromLen, int n,
     File pile, bool pileOpt, char* treatName,

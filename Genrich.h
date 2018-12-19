@@ -4,9 +4,9 @@
 
   Finding sites of enrichment from genome-wide assays.
 
-  Version 0.4
+  Version 0.5
 */
-#define VERSION     "0.4"
+#define VERSION     "0.5"
 
 // macros
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
@@ -40,6 +40,10 @@ enum sam { NIL, QNAME, FLAG, RNAME, POS, MAPQ, CIGAR, RNEXT,
 
 // alignment types
 enum alignType { PAIRED, SINGLE, DISCORD };
+
+// constants for log-normal p-value calculation
+#define LOGSQRT     0.445999019652555   // log(sqrt(2.44))
+#define SQRTLOG     0.944456478248262   // sqrt(log(2.44))
 
 // command-line options
 #define OPTIONS     "ht:c:o:f:k:b:zyw:xjd:e:E:m:s:p:q:a:l:g:rR:vV"
