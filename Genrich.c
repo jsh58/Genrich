@@ -880,6 +880,239 @@ void printPeak(File out, bool gzOut, char* name,
   }
 }
 
+/* void checkPeak()
+ * Check if potential peak is valid (coordinates,
+ *   minAUC, and minLen parameters). If valid, print
+ *   results via printPeak().
+ */
+void checkPeak(File out, bool gzOut, char* name,
+    int64_t start, int64_t end, int* count, float val,
+    float auc, float pval, float qval, uint32_t pos,
+    float minAUC, int minLen, uint64_t* peakBP) {
+  if (start != -1 && auc >= minAUC
+      && end - start >= minLen) {
+    printPeak(out, gzOut, name, start, end, *count, val,
+      auc, pval, qval, pos);
+    (*peakBP) += end - start;
+    (*count)++;
+  }
+}
+
+/* int getIdx()
+ * Find fields of header line of bedgraph-ish log file
+ *   that match "-log([pq])".
+ *   If multiple matches, return the last one.
+ */
+int getIdx(File in, bool gz, char* line, bool qvalOpt,
+    int* idxQ) {
+  if (getLine(line, MAX_SIZE, in, gz) == NULL)
+    exit(error("", ERRLOGIDX));
+  char matchP[8] = "-log(p)";
+  char matchQ[8] = "-log(q)";
+  int idxP = -1;
+  int i = 0;
+  char* field = strtok(line, TABN);
+  while (field != NULL) {
+    if (!strncmp(field, matchP, 7))
+      idxP = i;
+    else if (!strncmp(field, matchQ, 7))
+      *idxQ = i;
+    field = strtok(NULL, TABN);
+    i++;
+  }
+  if (idxP == -1)
+    exit(error(matchP, ERRLOGIDX));
+  if (qvalOpt && *idxQ == -1)
+    exit(error(matchQ, ERRLOGIDX));
+  return idxP;
+}
+
+/* void loadBDG()
+ * Load fields (chr, start, end, and [pq]-value) from
+ *   a bedgraph-ish record (-f log file).
+ */
+void loadBDG(char* line, char** chr, uint32_t* start,
+    uint32_t* end, char** pStat, int idxP, char** qStat,
+    int idxQ, bool qvalOpt) {
+  int idx = qvalOpt ? idxQ : idxP;
+  char* field = strtok(line, TABN);
+  for (int i = 0; i <= idx; i++) {
+    if (field == NULL)
+      exit(error("", ERRLOG));
+    switch (i) {
+      case CHR: *chr = field; break;
+      case START: *start = getInt(field); break;
+      case END: *end = getInt(field); break;
+      default:
+        if (i == idxP)
+          *pStat = field;
+        else if (i == idxQ)
+          *qStat = field;
+    }
+    field = strtok(NULL, TABN);
+  }
+}
+
+/* bool checkChrom()
+ * Return true if given char* matches a chromosome
+ *   to be skipped (-e).
+ */
+bool checkChrom(char* chr, int xcount, char** xchrList) {
+  for (int i = 0; i < xcount; i++)
+    if (!strcmp(xchrList[i], chr))
+      return true;
+  return false;
+}
+
+/* void resetVars()
+ * Reset peak variables to null values.
+ */
+void resetVars(int64_t* peakStart, float* summitVal,
+    uint32_t* summitLen, float* auc) {
+  *peakStart = -1;
+  *summitVal = -1.0f;
+  *summitLen = 0;
+  *auc = 0.0f;
+}
+
+/* int callPeaksLog()
+ * Call peaks directly from a bedgraph-ish log file.
+ */
+int callPeaksLog(File in, bool gz, File out, bool gzOut,
+    char* line, int xcount, char** xchrList, int xBedLen,
+    Bed* xBed, float minPQval, bool qvalOpt, int minLen,
+    int maxGap, float minAUC, uint64_t* peakBP,
+    bool verbose) {
+  // determine index of fields ([pq]-value) to analyze
+  int idxQ = -1;
+  int idxP = getIdx(in, gz, line, qvalOpt, &idxQ);
+
+  // initialize counting variables
+  int count = 0;
+  uint64_t genomeLen = 0;
+
+  // initialize peak variables
+  float auc = 0.0f;                     // area under the curve (signif.)
+  int64_t peakStart = -1, peakEnd = -1; // ends of potential peak
+  float summitVal = -1.0f;              // summit p/q value
+  uint32_t summitPos = 0;               // distance from peakStart to summit
+  uint32_t summitLen = 0;               // length of summit interval
+  float summitPval = -1.0f, summitQval = -1.0f; // summit p- and q-values
+
+  // parse bedgraph records
+  char prev[MAX_ALNS];              // previous chrom name
+  prev[0] = '\0';
+  bool skip = false;                // skip current chrom?
+  char* chr, *stat, *pStat, *qStat; // chrom and stats/NA of current interval
+  uint32_t start, end;              // coordinates of current interval
+  float pqval;                      // [pq]-value of current interval
+  while (getLine(line, MAX_SIZE, in, gz) != NULL) {
+
+    // load fields from bedgraph record
+    loadBDG(line, &chr, &start, &end, &pStat, idxP,
+      &qStat, idxQ, qvalOpt);
+//fprintf(stderr, "%s\t%d\t%d\t%s\t%s\n", chr, start, end, pStat, qStat);
+
+    // new chromosome
+    if (strcmp(prev, chr)) {
+//fprintf(stderr, "new chrom! %s\n", chr);
+      // check if previous chrom's last peak is valid
+      checkPeak(out, gzOut, prev, peakStart, peakEnd,
+        &count, summitVal, auc, summitPval, summitQval,
+        summitPos, minAUC, minLen, peakBP);
+
+      // reset peak variables
+      resetVars(&peakStart, &summitVal, &summitLen, &auc);
+
+      // check if new chrom should be skipped
+      skip = checkChrom(chr, xcount, xchrList);
+      if (verbose && skip && qvalOpt) {
+        fprintf(stderr, "Warning! Skipping chromosome %s --\n  ", chr);
+        fprintf(stderr, "its length was included in the q-value calculation\n");
+      }
+      strcpy(prev, chr);  // update current chrom
+    }
+    if (skip)
+      continue; // current chrom to be skipped
+
+    // check stat for 'NA' (skipped region)
+    stat = qvalOpt ? qStat : pStat;
+    if (!strcmp(stat, NA)) {
+      // check if previous peak is valid
+      checkPeak(out, gzOut, chr, peakStart, peakEnd,
+        &count, summitVal, auc, summitPval, summitQval,
+        summitPos, minAUC, minLen, peakBP);
+
+      // reset peak variables
+      resetVars(&peakStart, &summitVal, &summitLen, &auc);
+      continue;
+    }
+
+    // check [pq]-value for significance
+    uint32_t len = end - start;
+    genomeLen += len;
+    pqval = getFloat(stat);
+//fprintf(stderr, "%s\t%d\t%d\t%f\n", chr, start, end, pqval);
+//while (!getchar()) ;
+    if (pqval > minPQval) {
+
+      // interval reaches significance
+      auc += len * (pqval - minPQval);  // sum AUC
+      if (peakStart == -1)
+        peakStart = start;  // start new potential peak
+      peakEnd = end;        // end of potential peak (for now)
+
+      // check if interval is summit for this peak
+      if (pqval > summitVal) {
+        summitVal = pqval;
+        summitPval = qvalOpt ? getFloat(pStat) : pqval;
+        summitQval = qvalOpt ? pqval : -1.0f;
+        summitPos = (peakEnd + start)/2 - peakStart; // midpoint of interval
+        summitLen = len;
+      } else if (pqval == summitVal) {
+        // update summitPos only if interval is longer
+        if (len > summitLen) {
+          summitPos = (peakEnd + start)/2 - peakStart; // midpoint of interval
+          summitLen = len;
+          // assume summitPval, summitQval remain the same
+        }
+      }
+
+    } else {
+
+      // interval does not reach significance --
+      //   check if distance is beyond maxGap from peak
+      if (end - peakEnd > maxGap) {
+        // check if previous peak is valid
+        checkPeak(out, gzOut, chr, peakStart, peakEnd,
+          &count, summitVal, auc, summitPval, summitQval,
+          summitPos, minAUC, minLen, peakBP);
+
+        // reset peak variables
+        resetVars(&peakStart, &summitVal, &summitLen, &auc);
+      }
+    }
+
+  }
+
+  // check if last peak is valid
+  checkPeak(out, gzOut, chr, peakStart, peakEnd,
+    &count, summitVal, auc, summitPval, summitQval,
+    summitPos, minAUC, minLen, peakBP);
+
+  if (verbose) {
+    fprintf(stderr, "Peak-calling parameters:\n");
+    fprintf(stderr, "  Genome length: %ldbp\n", genomeLen);
+    fprintf(stderr, "  Significance threshold: -log(%c) > %.3f\n",
+      qvalOpt ? 'q' : 'p', minPQval);
+    fprintf(stderr, "  Min. AUC: %.3f\n", minAUC);
+    if (minLen)
+      fprintf(stderr, "  Min. peak length: %dbp\n", minLen);
+    fprintf(stderr, "  Max. gap between sites: %dbp\n", maxGap);
+  }
+  return count;
+}
+
 /* int callPeaks()
  * Call peaks, using minAUC and maxGap parameters.
  *   Produce output on the fly. Log pileups, p- and
@@ -4964,6 +5197,60 @@ int loadBED(char* xFile, char* line, Bed** xBed) {
   return count;
 }
 
+/* void findPeaksOnly()
+ * Control peak-calling directly from logfile (-f).
+ */
+void findPeaksOnly(char* logFile, char* outFile,
+    bool gzOut, int xcount, char** xchrList, char* xFile,
+    float pqvalue, bool qvalOpt, int minLen,
+    int maxGap, float minAUC, bool verbose) {
+
+  // save genomic regions to ignore
+  char* line = (char*) memalloc(MAX_SIZE);
+  Bed* xBed = NULL;
+  int xBedLen = 0;
+  if (xFile != NULL)
+    xBedLen = loadBED(xFile, line, &xBed);
+
+  // open files
+  File in, out;
+  bool gz = openRead(logFile, &in);
+  openWrite(outFile, &out, gzOut);
+  if (verbose)
+    fprintf(stderr, "Peak-calling from log file: %s\n",
+      logFile);
+
+  // call peaks
+  uint64_t peakBP = 0;
+  int count = callPeaksLog(in, gz, out, gzOut, line,
+    xcount, xchrList, xBedLen, xBed, pqvalue, qvalOpt,
+    minLen, maxGap, minAUC, &peakBP, verbose);
+  if (verbose)
+    fprintf(stderr, "Peaks identified: %d (%ldbp)\n",
+      count, peakBP);
+
+  // free memory
+  if (xcount) {
+    for (int i = 0; i < xcount; i++)
+      free(xchrList[i]);
+    free(xchrList);
+  }
+  if (xBedLen) {
+    for (int i = 0; i < xBedLen; i++)
+      free(xBed[i].name);
+    free(xBed);
+  }
+  free(line);
+
+  // close files
+  if ( ( gz && gzclose(in.gzf) != Z_OK )
+      || ( ! gz && fclose(in.f) ) )
+    exit(error(logFile, ERRCLOSE));
+  if ( ( gzOut && gzclose(out.gzf) != Z_OK )
+      || ( ! gzOut && fclose(out.f) ) )
+    exit(error(outFile, ERRCLOSE));
+}
+
 /*** Main ***/
 
 /* void logCounts()
@@ -5058,7 +5345,15 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
     bool qvalOpt, int minLen, bool minLenOpt, int maxGap,
     float minAUC, float asDiff, bool atacOpt, int atacLen5,
     int atacLen3, bool dupsOpt, char* dupsFile,
-    bool peaksOpt, bool verbose) {
+    bool peaksOpt, bool peaksOnly, bool verbose) {
+
+  // option to call peaks only, from already produced log file
+  if (peaksOnly) {
+    findPeaksOnly(logFile, outFile, gzOut, xcount,
+      xchrList, xFile, pqvalue, qvalOpt, minLen, maxGap,
+      minAUC, verbose);
+    return;
+  }
 
   // open optional output files
   File bed, pile, dups;
@@ -5381,7 +5676,7 @@ void getArgs(int argc, char** argv) {
   bool singleOpt = false, extendOpt = false,
     avgExtOpt = false, atacOpt = false, gzOut = false,
     qvalOpt = true, minLenOpt = false, dupsOpt = false,
-    peaksOpt = true;
+    peaksOpt = true, peaksOnly = false;
   bool verbose = false;
 
   // parse argv
@@ -5412,6 +5707,7 @@ void getArgs(int argc, char** argv) {
       case DUPSOPT: dupsOpt = true; break;
       case DUPSFILE: dupsFile = optarg; break;
       case NOPEAKS: peaksOpt = false; break;
+      case PEAKSONLY: peaksOnly = true; break;
       case VERBOSE: verbose = true; break;
       case VERSOPT: printVersion(); break;
       case HELP: usage(); break;
@@ -5421,7 +5717,9 @@ void getArgs(int argc, char** argv) {
     exit(error(argv[optind], ERRPARAM));
 
   // check for argument errors
-  if ((peaksOpt && outFile == NULL) || inFile == NULL) {
+  if ((peaksOpt && outFile == NULL)
+      || (peaksOnly && logFile == NULL)
+      || (!peaksOnly && inFile == NULL)) {
     error("", ERRFILE);
     usage();
   }
@@ -5466,7 +5764,7 @@ void getArgs(int argc, char** argv) {
     avgExtOpt, minMapQ, xcount, xchrList, xFile, pqvalue,
     qvalOpt, minLen, minLenOpt, maxGap, minAUC, asDiff,
     atacOpt, atacLen5, atacLen3, dupsOpt, dupsFile,
-    peaksOpt, verbose);
+    peaksOpt, peaksOnly, verbose);
 }
 
 /* int main()

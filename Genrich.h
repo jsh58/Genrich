@@ -41,12 +41,15 @@ enum sam { NIL, QNAME, FLAG, RNAME, POS, MAPQ, CIGAR, RNEXT,
 // alignment types
 enum alignType { PAIRED, SINGLE, DISCORD };
 
+// fields of a bedGraph file
+enum bedGraph { CHR, START, END };
+
 // constants for log-normal p-value calculation
 #define LOGSQRT     0.445999019652555   // log(sqrt(2.44))
 #define SQRTLOG     0.944456478248262   // sqrt(log(2.44))
 
 // command-line options
-#define OPTIONS     "ht:c:o:f:k:b:zyw:xjd:e:E:m:s:p:q:a:l:g:rR:XvV"
+#define OPTIONS     "ht:c:o:f:k:b:zyw:xjd:e:E:m:s:p:q:a:l:g:rR:XPvV"
 #define HELP        'h'
 #define INFILE      't'
 #define CTRLFILE    'c'
@@ -72,6 +75,7 @@ enum alignType { PAIRED, SINGLE, DISCORD };
 #define DUPSOPT     'r'
 #define DUPSFILE    'R'
 #define NOPEAKS     'X'
+#define PEAKSONLY   'P'
 #define VERBOSE     'v'
 #define VERSOPT     'V'
 
@@ -88,9 +92,10 @@ enum errCode { ERRFILE, ERROPEN, ERROPENW, ERRCLOSE,
   ERRPQVAL, ERRASDIFF, ERRMINAUC, ERRMINLEN, ERRMISM,
   ERRINFO, ERRSAM, ERRCHROM, ERRHEAD, ERRBAM, ERRGEN,
   ERRTREAT, ERRCHRLEN, ERRCTRL, ERRPOS, ERRSORT, ERRTYPE,
-  ERRAUX, ERRBED, ERRLINEAR, ERRINDEX, ERRISSUE, ERRALNS,
-  ERRPILE, ERRPVAL, ERRARR, ERRARRC, ERRDF, ERRALNTYPE,
-  ERRUNGET, ERRGZIP, ERRNAME, ERRCIGAR, DEFERR
+  ERRAUX, ERRBED, ERRLINEAR, ERRINDEX, ERRLOGIDX, ERRLOG,
+  ERRISSUE, ERRALNS, ERRPILE, ERRPVAL, ERRARR, ERRARRC,
+  ERRDF, ERRALNTYPE, ERRUNGET, ERRGZIP, ERRNAME, ERRCIGAR,
+  DEFERR
 };
 const char* errMsg[] = { "Need input/output files",
   ": cannot open file for reading",
@@ -123,6 +128,9 @@ const char* errMsg[] = { "Need input/output files",
   ": poorly formatted BED record",
   "Linear template with >2 reads -- not allowed",
   "Unknown index of paired alignment",
+  ": cannot find field in header of bedgraph-ish log file",
+  "Poorly formatted bedgraph-ish log record",
+
   "\n  (internal error: please open an Issue on https://github.com/jsh58/Genrich)",
   "Disallowed number of alignments",
   "Invalid pileup value (< 0)",
