@@ -46,7 +46,7 @@ enum alignType { PAIRED, SINGLE, DISCORD };
 #define SQRTLOG     0.944456478248262   // sqrt(log(2.44))
 
 // command-line options
-#define OPTIONS     "ht:c:o:f:k:b:zyw:xjd:e:E:m:s:p:q:a:l:g:rR:vV"
+#define OPTIONS     "ht:c:o:f:k:b:zyw:xjd:e:E:m:s:p:q:a:l:g:rR:XvV"
 #define HELP        'h'
 #define INFILE      't'
 #define CTRLFILE    'c'
@@ -71,6 +71,7 @@ enum alignType { PAIRED, SINGLE, DISCORD };
 #define MAXGAP      'g'
 #define DUPSOPT     'r'
 #define DUPSFILE    'R'
+#define NOPEAKS     'X'
 #define VERBOSE     'v'
 #define VERSOPT     'V'
 
