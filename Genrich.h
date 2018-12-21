@@ -29,6 +29,7 @@
 #define DEFQVAL     0.05f   // default q-value
 #define DEFAUC      20.0f   // area under the curve for peak calling
 #define DEFMAXGAP   100     // maximum gap between significant sites
+#define DEFMINLEN   0       // minimum length of a peak
 #define DEFATAC     100     // interval length for ATAC-seq mode
 
 // SAM fields
@@ -110,7 +111,7 @@ const char* errMsg[] = { "Need input/output files",
   "p-/q-value must be in (0,1]",
   "Secondary alignment score threshold must be >= 0.0",
   "Minimum AUC must be >= 0.0",
-  "Minimum peak length must be > 0",
+  "Minimum peak length must be >= 0",
   ": mismatch between sequence length and CIGAR",
   ": no sequence information (SEQ or CIGAR)",
   ": poorly formatted SAM/BAM record",

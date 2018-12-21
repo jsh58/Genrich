@@ -60,7 +60,7 @@ void usage(void) {
   fprintf(stderr, "  -%c  <float>      Maximum q-value (FDR-adjusted p-value; def. %.2f)\n", QVALUE, DEFQVAL);
   fprintf(stderr, "  -%c  <float>      Maximum p-value (overrides -%c if set)\n", PVALUE, QVALUE);
   fprintf(stderr, "  -%c  <float>      Minimum AUC for a peak (def. %.1f)\n", MINAUC, DEFAUC);
-  fprintf(stderr, "  -%c  <int>        Minimum length of a peak (overrides -%c if set)\n", MINLEN, MINAUC);
+  fprintf(stderr, "  -%c  <int>        Minimum length of a peak (def. %d)\n", MINLEN, DEFMINLEN);
   fprintf(stderr, "  -%c  <int>        Maximum distance between signif. sites (def. %d)\n", MAXGAP, DEFMAXGAP);
   fprintf(stderr, "Other options:\n");
   fprintf(stderr, "  -%c               Option to gzip-compress output(s)\n", GZOPT);
@@ -653,7 +653,7 @@ void combinePval(Chrom* chrom, int chromLen, int n) {
  * Print header of logfile.
  */
 void printLogHeader(File log, bool gzOut, int n,
-    bool qvalOpt) {
+    bool qvalOpt, bool sigOpt) {
   if (n) {
     // multiple samples: logfile has multiple p-values, no pileups
     if (gzOut) {
@@ -663,7 +663,9 @@ void printLogHeader(File log, bool gzOut, int n,
       gzprintf(log.gzf, "\t-log(p)_comb");
       if (qvalOpt)
         gzprintf(log.gzf, "\t-log(q)");
-      gzprintf(log.gzf, "\tsignif\n");
+      if (sigOpt)
+        gzprintf(log.gzf, "\tsignif");
+      gzprintf(log.gzf, "\n");
     } else {
       fprintf(log.f, "chr\tstart\tend");
       for (int i = 0; i < n; i++)
@@ -671,7 +673,9 @@ void printLogHeader(File log, bool gzOut, int n,
       fprintf(log.f, "\t-log(p)_comb");
       if (qvalOpt)
         fprintf(log.f, "\t-log(q)");
-      fprintf(log.f, "\tsignif\n");
+      if (sigOpt)
+        fprintf(log.f, "\tsignif");
+      fprintf(log.f, "\n");
     }
   } else {
     // single sample: logfile has pileups and p-/q-values
@@ -679,12 +683,16 @@ void printLogHeader(File log, bool gzOut, int n,
       gzprintf(log.gzf, "chr\tstart\tend\ttreatment\tcontrol\t-log(p)");
       if (qvalOpt)
         gzprintf(log.gzf, "\t-log(q)");
-      gzprintf(log.gzf, "\tsignif\n");
+      if (sigOpt)
+        gzprintf(log.gzf, "\tsignif");
+      gzprintf(log.gzf, "\n");
     } else {
       fprintf(log.f, "chr\tstart\tend\ttreatment\tcontrol\t-log(p)");
       if (qvalOpt)
         fprintf(log.f, "\t-log(q)");
-      fprintf(log.f, "\tsignif\n");
+      if (sigOpt)
+        fprintf(log.f, "\tsignif");
+      fprintf(log.f, "\n");
     }
   }
 }
@@ -810,7 +818,7 @@ void printLog(File log, bool gzOut, Chrom* chr,
 void logIntervals(File log, bool gzOut, Chrom* chrom,
     int chromLen, int n, float pqvalue, bool qvalOpt) {
   // print header
-  printLogHeader(log, gzOut, n, qvalOpt);
+  printLogHeader(log, gzOut, n, qvalOpt, false);
 
   // loop through chroms
   for (int i = 0; i < chromLen; i++) {
@@ -831,11 +839,11 @@ void logIntervals(File log, bool gzOut, Chrom* chrom,
     for (uint32_t m = 0; m < chr->pvalLen[n]; m++) {
 
       // print stats for interval
-      float val = qvalOpt ? chr->qval->cov[m]
-        : chr->pval[n]->cov[m];
-      bool sig = val > pqvalue;
+      //float val = qvalOpt ? chr->qval->cov[m]
+      //  : chr->pval[n]->cov[m];
+      //bool sig = val > pqvalue;
       printLog(log, gzOut, chr, start, n, m, j, k,
-        idx, qvalOpt, sig);
+        idx, qvalOpt, false);
 
       // update chr->treat and chr->ctrl indexes
       if (! n) {
@@ -975,14 +983,13 @@ void resetVars(int64_t* peakStart, float* summitVal,
   *auc = 0.0f;
 }
 
-/* int callPeaksLog()
+/* void callPeaksLog()
  * Call peaks directly from a bedgraph-ish log file.
  */
-int callPeaksLog(File in, bool gz, File out, bool gzOut,
+void callPeaksLog(File in, bool gz, File out, bool gzOut,
     char* line, int xcount, char** xchrList, int xBedLen,
     Bed* xBed, float minPQval, bool qvalOpt, int minLen,
-    int maxGap, float minAUC, uint64_t* peakBP,
-    bool verbose) {
+    int maxGap, float minAUC, bool verbose) {
   // determine index of fields ([pq]-value) to analyze
   int idxQ = -1;
   int idxP = getIdx(in, gz, line, qvalOpt, &idxQ);
@@ -990,6 +997,7 @@ int callPeaksLog(File in, bool gz, File out, bool gzOut,
   // initialize counting variables
   int count = 0;
   uint64_t genomeLen = 0;
+  uint64_t peakBP = 0;
 
   // initialize peak variables
   float auc = 0.0f;                     // area under the curve (signif.)
@@ -1015,11 +1023,10 @@ int callPeaksLog(File in, bool gz, File out, bool gzOut,
 
     // new chromosome
     if (strcmp(prev, chr)) {
-//fprintf(stderr, "new chrom! %s\n", chr);
       // check if previous chrom's last peak is valid
       checkPeak(out, gzOut, prev, peakStart, peakEnd,
         &count, summitVal, auc, summitPval, summitQval,
-        summitPos, minAUC, minLen, peakBP);
+        summitPos, minAUC, minLen, &peakBP);
 
       // reset peak variables
       resetVars(&peakStart, &summitVal, &summitLen, &auc);
@@ -1041,7 +1048,7 @@ int callPeaksLog(File in, bool gz, File out, bool gzOut,
       // check if previous peak is valid
       checkPeak(out, gzOut, chr, peakStart, peakEnd,
         &count, summitVal, auc, summitPval, summitQval,
-        summitPos, minAUC, minLen, peakBP);
+        summitPos, minAUC, minLen, &peakBP);
 
       // reset peak variables
       resetVars(&peakStart, &summitVal, &summitLen, &auc);
@@ -1086,7 +1093,7 @@ int callPeaksLog(File in, bool gz, File out, bool gzOut,
         // check if previous peak is valid
         checkPeak(out, gzOut, chr, peakStart, peakEnd,
           &count, summitVal, auc, summitPval, summitQval,
-          summitPos, minAUC, minLen, peakBP);
+          summitPos, minAUC, minLen, &peakBP);
 
         // reset peak variables
         resetVars(&peakStart, &summitVal, &summitLen, &auc);
@@ -1098,7 +1105,7 @@ int callPeaksLog(File in, bool gz, File out, bool gzOut,
   // check if last peak is valid
   checkPeak(out, gzOut, chr, peakStart, peakEnd,
     &count, summitVal, auc, summitPval, summitQval,
-    summitPos, minAUC, minLen, peakBP);
+    summitPos, minAUC, minLen, &peakBP);
 
   if (verbose) {
     fprintf(stderr, "Peak-calling parameters:\n");
@@ -1109,21 +1116,23 @@ int callPeaksLog(File in, bool gz, File out, bool gzOut,
     if (minLen)
       fprintf(stderr, "  Min. peak length: %dbp\n", minLen);
     fprintf(stderr, "  Max. gap between sites: %dbp\n", maxGap);
+    fprintf(stderr, "Peaks identified: %d (%ldbp)\n",
+      count, peakBP);
   }
-  return count;
 }
 
 /* int callPeaks()
- * Call peaks, using minAUC and maxGap parameters.
+ * Call peaks, using minAUC, maxGap, and minLen parameters.
  *   Produce output on the fly. Log pileups, p- and
  *   q-values for each interval. Return number of peaks.
  */
 int callPeaks(File out, File log, bool logOpt, bool gzOut,
     Chrom* chrom, int chromLen, int n, float pqvalue,
-    bool qvalOpt, float minAUC, int maxGap) {
+    bool qvalOpt, float minAUC, int minLen, int maxGap,
+    uint64_t* peakBP) {
 
   if (logOpt)
-    printLogHeader(log, gzOut, n, qvalOpt);
+    printLogHeader(log, gzOut, n, qvalOpt, true);
 
   // loop through chroms
   int count = 0;      // count of peaks
@@ -1140,7 +1149,7 @@ int callPeaks(File out, File log, bool logOpt, bool gzOut,
     for (int r = 0; r < n; r++)
       idx[r] = 0;
 
-    // reset peak variables
+    // initialize peak variables
     float auc = 0.0f;                     // area under the curve (signif.)
     int64_t peakStart = -1, peakEnd = -1; // ends of potential peak
     float summitVal = -1.0f;              // summit p/q value
@@ -1182,7 +1191,20 @@ int callPeaks(File out, File log, bool logOpt, bool gzOut,
 
       } else {
 
-        // interval does not reach significance
+        // interval does not reach significance --
+        //   check if interval is to be skipped
+        //   OR distance is beyond maxGap from peak
+        if (val == -1.0f
+            || chr->pval[n]->end[m] - peakEnd > maxGap) {
+          // check if previous peak is valid
+          checkPeak(out, gzOut, chr->name, peakStart,
+            peakEnd, &count, summitVal, auc, summitPval,
+            summitQval, summitPos, minAUC, minLen, peakBP);
+
+          // reset peak variables
+          resetVars(&peakStart, &summitVal, &summitLen, &auc);
+        }
+/*          // determine if prior peak meets AUC threshold
         if (peakStart != -1 && (val == -1.0f
             || chr->pval[n]->end[m] - peakEnd > maxGap)) {
           // determine if prior peak meets AUC threshold
@@ -1196,7 +1218,7 @@ int callPeaks(File out, File log, bool logOpt, bool gzOut,
           summitVal = -1.0f;  // reset peak summit value
           summitLen = 0;      // reset peak summit length
           auc = 0.0f;         // reset area under the curve
-        }
+        }*/
       }
 
       // print stats for interval
@@ -1218,13 +1240,16 @@ int callPeaks(File out, File log, bool logOpt, bool gzOut,
       start = chr->pval[n]->end[m];
     }
 
-    // determine if last peak meets AUC threshold
-    if (peakStart != -1 && auc >= minAUC) {
+    // determine if last peak is valid
+    checkPeak(out, gzOut, chr->name, peakStart, peakEnd,
+      &count, summitVal, auc, summitPval, summitQval,
+      summitPos, minAUC, minLen, peakBP);
+/*    if (peakStart != -1 && auc >= minAUC) {
       printPeak(out, gzOut, chr->name, peakStart,
         peakEnd, count, summitVal, auc,
         summitPval, summitQval, summitPos);
       count++;
-    }
+    }*/
 
   }
 
@@ -1235,7 +1260,7 @@ int callPeaks(File out, File log, bool logOpt, bool gzOut,
  * Call peaks, using minLen and maxGap parameters.
  *   Produce output on the fly. Log pileups, p- and
  *   q-values for each interval. Return number of peaks.
- */
+ *
 int callPeaksM(File out, File log, bool logOpt, bool gzOut,
     Chrom* chrom, int chromLen, int n, float pqvalue,
     bool qvalOpt, int minLen, int maxGap) {
@@ -1359,8 +1384,8 @@ int callPeaksM(File out, File log, bool logOpt, bool gzOut,
  */
 void findPeaks(File out, File log, bool logOpt, bool gzOut,
     Chrom* chrom, int chromLen, int* sample, float pqvalue,
-    bool qvalOpt, int minLen, bool minLenOpt, int maxGap,
-    float minAUC, bool peaksOpt, bool verbose) {
+    bool qvalOpt, int minLen, int maxGap, float minAUC,
+    bool peaksOpt, bool verbose) {
 
   // calculate combined p-values for multiple replicates
   if (*sample > 1) {
@@ -1386,16 +1411,13 @@ void findPeaks(File out, File log, bool logOpt, bool gzOut,
       fprintf(stderr, "  Genome length: %ldbp\n", genomeLen);
       fprintf(stderr, "  Significance threshold: -log(%c) > %.3f\n",
         qvalOpt ? 'q' : 'p', pqvalue);
-      if (minLenOpt)
+      fprintf(stderr, "  Min. AUC: %.3f\n", minAUC);
+      if (minLen)
         fprintf(stderr, "  Min. peak length: %dbp\n", minLen);
-      else
-        fprintf(stderr, "  Min. AUC: %.3f\n", minAUC);
       fprintf(stderr, "  Max. gap between sites: %dbp\n", maxGap);
     } else {
       fprintf(stderr, "- peak-calling skipped -\n");
       fprintf(stderr, "  Genome length: %ldbp\n", genomeLen);
-      fprintf(stderr, "  Significance threshold: -log(%c) > %.3f\n",
-        qvalOpt ? 'q' : 'p', pqvalue);
     }
   }
 
@@ -1404,23 +1426,24 @@ void findPeaks(File out, File log, bool logOpt, bool gzOut,
     computeQval(chrom, chromLen, genomeLen, *sample - 1);
 
   // call peaks
-  int count;
+//  int count;
   if (peaksOpt) {
-    if (minLenOpt)
+    uint64_t peakBP = 0;
+/*    if (minLenOpt)
       count = callPeaksM(out, log, logOpt, gzOut, chrom,
         chromLen, *sample - 1, pqvalue, qvalOpt, minLen,
         maxGap);
-    else
-      count = callPeaks(out, log, logOpt, gzOut, chrom,
-        chromLen, *sample - 1, pqvalue, qvalOpt, minAUC,
-        maxGap);
+    else*/
+    int count = callPeaks(out, log, logOpt, gzOut, chrom,
+      chromLen, *sample - 1, pqvalue, qvalOpt, minAUC,
+      minLen, maxGap, &peakBP);
+    if (verbose)
+      fprintf(stderr, "Peaks identified: %d (%ldbp)\n",
+        count, peakBP);
   } else if (logOpt)
     // not calling peaks -- just log pileups and stats
     logIntervals(log, gzOut, chrom, chromLen, *sample - 1,
       pqvalue, qvalOpt);
-
-  if (verbose && peaksOpt)
-    fprintf(stderr, "Peaks identified: %d\n", count);
 }
 
 /*** Calculate a p-value (log-normal distribution) ***/
@@ -5221,13 +5244,16 @@ void findPeaksOnly(char* logFile, char* outFile,
       logFile);
 
   // call peaks
-  uint64_t peakBP = 0;
+  callPeaksLog(in, gz, out, gzOut, line, xcount, xchrList,
+    xBedLen, xBed, pqvalue, qvalOpt, minLen, maxGap,
+    minAUC, verbose);
+/*  uint64_t peakBP = 0;
   int count = callPeaksLog(in, gz, out, gzOut, line,
     xcount, xchrList, xBedLen, xBed, pqvalue, qvalOpt,
     minLen, maxGap, minAUC, &peakBP, verbose);
   if (verbose)
     fprintf(stderr, "Peaks identified: %d (%ldbp)\n",
-      count, peakBP);
+      count, peakBP);*/
 
   // free memory
   if (xcount) {
@@ -5336,16 +5362,18 @@ void logCounts(int count, int unmapped, int supp,
  *   savePileupCtrl(), and p-values for each treatment/
  *   control pair are calculated by savePval().
  *   Results for all replicates are passed to findPeaks().
+ * If calling peaks only (from logfile), pass control
+ *   directly to findPeaksOnly().
  */
 void runProgram(char* inFile, char* ctrlFile, char* outFile,
     char* logFile, char* pileFile, char* bedFile,
     bool gzOut, bool singleOpt, bool extendOpt, int extend,
     bool avgExtOpt, int minMapQ, int xcount,
     char** xchrList, char* xFile, float pqvalue,
-    bool qvalOpt, int minLen, bool minLenOpt, int maxGap,
-    float minAUC, float asDiff, bool atacOpt, int atacLen5,
-    int atacLen3, bool dupsOpt, char* dupsFile,
-    bool peaksOpt, bool peaksOnly, bool verbose) {
+    bool qvalOpt, int minLen, int maxGap, float minAUC,
+    float asDiff, bool atacOpt, int atacLen5, int atacLen3,
+    bool dupsOpt, char* dupsFile, bool peaksOpt,
+    bool peaksOnly, bool verbose) {
 
   // option to call peaks only, from already produced log file
   if (peaksOnly) {
@@ -5551,7 +5579,7 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
 
   // find peaks
   findPeaks(out, log, logFile != NULL, gzOut, chrom,
-    chromLen, &sample, pqvalue, qvalOpt, minLen, minLenOpt,
+    chromLen, &sample, pqvalue, qvalOpt, minLen,
     maxGap, minAUC, peaksOpt, verbose);
 
   // free memory
@@ -5670,12 +5698,12 @@ void getArgs(int argc, char** argv) {
     *logFile = NULL, *pileFile = NULL, *bedFile = NULL,
     *xFile = NULL, *dupsFile = NULL;
   char* xchrom = NULL;
-  int extend = 0, minMapQ = 0, minLen = 0,
+  int extend = 0, minMapQ = 0, minLen = DEFMINLEN,
     maxGap = DEFMAXGAP, atacLen5 = DEFATAC, atacLen3 = 0;
   float asDiff = 0.0f, pqvalue = DEFQVAL, minAUC = DEFAUC;
   bool singleOpt = false, extendOpt = false,
     avgExtOpt = false, atacOpt = false, gzOut = false,
-    qvalOpt = true, minLenOpt = false, dupsOpt = false,
+    qvalOpt = true, dupsOpt = false,
     peaksOpt = true, peaksOnly = false;
   bool verbose = false;
 
@@ -5702,7 +5730,7 @@ void getArgs(int argc, char** argv) {
       case QVALUE: pqvalue = getFloat(optarg); break;
       case PVALUE: pqvalue = getFloat(optarg); qvalOpt = false; break;
       case MINAUC: minAUC = getFloat(optarg); break;
-      case MINLEN: minLen = getInt(optarg); minLenOpt = true; break;
+      case MINLEN: minLen = getInt(optarg); break;
       case MAXGAP: maxGap = getInt(optarg); break;
       case DUPSOPT: dupsOpt = true; break;
       case DUPSFILE: dupsFile = optarg; break;
@@ -5740,9 +5768,9 @@ void getArgs(int argc, char** argv) {
     atacLen3 = (int) (atacLen5 / 2.0f + 0.5f);  // round up for 3' end
     atacLen5 /= 2;
   }
-  if (minLenOpt && minLen <= 0)
+  if (minLen < 0)
     exit(error("", ERRMINLEN));
-  if (! minLenOpt && minAUC < 0.0f)
+  if (minAUC < 0.0f)
     exit(error("", ERRMINAUC));
   if (asDiff < 0.0f)
     exit(error("", ERRASDIFF));
@@ -5762,7 +5790,7 @@ void getArgs(int argc, char** argv) {
   runProgram(inFile, ctrlFile, outFile, logFile, pileFile,
     bedFile, gzOut, singleOpt, extendOpt, extend,
     avgExtOpt, minMapQ, xcount, xchrList, xFile, pqvalue,
-    qvalOpt, minLen, minLenOpt, maxGap, minAUC, asDiff,
+    qvalOpt, minLen, maxGap, minAUC, asDiff,
     atacOpt, atacLen5, atacLen3, dupsOpt, dupsFile,
     peaksOpt, peaksOnly, verbose);
 }
