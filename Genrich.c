@@ -647,7 +647,7 @@ void combinePval(Chrom* chrom, int chromLen, int n) {
   }
 }
 
-/*** Call peaks ***/
+/*** Log pileups and stats ***/
 
 /* void printLogHeader()
  * Print header of logfile.
@@ -813,10 +813,10 @@ void printLog(File log, bool gzOut, Chrom* chr,
 
 /* void logIntervals()
  * Instead of calling peaks, just print log of pileups,
- *   p- and q-values, and significance for each interval.
+ *   and p- and q-values for each interval.
  */
 void logIntervals(File log, bool gzOut, Chrom* chrom,
-    int chromLen, int n, float pqvalue, bool qvalOpt) {
+    int chromLen, int n, bool qvalOpt) {
   // print header
   printLogHeader(log, gzOut, n, qvalOpt, false);
 
@@ -857,6 +857,8 @@ void logIntervals(File log, bool gzOut, Chrom* chrom,
     }
   }
 }
+
+/*** Call peaks ***/
 
 /* void printPeak()
  * Print peaks in ENCODE narrowPeak format.
@@ -903,72 +905,6 @@ void checkPeak(File out, bool gzOut, char* name,
   }
 }
 
-/* int getIdx()
- * Find fields of header line of bedgraph-ish log file
- *   that match "-log([pq])".
- *   If multiple matches, return the last one.
- */
-int getIdx(File in, bool gz, char* line, bool qvalOpt,
-    int* idxQ) {
-  if (getLine(line, MAX_SIZE, in, gz) == NULL)
-    exit(error("", ERRLOGIDX));
-  char matchP[8] = "-log(p)";
-  char matchQ[8] = "-log(q)";
-  int idxP = -1;
-  int i = 0;
-  char* field = strtok(line, TABN);
-  while (field != NULL) {
-    if (!strncmp(field, matchP, 7))
-      idxP = i;
-    else if (!strncmp(field, matchQ, 7))
-      *idxQ = i;
-    field = strtok(NULL, TABN);
-    i++;
-  }
-  if (idxP == -1)
-    exit(error(matchP, ERRLOGIDX));
-  if (qvalOpt && *idxQ == -1)
-    exit(error(matchQ, ERRLOGIDX));
-  return idxP;
-}
-
-/* void loadBDG()
- * Load fields (chr, start, end, and [pq]-value) from
- *   a bedgraph-ish record (-f log file).
- */
-void loadBDG(char* line, char** chr, uint32_t* start,
-    uint32_t* end, char** pStat, int idxP, char** qStat,
-    int idxQ, bool qvalOpt) {
-  int idx = qvalOpt ? idxQ : idxP;
-  char* field = strtok(line, TABN);
-  for (int i = 0; i <= idx; i++) {
-    if (field == NULL)
-      exit(error("", ERRLOG));
-    switch (i) {
-      case CHR: *chr = field; break;
-      case START: *start = getInt(field); break;
-      case END: *end = getInt(field); break;
-      default:
-        if (i == idxP)
-          *pStat = field;
-        else if (i == idxQ)
-          *qStat = field;
-    }
-    field = strtok(NULL, TABN);
-  }
-}
-
-/* bool checkChrom()
- * Return true if given char* matches a chromosome
- *   to be skipped (-e).
- */
-bool checkChrom(char* chr, int xcount, char** xchrList) {
-  for (int i = 0; i < xcount; i++)
-    if (!strcmp(xchrList[i], chr))
-      return true;
-  return false;
-}
-
 /* void resetVars()
  * Reset peak variables to null values.
  */
@@ -980,144 +916,35 @@ void resetVars(int64_t* peakStart, float* summitVal,
   *auc = 0.0f;
 }
 
-/* void callPeaksLog()
- * Call peaks directly from a bedgraph-ish log file.
+/* void updatePeak()
+ * Update peak variables for current interval.
  */
-void callPeaksLog(File in, bool gz, File out, bool gzOut,
-    char* line, int xcount, char** xchrList, int xBedLen,
-    Bed* xBed, float minPQval, bool qvalOpt, int minLen,
-    int maxGap, float minAUC, bool verbose) {
-  // determine index of fields ([pq]-value) to analyze
-  int idxQ = -1;
-  int idxP = getIdx(in, gz, line, qvalOpt, &idxQ);
+void updatePeak(int64_t* peakStart, int64_t* peakEnd,
+    uint32_t start, uint32_t end, float* auc, float pqval,
+    float minPQval, float pval, float qval,
+    float* summitVal, float* summitPval, float* summitQval,
+    uint32_t* summitPos, uint32_t* summitLen) {
+  // update peak AUC, coordinates
+  uint32_t len = end - start;
+  *auc += len * (pqval - minPQval); // sum AUC
+  if (*peakStart == -1)
+    *peakStart = start; // start new potential peak
+  *peakEnd = end;       // end of potential peak (for now)
 
-  // initialize counting variables
-  int count = 0;
-  uint64_t genomeLen = 0;
-  uint64_t peakBP = 0;
-
-  // initialize peak variables
-  float auc = 0.0f;                     // area under the curve (signif.)
-  int64_t peakStart = -1, peakEnd = -1; // ends of potential peak
-  float summitVal = -1.0f;              // summit p/q value
-  uint32_t summitPos = 0;               // distance from peakStart to summit
-  uint32_t summitLen = 0;               // length of summit interval
-  float summitPval = -1.0f, summitQval = -1.0f; // summit p- and q-values
-
-  // parse bedgraph records
-  char prev[MAX_ALNS];              // previous chrom name
-  prev[0] = '\0';
-  bool skip = false;                // skip current chrom?
-  char* chr, *stat, *pStat, *qStat; // chrom and stats/NA of current interval
-  uint32_t start, end;              // coordinates of current interval
-  float pqval;                      // [pq]-value of current interval
-  while (getLine(line, MAX_SIZE, in, gz) != NULL) {
-
-    // load fields from bedgraph record
-    loadBDG(line, &chr, &start, &end, &pStat, idxP,
-      &qStat, idxQ, qvalOpt);
-//fprintf(stderr, "%s\t%d\t%d\t%s\t%s\n", chr, start, end, pStat, qStat);
-
-    // new chromosome
-    if (strcmp(prev, chr)) {
-      // check if previous chrom's last peak is valid
-      checkPeak(out, gzOut, prev, peakStart, peakEnd,
-        &count, summitVal, auc, summitPval, summitQval,
-        summitPos, minAUC, minLen, &peakBP);
-
-      // reset peak variables
-      resetVars(&peakStart, &summitVal, &summitLen, &auc);
-
-      // check if new chrom should be skipped
-      skip = checkChrom(chr, xcount, xchrList);
-      if (verbose && skip) {
-        fprintf(stderr, "Warning! Skipping chromosome %s --\n  ", chr);
-        fprintf(stderr, "Reads aligning to it were used in the background");
-        fprintf(stderr, " pileup calculation,\n  and its length was included");
-        fprintf(stderr, " in the genome length %scalculation\n",
-          qvalOpt ? "(and q-value) " : "");
-      }
-      strcpy(prev, chr);  // update current chrom
+  // check if interval is summit for this peak
+  if (pqval > *summitVal) {
+    *summitVal = pqval;
+    *summitPval = pval;
+    *summitQval = qval;
+    *summitPos = (end + start)/2 - *peakStart; // midpoint of interval
+    *summitLen = len;
+  } else if (pqval == *summitVal) {
+    // update summitPos only if interval is longer
+    if (len > *summitLen) {
+      *summitPos = (end + start)/2 - *peakStart; // midpoint of interval
+      *summitLen = len;
+      // assume summitPval, summitQval remain the same
     }
-    if (skip)
-      continue; // current chrom to be skipped
-
-    // check stat for 'NA' (skipped region)
-    stat = qvalOpt ? qStat : pStat;
-    if (!strcmp(stat, NA)) {
-      // check if previous peak is valid
-      checkPeak(out, gzOut, chr, peakStart, peakEnd,
-        &count, summitVal, auc, summitPval, summitQval,
-        summitPos, minAUC, minLen, &peakBP);
-
-      // reset peak variables
-      resetVars(&peakStart, &summitVal, &summitLen, &auc);
-      continue;
-    }
-
-    // check [pq]-value for significance
-    uint32_t len = end - start;
-    genomeLen += len;
-    pqval = getFloat(stat);
-//fprintf(stderr, "%s\t%d\t%d\t%f\n", chr, start, end, pqval);
-//while (!getchar()) ;
-    if (pqval > minPQval) {
-
-      // interval reaches significance
-      auc += len * (pqval - minPQval);  // sum AUC
-      if (peakStart == -1)
-        peakStart = start;  // start new potential peak
-      peakEnd = end;        // end of potential peak (for now)
-
-      // check if interval is summit for this peak
-      if (pqval > summitVal) {
-        summitVal = pqval;
-        summitPval = qvalOpt ? getFloat(pStat) : pqval;
-        summitQval = qvalOpt ? pqval : -1.0f;
-        summitPos = (peakEnd + start)/2 - peakStart; // midpoint of interval
-        summitLen = len;
-      } else if (pqval == summitVal) {
-        // update summitPos only if interval is longer
-        if (len > summitLen) {
-          summitPos = (peakEnd + start)/2 - peakStart; // midpoint of interval
-          summitLen = len;
-          // assume summitPval, summitQval remain the same
-        }
-      }
-
-    } else {
-
-      // interval does not reach significance --
-      //   check if distance is beyond maxGap from peak
-      if (end - peakEnd > maxGap) {
-        // check if previous peak is valid
-        checkPeak(out, gzOut, chr, peakStart, peakEnd,
-          &count, summitVal, auc, summitPval, summitQval,
-          summitPos, minAUC, minLen, &peakBP);
-
-        // reset peak variables
-        resetVars(&peakStart, &summitVal, &summitLen, &auc);
-      }
-    }
-
-  }
-
-  // check if last peak is valid
-  checkPeak(out, gzOut, chr, peakStart, peakEnd,
-    &count, summitVal, auc, summitPval, summitQval,
-    summitPos, minAUC, minLen, &peakBP);
-
-  if (verbose) {
-    fprintf(stderr, "Peak-calling parameters:\n");
-    fprintf(stderr, "  Genome length: %ldbp\n", genomeLen);
-    fprintf(stderr, "  Significance threshold: -log(%c) > %.3f\n",
-      qvalOpt ? 'q' : 'p', minPQval);
-    fprintf(stderr, "  Min. AUC: %.3f\n", minAUC);
-    if (minLen)
-      fprintf(stderr, "  Min. peak length: %dbp\n", minLen);
-    fprintf(stderr, "  Max. gap between sites: %dbp\n", maxGap);
-    fprintf(stderr, "Peaks identified: %d (%ldbp)\n",
-      count, peakBP);
   }
 }
 
@@ -1127,7 +954,7 @@ void callPeaksLog(File in, bool gz, File out, bool gzOut,
  *   q-values for each interval. Return number of peaks.
  */
 int callPeaks(File out, File log, bool logOpt, bool gzOut,
-    Chrom* chrom, int chromLen, int n, float pqvalue,
+    Chrom* chrom, int chromLen, int n, float minPQval,
     bool qvalOpt, float minAUC, int minLen, int maxGap,
     uint64_t* peakBP) {
 
@@ -1162,39 +989,25 @@ int callPeaks(File out, File log, bool logOpt, bool gzOut,
     for (uint32_t m = 0; m < chr->pvalLen[n]; m++) {
 
       bool sig = false;
-      float val = qvalOpt ? chr->qval->cov[m] : chr->pval[n]->cov[m];
-      if ( val > pqvalue ) {
+      float pqval = qvalOpt ? chr->qval->cov[m]
+        : chr->pval[n]->cov[m];
+      if (pqval > minPQval) {
 
         // interval reaches significance
         sig = true;
-        uint32_t len = chr->pval[n]->end[m] - start;
-        auc += len * (val - pqvalue);   // sum AUC
-        if (peakStart == -1)
-          peakStart = start;            // start new potential peak
-        peakEnd = chr->pval[n]->end[m]; // end of potential peak (for now)
-
-        // check if interval is summit for this peak
-        if (val > summitVal) {
-          summitVal = val;
-          summitPval = chr->pval[n]->cov[m];
-          summitQval = qvalOpt ? chr->qval->cov[m] : -1.0f;
-          summitPos = (peakEnd + start)/2 - peakStart; // midpoint of interval
-          summitLen = len;
-        } else if (val == summitVal) {
-          // update summitPos only if interval is longer
-          if (len > summitLen) {
-            summitPos = (peakEnd + start)/2 - peakStart; // midpoint of interval
-            summitLen = len;
-            // assume summitPval, summitQval remain the same
-          }
-        }
+        updatePeak(&peakStart, &peakEnd, start,
+          chr->pval[n]->end[m], &auc, pqval,
+          minPQval, chr->pval[n]->cov[m],
+          qvalOpt ? chr->qval->cov[m] : -1.0f,
+          &summitVal, &summitPval, &summitQval,
+          &summitPos, &summitLen);
 
       } else {
 
         // interval does not reach significance --
         //   check if interval is to be skipped
         //   OR distance is beyond maxGap from peak
-        if (val == -1.0f
+        if (pqval == -1.0f
             || chr->pval[n]->end[m] - peakEnd > maxGap) {
           // check if previous peak is valid
           checkPeak(out, gzOut, chr->name, peakStart,
@@ -1241,9 +1054,9 @@ int callPeaks(File out, File log, bool logOpt, bool gzOut,
  *   and printing output.
  */
 void findPeaks(File out, File log, bool logOpt, bool gzOut,
-    Chrom* chrom, int chromLen, int* sample, float pqvalue,
-    bool qvalOpt, int minLen, int maxGap, float minAUC,
-    bool peaksOpt, bool verbose) {
+    Chrom* chrom, int chromLen, int* sample,
+    float minPQval, bool qvalOpt, int minLen, int maxGap,
+    float minAUC, bool peaksOpt, bool verbose) {
 
   // calculate combined p-values for multiple replicates
   if (*sample > 1) {
@@ -1268,7 +1081,7 @@ void findPeaks(File out, File log, bool logOpt, bool gzOut,
       fprintf(stderr, "Peak-calling parameters:\n");
       fprintf(stderr, "  Genome length: %ldbp\n", genomeLen);
       fprintf(stderr, "  Significance threshold: -log(%c) > %.3f\n",
-        qvalOpt ? 'q' : 'p', pqvalue);
+        qvalOpt ? 'q' : 'p', minPQval);
       fprintf(stderr, "  Min. AUC: %.3f\n", minAUC);
       if (minLen)
         fprintf(stderr, "  Min. peak length: %dbp\n", minLen);
@@ -1287,7 +1100,7 @@ void findPeaks(File out, File log, bool logOpt, bool gzOut,
   if (peaksOpt) {
     uint64_t peakBP = 0;
     int count = callPeaks(out, log, logOpt, gzOut, chrom,
-      chromLen, *sample - 1, pqvalue, qvalOpt, minAUC,
+      chromLen, *sample - 1, minPQval, qvalOpt, minAUC,
       minLen, maxGap, &peakBP);
     if (verbose)
       fprintf(stderr, "Peaks identified: %d (%ldbp)\n",
@@ -1295,7 +1108,378 @@ void findPeaks(File out, File log, bool logOpt, bool gzOut,
   } else if (logOpt)
     // not calling peaks -- just log pileups and stats
     logIntervals(log, gzOut, chrom, chromLen, *sample - 1,
-      pqvalue, qvalOpt);
+      qvalOpt);
+}
+
+/*** Call peaks directly from a log file ***/
+
+/* void saveXBed()
+ * Save BED regions to be excluded for a chrom.
+ */
+void saveXBed(char* name, uint32_t len, int* bedLen,
+    uint32_t** bed, int xBedLen, Bed* xBed,
+    bool verbose) {
+  // check each xBed interval for match to chrom (name)
+  for (int i = 0; i < xBedLen; i++) {
+    Bed* b = xBed + i;
+    if (!strcmp(name, b->name)) {
+
+      // check if interval is located off end of chrom
+      if (b->pos[0] >= len) {
+        if (verbose) {
+          fprintf(stderr, "Warning! BED interval (%s, %d - %d) ignored\n",
+            b->name, b->pos[0], b->pos[1]);
+          fprintf(stderr, "  - located off end of reference %s (length %d)\n",
+            name, len);
+        }
+        continue;
+      }
+
+      // insert interval into array, sorted by start pos
+      int j;
+      for (j = 0; j < *bedLen; j += 2)
+        if (b->pos[0] <= (*bed)[j])
+          break;
+      *bedLen += 2;
+      *bed = (uint32_t*) memrealloc(*bed,
+        *bedLen * sizeof(uint32_t));
+      // shift intervals forward
+      for (int k = *bedLen - 1; k > j + 1; k--)
+        (*bed)[k] = (*bed)[k-2];
+      (*bed)[j] = b->pos[0];
+      (*bed)[j+1] = b->pos[1];
+    }
+  }
+
+  // merge overlapping intervals
+  int i = 0;
+  while (i < *bedLen) {
+
+    // check for interval past end of chrom
+    if ((*bed)[i+1] > len) {
+      if (verbose) {
+        fprintf(stderr, "Warning! BED interval (%s, %d - %d) extends ",
+          name, (*bed)[i], (*bed)[i+1]);
+        fprintf(stderr, "past end of ref.\n  - edited to (%s, %d - %d)\n",
+          name, (*bed)[i], len);
+      }
+      (*bed)[i+1] = len;
+    }
+
+    // check for overlap with previous
+    if (i && (*bed)[i] <= (*bed)[i-1]) {
+      if ((*bed)[i+1] > (*bed)[i-1])
+        (*bed)[i-1] = (*bed)[i+1];
+      // shift coordinates backward
+      for (int j = i; j < *bedLen - 2; j++)
+        (*bed)[j] = (*bed)[j + 2];
+      *bedLen -= 2;
+    } else
+      i += 2;
+
+  }
+}
+
+/* bool checkChrom()
+ * Return true if given char* matches a chromosome
+ *   to be skipped (-e).
+ */
+bool checkChrom(char* chr, int xcount, char** xchrList) {
+  for (int i = 0; i < xcount; i++)
+    if (!strcmp(xchrList[i], chr))
+      return true;
+  return false;
+}
+
+/* int getIdx()
+ * Find fields of header line of bedgraph-ish log file
+ *   that match "-log([pq])".
+ *   If multiple matches, return the last one.
+ */
+int getIdx(File in, bool gz, char* line, bool qvalOpt,
+    int* idxQ) {
+  if (getLine(line, MAX_SIZE, in, gz) == NULL)
+    exit(error("<header>", ERRLOGIDX));
+  char matchP[8] = "-log(p)";
+  char matchQ[8] = "-log(q)";
+  int idxP = -1;
+  int i = 0;
+  char* field = strtok(line, TABN);
+  while (field != NULL) {
+    if (!strncmp(field, matchP, 7))
+      idxP = i;
+    else if (!strncmp(field, matchQ, 7))
+      *idxQ = i;
+    field = strtok(NULL, TABN);
+    i++;
+  }
+  if (idxP == -1)
+    exit(error(matchP, ERRLOGIDX));
+  if (qvalOpt && *idxQ == -1)
+    exit(error(matchQ, ERRLOGIDX));
+  return idxP;
+}
+
+/* void loadBDG()
+ * Load fields (chr, start, end, and [pq]-value) from
+ *   a bedgraph-ish record (-f log file).
+ */
+void loadBDG(char* line, char** chr, uint32_t* start,
+    uint32_t* end, char** pStat, int idxP, char** qStat,
+    int idxQ, bool qvalOpt) {
+  int idx = qvalOpt ? idxQ : idxP;
+  char* field = strtok(line, TABN);
+  for (int i = 0; i <= idx; i++) {
+    if (field == NULL)
+      exit(error("", ERRLOG));
+    switch (i) {
+      case CHR: *chr = field; break;
+      case START: *start = getInt(field); break;
+      case END: *end = getInt(field); break;
+      default:
+        if (i == idxP)
+          *pStat = field;
+        else if (i == idxQ)
+          *qStat = field;
+    }
+    field = strtok(NULL, TABN);
+  }
+}
+
+/* void callPeaksLog()
+ * Call peaks directly from a bedgraph-ish log file.
+ */
+void callPeaksLog(File in, bool gz, File out, bool gzOut,
+    char* line, int xcount, char** xchrList, int xBedLen,
+    Bed* xBed, float minPQval, bool qvalOpt, int minLen,
+    int maxGap, float minAUC, bool verbose) {
+  // determine index of fields ([pq]-value) to analyze
+  int idxQ = -1;
+  int idxP = getIdx(in, gz, line, qvalOpt, &idxQ);
+
+  // initialize variables for genomic regions to be ignored
+  uint32_t* bed = NULL;         // array of BED coordinates
+  int bedLen = 0;               // length of bed array
+  int bedIdx = 0;               // index into bed array
+  uint32_t bedPos = UINT32_MAX; // next coordinate
+  bool save = true;             // status of current interval
+  bool warn = false;            // warn of new skipped regions?
+
+  // initialize counting variables
+  int count = 0;
+  uint64_t genomeLen = 0;
+  uint64_t peakBP = 0;
+
+  // initialize peak variables
+  float auc = 0.0f;                     // area under the curve (signif.)
+  int64_t peakStart = -1, peakEnd = -1; // ends of potential peak
+  float summitVal = -1.0f;              // summit p/q value
+  uint32_t summitPos = 0;               // distance from peakStart to summit
+  uint32_t summitLen = 0;               // length of summit interval
+  float summitPval = -1.0f, summitQval = -1.0f; // summit p- and q-values
+
+  // parse bedgraph records
+  char prev[MAX_ALNS];              // previous chrom name
+  prev[0] = '\0';
+  bool skip = false;                // skip current chrom?
+  char* chr, *stat, *pStat, *qStat; // chrom and stats/NA of current interval
+  uint32_t start, end;              // coordinates of current interval
+  float pqval;                      // [pq]-value of current interval
+  while (getLine(line, MAX_SIZE, in, gz) != NULL) {
+
+    // load fields from bedgraph record
+    loadBDG(line, &chr, &start, &end, &pStat, idxP,
+      &qStat, idxQ, qvalOpt);
+
+    // new chromosome
+    if (strcmp(prev, chr)) {
+      // check if previous chrom's last peak is valid
+      checkPeak(out, gzOut, prev, peakStart, peakEnd,
+        &count, summitVal, auc, summitPval, summitQval,
+        summitPos, minAUC, minLen, &peakBP);
+
+      // reset peak variables
+      resetVars(&peakStart, &summitVal, &summitLen, &auc);
+
+      // check if new chrom should be skipped
+      skip = checkChrom(chr, xcount, xchrList);
+      if (verbose && skip) {
+        fprintf(stderr, "Warning! Skipping chromosome %s --\n  ", chr);
+        fprintf(stderr, "Reads aligning to it were used in the background");
+        fprintf(stderr, " pileup calculation,\n  and its length was included");
+        fprintf(stderr, " in the genome length %scalculation\n",
+          qvalOpt ? "(and q-value) " : "");
+      }
+
+      // check for regions to be skipped
+      bedLen = 0;
+      if (! skip) {
+        // load regions from xBed
+        // (note: cannot check validity of coordinates)
+        saveXBed(chr, UINT32_MAX, &bedLen, &bed, xBedLen,
+          xBed, verbose);
+
+        // load next coordinate
+        bedIdx = 0;
+        bedPos = bedIdx < bedLen ? bed[bedIdx]
+          : UINT32_MAX;
+        save = true;
+      }
+
+      strcpy(prev, chr);  // update current chrom
+    }
+    if (skip)
+      continue; // current chrom to be skipped
+
+    // check stat for 'NA' (skipped region)
+    stat = qvalOpt ? qStat : pStat;
+    if (!strcmp(stat, NA)) {
+      // check if previous peak is valid
+      checkPeak(out, gzOut, chr, peakStart, peakEnd,
+        &count, summitVal, auc, summitPval, summitQval,
+        summitPos, minAUC, minLen, &peakBP);
+
+      // reset peak variables
+      resetVars(&peakStart, &summitVal, &summitLen, &auc);
+      continue;
+    }
+    pqval = getFloat(stat);
+
+    // check if current interval starts at a position
+    //   to be skipped (new -E)
+    if (bedPos == start) {
+      if (save) {
+        // check if previous peak is valid
+        checkPeak(out, gzOut, chr, peakStart, peakEnd,
+          &count, summitVal, auc, summitPval, summitQval,
+          summitPos, minAUC, minLen, &peakBP);
+        // reset peak variables
+        resetVars(&peakStart, &summitVal, &summitLen, &auc);
+      }
+
+      // load next coordinate
+      save = ! save;
+      bedIdx++;
+      bedPos = bedIdx < bedLen ? bed[bedIdx] : UINT32_MAX;
+    }
+
+    // check if current interval should be divided into subintervals
+    uint32_t subStart = start;  // start of current subinterval
+    while (bedPos > start && bedPos < end) {
+
+      if (save) {
+        // interval *not* to be skipped:
+        //   update peak if necessary, then print if valid
+        if (pqval > minPQval) {
+          // interval reaches significance
+          updatePeak(&peakStart, &peakEnd, subStart,
+            bedPos, &auc, pqval, minPQval,
+            qvalOpt ? getFloat(pStat) : pqval,
+            qvalOpt ? pqval : -1.0f,
+            &summitVal, &summitPval, &summitQval,
+            &summitPos, &summitLen);
+        }
+        // check if peak is valid
+        checkPeak(out, gzOut, chr, peakStart, peakEnd,
+          &count, summitVal, auc, summitPval, summitQval,
+          summitPos, minAUC, minLen, &peakBP);
+        // reset peak variables
+        resetVars(&peakStart, &summitVal, &summitLen, &auc);
+
+        genomeLen += bedPos - subStart; // update genome length
+      } else
+        warn = true;
+
+      // load next coordinate
+      subStart = bedPos;
+      save = ! save;
+      bedIdx++;
+      bedPos = bedIdx < bedLen ? bed[bedIdx] : UINT32_MAX;
+    }
+    if (! save) {
+      warn = true;
+      continue;
+    }
+    start = subStart;
+
+    // check [pq]-value for significance
+    genomeLen += end - start; // update genome length
+    if (pqval > minPQval) {
+
+      // interval reaches significance
+      updatePeak(&peakStart, &peakEnd, start, end,
+        &auc, pqval, minPQval,
+        qvalOpt ? getFloat(pStat) : pqval,
+        qvalOpt ? pqval : -1.0f,
+        &summitVal, &summitPval, &summitQval,
+        &summitPos, &summitLen);
+
+/*
+      auc += len * (pqval - minPQval);  // sum AUC
+      if (peakStart == -1)
+        peakStart = start;  // start new potential peak
+      peakEnd = end;        // end of potential peak (for now)
+
+      // check if interval is summit for this peak
+      if (pqval > summitVal) {
+        summitVal = pqval;
+        summitPval = qvalOpt ? getFloat(pStat) : pqval;
+        summitQval = qvalOpt ? pqval : -1.0f;
+        summitPos = (peakEnd + start)/2 - peakStart; // midpoint of interval
+        summitLen = len;
+      } else if (pqval == summitVal) {
+        // update summitPos only if interval is longer
+        if (len > summitLen) {
+          summitPos = (peakEnd + start)/2 - peakStart; // midpoint of interval
+          summitLen = len;
+          // assume summitPval, summitQval remain the same
+        }
+      }
+*/
+
+    } else {
+
+      // interval does not reach significance --
+      //   check if distance is beyond maxGap from peak
+      if (end - peakEnd > maxGap) {
+        // check if previous peak is valid
+        checkPeak(out, gzOut, chr, peakStart, peakEnd,
+          &count, summitVal, auc, summitPval, summitQval,
+          summitPos, minAUC, minLen, &peakBP);
+
+        // reset peak variables
+        resetVars(&peakStart, &summitVal, &summitLen, &auc);
+      }
+    }
+
+  }
+
+  // check if last peak is valid
+  checkPeak(out, gzOut, chr, peakStart, peakEnd,
+    &count, summitVal, auc, summitPval, summitQval,
+    summitPos, minAUC, minLen, &peakBP);
+
+  if (verbose) {
+    if (warn) {
+      fprintf(stderr, "Warning! Skipping given BED regions --\n  ");
+      fprintf(stderr, "Reads aligning to them were used in the background");
+      fprintf(stderr, " pileup calculation,\n  and the lengths were included");
+      fprintf(stderr, " in the genome length %scalculation\n",
+        qvalOpt ? "(and q-value) " : "");
+    }
+    fprintf(stderr, "Peak-calling parameters:\n");
+    fprintf(stderr, "  Genome length: %ldbp\n", genomeLen);
+    fprintf(stderr, "  Significance threshold: -log(%c) > %.3f\n",
+      qvalOpt ? 'q' : 'p', minPQval);
+    fprintf(stderr, "  Min. AUC: %.3f\n", minAUC);
+    if (minLen)
+      fprintf(stderr, "  Min. peak length: %dbp\n", minLen);
+    fprintf(stderr, "  Max. gap between sites: %dbp\n", maxGap);
+    fprintf(stderr, "Peaks identified: %d (%ldbp)\n",
+      count, peakBP);
+  }
+
+  free(bed);
 }
 
 /*** Calculate a p-value (log-normal distribution) ***/
@@ -3986,71 +4170,6 @@ bool parseAlign(Aln** aln, int* alnLen, uint16_t flag,
 
 /*** Save SAM/BAM header info ***/
 
-/* void saveXBed()
- * Save BED regions to be excluded for this chrom.
- */
-void saveXBed(Chrom* c, int xBedLen, Bed* xBed,
-    bool verbose) {
-  for (int i = 0; i < xBedLen; i++) {
-    Bed* b = xBed + i;
-    if (!strcmp(c->name, b->name)) {
-
-      // check if interval is located off end of chrom
-      if (b->pos[0] >= c->len) {
-        if (verbose) {
-          fprintf(stderr, "Warning! BED interval (%s, %d - %d) ignored\n",
-            b->name, b->pos[0], b->pos[1]);
-          fprintf(stderr, "  - located off end of reference (length %d)\n",
-            c->len);
-        }
-        continue;
-      }
-
-      // insert interval into array, sorted by start pos
-      int j;
-      for (j = 0; j < c->bedLen; j += 2)
-        if (b->pos[0] <= c->bed[j])
-          break;
-      c->bedLen += 2;
-      c->bed = (uint32_t*) memrealloc(c->bed,
-        c->bedLen * sizeof(uint32_t));
-      // shift intervals forward
-      for (int k = c->bedLen - 1; k > j + 1; k--)
-        c->bed[k] = c->bed[k-2];
-      c->bed[j] = b->pos[0];
-      c->bed[j+1] = b->pos[1];
-    }
-  }
-
-  // merge overlapping intervals
-  int i = 0;
-  while (i < c->bedLen) {
-
-    // check for interval past end of chrom
-    if (c->bed[i+1] > c->len) {
-      if (verbose) {
-        fprintf(stderr, "Warning! BED interval (%s, %d - %d) extends ",
-          c->name, c->bed[i], c->bed[i+1]);
-        fprintf(stderr, "past end of ref.\n  - edited to (%s, %d - %d)\n",
-          c->name, c->bed[i], c->len);
-      }
-      c->bed[i+1] = c->len;
-    }
-
-    // check for overlap with previous
-    if (i && c->bed[i] <= c->bed[i-1]) {
-      if (c->bed[i+1] > c->bed[i-1])
-        c->bed[i-1] = c->bed[i+1];
-      // shift coordinates backward
-      for (int j = i; j < c->bedLen - 2; j++)
-        c->bed[j] = c->bed[j + 2];
-      c->bedLen -= 2;
-    } else
-      i += 2;
-
-  }
-}
-
 /* int saveChrom()
  * If chromosome (reference sequence) has not been
  *   saved yet, save it to the array. Return the index.
@@ -4071,14 +4190,6 @@ int saveChrom(char* name, uint32_t len, int* chromLen,
     }
   }
 
-  // determine if chrom should be skipped
-  bool skip = false;
-  for (int i = 0; i < xcount; i++)
-    if (!strcmp(xchrList[i], name)) {
-      skip = true;
-      break;
-    }
-
   // save to list
   *chrom = (Chrom*) memrealloc(*chrom,
     (*chromLen + 1) * sizeof(Chrom));
@@ -4086,7 +4197,7 @@ int saveChrom(char* name, uint32_t len, int* chromLen,
   c->name = (char*) memalloc(1 + strlen(name));
   strcpy(c->name, name);
   c->len = len;
-  c->skip = skip;
+  c->skip = checkChrom(c->name, xcount, xchrList);
   c->save = ! ctrl; // do not save if ref in ctrl sample only
   c->diff = NULL;
   c->treat = (Pileup*) memalloc(sizeof(Pileup));
@@ -4107,8 +4218,9 @@ int saveChrom(char* name, uint32_t len, int* chromLen,
   // determine if there are regions to be skipped
   c->bed = NULL;
   c->bedLen = 0;
-  if (! skip)
-    saveXBed(c, xBedLen, xBed, verbose);
+  if (! c->skip)
+    saveXBed(c->name, c->len, &c->bedLen, &c->bed,
+      xBedLen, xBed, verbose);
 
   (*chromLen)++;
   return *chromLen - 1;
