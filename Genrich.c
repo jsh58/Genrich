@@ -56,13 +56,15 @@ void usage(void) {
   fprintf(stderr, "Options for ATAC-seq:\n");
   fprintf(stderr, "  -%c               Use ATAC-seq mode (def. false)\n", ATACOPT);
   fprintf(stderr, "  -%c  <int>        Expand cut sites to <int> bp (def. %d)\n", ATACLEN, DEFATAC);
-  fprintf(stderr, "Options for peak calling:\n");
+  fprintf(stderr, "Options for peak-calling:\n");
   fprintf(stderr, "  -%c  <float>      Maximum q-value (FDR-adjusted p-value; def. %.2f)\n", QVALUE, DEFQVAL);
   fprintf(stderr, "  -%c  <float>      Maximum p-value (overrides -%c if set)\n", PVALUE, QVALUE);
   fprintf(stderr, "  -%c  <float>      Minimum AUC for a peak (def. %.1f)\n", MINAUC, DEFAUC);
   fprintf(stderr, "  -%c  <int>        Minimum length of a peak (def. %d)\n", MINLEN, DEFMINLEN);
   fprintf(stderr, "  -%c  <int>        Maximum distance between signif. sites (def. %d)\n", MAXGAP, DEFMAXGAP);
   fprintf(stderr, "Other options:\n");
+  fprintf(stderr, "  -%c               Skip peak-calling\n", NOPEAKS);
+  fprintf(stderr, "  -%c               Call peaks directly from a log file (-%c)\n", PEAKSONLY, LOGFILE);
   fprintf(stderr, "  -%c               Option to gzip-compress output(s)\n", GZOPT);
   fprintf(stderr, "  -%c               Option to print status updates/counts to stderr\n", VERBOSE);
   exit(-1);
@@ -1385,7 +1387,6 @@ void callPeaksLog(File in, bool gz, File out, bool gzOut,
           summitPos, minAUC, minLen, &peakBP);
         // reset peak variables
         resetVars(&peakStart, &summitVal, &summitLen, &auc);
-
         genomeLen += bedPos - subStart; // update genome length
       } else
         warn = true;
@@ -1400,7 +1401,7 @@ void callPeaksLog(File in, bool gz, File out, bool gzOut,
       warn = true;
       continue;
     }
-    start = subStart;
+    start = subStart; // reset start coordinate
 
     // check [pq]-value for significance
     genomeLen += end - start; // update genome length
@@ -1413,29 +1414,6 @@ void callPeaksLog(File in, bool gz, File out, bool gzOut,
         qvalOpt ? pqval : -1.0f,
         &summitVal, &summitPval, &summitQval,
         &summitPos, &summitLen);
-
-/*
-      auc += len * (pqval - minPQval);  // sum AUC
-      if (peakStart == -1)
-        peakStart = start;  // start new potential peak
-      peakEnd = end;        // end of potential peak (for now)
-
-      // check if interval is summit for this peak
-      if (pqval > summitVal) {
-        summitVal = pqval;
-        summitPval = qvalOpt ? getFloat(pStat) : pqval;
-        summitQval = qvalOpt ? pqval : -1.0f;
-        summitPos = (peakEnd + start)/2 - peakStart; // midpoint of interval
-        summitLen = len;
-      } else if (pqval == summitVal) {
-        // update summitPos only if interval is longer
-        if (len > summitLen) {
-          summitPos = (peakEnd + start)/2 - peakStart; // midpoint of interval
-          summitLen = len;
-          // assume summitPval, summitQval remain the same
-        }
-      }
-*/
 
     } else {
 
@@ -1875,8 +1853,11 @@ void saveLambda(Chrom* chr, float lambda) {
  *   pileup as the background lambda value.
  */
 void savePileupNoCtrl(Chrom* chrom, int chromLen,
-    double fragLen) {
+    double fragLen, bool verbose) {
   float lambda = calcLambda(chrom, chromLen, fragLen);
+  if (verbose)
+    fprintf(stderr, "  Background pileup value: %f\n",
+      lambda);
   for (int i = 0; i < chromLen; i++) {
     Chrom* chr = chrom + i;
     if (chr->skip || ! chr->save)
@@ -1964,7 +1945,7 @@ float updateVal(int16_t dCov, uint8_t dFrac, int32_t* cov,
 
 /* float calcFactor
  * Calculate the scaling factor of treatment fragment
- *   lengths to control. Also set ctrlLen for each
+ *   lengths to control. Also, set ctrlLen for each
  *   Chrom* (to be corrected in savePileupCtrl()).
  */
 float calcFactor(Chrom* chrom, int chromLen,
@@ -2044,6 +2025,8 @@ void savePileupCtrl(Chrom* chrom, int chromLen,
 
   // calculate background lambda value
   float lambda = calcLambda(chrom, chromLen, fragLen);
+  if (verbose)
+    fprintf(stderr, "  Background pileup value: %f\n", lambda);
 
   // calculate scale factor (treatment / control)
   float factor = calcFactor(chrom, chromLen, fragLen);
@@ -5415,7 +5398,8 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
           if (verbose)
             fprintf(stderr, "- control file #%d not provided -\n",
               sample);
-          savePileupNoCtrl(chrom, chromLen, fragLen);
+          savePileupNoCtrl(chrom, chromLen, fragLen,
+            verbose);
           break;
         }
       }
@@ -5741,7 +5725,7 @@ void getArgs(int argc, char** argv) {
   // adjust significance level to -log scale
   if (pqvalue <= 0.0f || pqvalue > 1.0f)
     exit(error("", ERRPQVAL));
-  pqvalue = - log10f(pqvalue);
+  pqvalue = -log10f(pqvalue);
 
   // send arguments to runProgram()
   runProgram(inFile, ctrlFile, outFile, logFile, pileFile,
