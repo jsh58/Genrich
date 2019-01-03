@@ -866,12 +866,13 @@ void logIntervals(File log, bool gzOut, Chrom* chrom,
  * Print peaks in ENCODE narrowPeak format.
  */
 void printPeak(File out, bool gzOut, char* name,
-    int64_t start, int64_t end, int count, float val,
-    float signal, float pval, float qval, uint32_t pos) {
+    int64_t start, int64_t end, int count, float signal,
+    float pval, float qval, uint32_t pos) {
   if (gzOut) {
     gzprintf(out.gzf, "%s\t%ld\t%ld\tpeak_%d\t%d\t.\t%f\t%f",
       name, start, end, count,
-      MIN((unsigned int) (val * 10.0f + 0.5f), 1000),
+      MIN((unsigned int) (1000.0f * signal / (end - start)
+        + 0.5f), 1000),
       signal, pval);
     if (qval == -1.0f)
       gzprintf(out.gzf, "\t-1\t%d\n", pos);
@@ -880,7 +881,8 @@ void printPeak(File out, bool gzOut, char* name,
   } else {
     fprintf(out.f, "%s\t%ld\t%ld\tpeak_%d\t%d\t.\t%f\t%f",
       name, start, end, count,
-      MIN((unsigned int) (val * 10.0f + 0.5f), 1000),
+      MIN((unsigned int) (1000.0f * signal / (end - start)
+        + 0.5f), 1000),
       signal, pval);
     if (qval == -1.0f)
       fprintf(out.f, "\t-1\t%d\n", pos);
@@ -895,12 +897,12 @@ void printPeak(File out, bool gzOut, char* name,
  *   results via printPeak().
  */
 void checkPeak(File out, bool gzOut, char* name,
-    int64_t start, int64_t end, int* count, float val,
-    float auc, float pval, float qval, uint32_t pos,
-    float minAUC, int minLen, uint64_t* peakBP) {
+    int64_t start, int64_t end, int* count, float auc,
+    float pval, float qval, uint32_t pos, float minAUC,
+    int minLen, uint64_t* peakBP) {
   if (start != -1 && auc >= minAUC
       && end - start >= minLen) {
-    printPeak(out, gzOut, name, start, end, *count, val,
+    printPeak(out, gzOut, name, start, end, *count,
       auc, pval, qval, pos);
     (*peakBP) += end - start;
     (*count)++;
@@ -1013,8 +1015,8 @@ int callPeaks(File out, File log, bool logOpt, bool gzOut,
             || chr->pval[n]->end[m] - peakEnd > maxGap) {
           // check if previous peak is valid
           checkPeak(out, gzOut, chr->name, peakStart,
-            peakEnd, &count, summitVal, auc, summitPval,
-            summitQval, summitPos, minAUC, minLen, peakBP);
+            peakEnd, &count, auc, summitPval, summitQval,
+            summitPos, minAUC, minLen, peakBP);
 
           // reset peak variables
           resetVars(&peakStart, &summitVal, &summitLen, &auc);
@@ -1042,9 +1044,8 @@ int callPeaks(File out, File log, bool logOpt, bool gzOut,
 
     // determine if last peak is valid
     checkPeak(out, gzOut, chr->name, peakStart, peakEnd,
-      &count, summitVal, auc, summitPval, summitQval,
-      summitPos, minAUC, minLen, peakBP);
-
+      &count, auc, summitPval, summitQval, summitPos,
+      minAUC, minLen, peakBP);
   }
 
   return count;
@@ -1297,8 +1298,8 @@ void callPeaksLog(File in, bool gz, File out, bool gzOut,
     if (strcmp(prev, chr)) {
       // check if previous chrom's last peak is valid
       checkPeak(out, gzOut, prev, peakStart, peakEnd,
-        &count, summitVal, auc, summitPval, summitQval,
-        summitPos, minAUC, minLen, &peakBP);
+        &count, auc, summitPval, summitQval, summitPos,
+        minAUC, minLen, &peakBP);
 
       // reset peak variables
       resetVars(&peakStart, &summitVal, &summitLen, &auc);
@@ -1338,8 +1339,8 @@ void callPeaksLog(File in, bool gz, File out, bool gzOut,
     if (!strcmp(stat, NA)) {
       // check if previous peak is valid
       checkPeak(out, gzOut, chr, peakStart, peakEnd,
-        &count, summitVal, auc, summitPval, summitQval,
-        summitPos, minAUC, minLen, &peakBP);
+        &count, auc, summitPval, summitQval, summitPos,
+        minAUC, minLen, &peakBP);
 
       // reset peak variables
       resetVars(&peakStart, &summitVal, &summitLen, &auc);
@@ -1353,8 +1354,8 @@ void callPeaksLog(File in, bool gz, File out, bool gzOut,
       if (save) {
         // check if previous peak is valid
         checkPeak(out, gzOut, chr, peakStart, peakEnd,
-          &count, summitVal, auc, summitPval, summitQval,
-          summitPos, minAUC, minLen, &peakBP);
+          &count, auc, summitPval, summitQval, summitPos,
+          minAUC, minLen, &peakBP);
         // reset peak variables
         resetVars(&peakStart, &summitVal, &summitLen, &auc);
       }
@@ -1365,7 +1366,8 @@ void callPeaksLog(File in, bool gz, File out, bool gzOut,
       bedPos = bedIdx < bedLen ? bed[bedIdx] : UINT32_MAX;
     }
 
-    // check if current interval should be divided into subintervals
+    // check if current interval contains the next position
+    //   to be skipped (new -E)
     uint32_t subStart = start;  // start of current subinterval
     while (bedPos > start && bedPos < end) {
 
@@ -1383,8 +1385,8 @@ void callPeaksLog(File in, bool gz, File out, bool gzOut,
         }
         // check if peak is valid
         checkPeak(out, gzOut, chr, peakStart, peakEnd,
-          &count, summitVal, auc, summitPval, summitQval,
-          summitPos, minAUC, minLen, &peakBP);
+          &count, auc, summitPval, summitQval, summitPos,
+          minAUC, minLen, &peakBP);
         // reset peak variables
         resetVars(&peakStart, &summitVal, &summitLen, &auc);
         genomeLen += bedPos - subStart; // update genome length
@@ -1422,8 +1424,8 @@ void callPeaksLog(File in, bool gz, File out, bool gzOut,
       if (end - peakEnd > maxGap) {
         // check if previous peak is valid
         checkPeak(out, gzOut, chr, peakStart, peakEnd,
-          &count, summitVal, auc, summitPval, summitQval,
-          summitPos, minAUC, minLen, &peakBP);
+          &count, auc, summitPval, summitQval, summitPos,
+          minAUC, minLen, &peakBP);
 
         // reset peak variables
         resetVars(&peakStart, &summitVal, &summitLen, &auc);
@@ -1434,8 +1436,8 @@ void callPeaksLog(File in, bool gz, File out, bool gzOut,
 
   // check if last peak is valid
   checkPeak(out, gzOut, chr, peakStart, peakEnd,
-    &count, summitVal, auc, summitPval, summitQval,
-    summitPos, minAUC, minLen, &peakBP);
+    &count, auc, summitPval, summitQval, summitPos,
+    minAUC, minLen, &peakBP);
 
   if (verbose) {
     if (warn) {
