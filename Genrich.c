@@ -200,14 +200,14 @@ float lookup(float* pVal, uint64_t low, uint64_t high,
  */
 void saveQval(Chrom* chrom, int chromLen, int n,
     uint64_t genomeLen, float* pVal, uint64_t* pEnd,
-    int64_t pLen) {
+    int64_t pLen, bool verbose) {
 
   // sort pileup by p-values
   quickSort(pVal, pEnd, 0, pLen - 1);
 
   // calculate q-values for each p-value: -log(q) = -log(p*N/k)
   uint64_t k = 1;  // 1 + number of bases with higher -log(p)
-  float logN = - log10f(genomeLen);
+  float logN = -log10f(genomeLen);
   float* qVal = (float*) memalloc((pLen + 1) * sizeof(float));
   qVal[pLen] = FLT_MAX;
   for (int64_t i = pLen - 1; i > -1; i--) {
@@ -229,6 +229,10 @@ void saveQval(Chrom* chrom, int chromLen, int n,
         chr->qval->cov[j] = lookup(pVal, 0, pLen,
           qVal, chr->pval[n]->cov[j]);
   }
+
+  // check if all q-values are 1
+  if (verbose && qVal[pLen-1] == 0.0f)
+    fprintf(stderr, "Warning! All q-values are 1\n");
 
   // free memory
   free(qVal);
@@ -335,7 +339,7 @@ float* collectPval(Hash** table, uint64_t** pEnd,
  * Control q-value calculations.
  */
 void computeQval(Chrom* chrom, int chromLen,
-    uint64_t genomeLen, int n) {
+    uint64_t genomeLen, int n, bool verbose) {
 
   // create "pileup" arrays for q-values
   for (int i = 0; i < chromLen; i++) {
@@ -366,7 +370,8 @@ void computeQval(Chrom* chrom, int chromLen,
   }
 
   // convert p-values to q-values
-  saveQval(chrom, chromLen, n, genomeLen, pVal, pEnd, pLen);
+  saveQval(chrom, chromLen, n, genomeLen, pVal, pEnd,
+    pLen, verbose);
 
   // free memory
   free(pEnd);
@@ -1097,7 +1102,8 @@ void findPeaks(File out, File log, bool logOpt, bool gzOut,
 
   // compute q-values
   if (qvalOpt)
-    computeQval(chrom, chromLen, genomeLen, *sample - 1);
+    computeQval(chrom, chromLen, genomeLen, *sample - 1,
+      verbose);
 
   // call peaks
   if (peaksOpt) {
