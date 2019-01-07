@@ -92,7 +92,7 @@ enum errCode { ERRFILE, ERROPEN, ERROPENW, ERRCLOSE,
   ERRMEM, ERRINT, ERRFLOAT, ERRPARAM, ERREXTEND, ERRATAC,
   ERRPQVAL, ERRASDIFF, ERRMINAUC, ERRMINLEN, ERRMISM,
   ERRINFO, ERRSAM, ERRCHROM, ERRHEAD, ERRBAM, ERRGEN,
-  ERRTREAT, ERRCHRLEN, ERRCTRL, ERRPOS, ERRSORT, ERRTYPE,
+  ERREXPT, ERRCHRLEN, ERRCTRL, ERRPOS, ERRSORT, ERRTYPE,
   ERRAUX, ERRBED, ERRLINEAR, ERRINDEX, ERRLOGIDX, ERRLOG,
   ERRISSUE, ERRALNS, ERRPILE, ERRPVAL, ERRARR, ERRARRC,
   ERRDF, ERRALNTYPE, ERRUNGET, ERRGZIP, ERRNAME, ERRCIGAR,
@@ -119,7 +119,7 @@ const char* errMsg[] = { "Need input/output files",
   ": misplaced SAM header line",
   "Cannot parse BAM file",
   "No analyzable genome (length=0)",
-  "Treatment sample(s) have no analyzable fragments",
+  "Experimental sample has no analyzable fragments",
   ": reference sequence has different lengths in BAM/SAM files",
   ": reference sequence missing from control sample(s)",
   ": read aligned beyond reference end",
@@ -131,16 +131,14 @@ const char* errMsg[] = { "Need input/output files",
   "Unknown index of paired alignment",
   ": cannot find field in header of bedgraph-ish log file",
   "Poorly formatted bedgraph-ish log record",
-
   "\n  (internal error: please open an Issue on https://github.com/jsh58/Genrich)",
   "Disallowed number of alignments",
   "Invalid pileup value (< 0)",
   "Failure collecting p-values",
-  "Failure creating treatment pileup",
+  "Failure creating experimental pileup",
   "Failure creating control pileup",
   "Invalid df in pchisq()",
   "Invalid alignment type",
-
   "Failure in ungetc() call",
   "Cannot pipe in gzip-compressed file (use zcat instead)",
   ": output filename cannot start with '-'",
@@ -183,9 +181,9 @@ typedef struct chrom {
   uint32_t* bed;      // coordinates (paired) of regions to be ignored
   int bedLen;         // number of coordinates of regions to be ignored
   Diff* diff;         // arrays for keeping track of pileup changes
-  Pileup* treat;      // pileup arrays for treatment sample(s)
-  uint32_t treatLen;  // length of pileup arrays for treatment sample(s) (dynamic)
-  uint32_t treatMem;  // length of pileup arrays for treatment sample(s) (in memory)
+  Pileup* expt;       // pileup arrays for experimental sample(s)
+  uint32_t exptLen;   // length of pileup arrays for experimental sample(s) (dynamic)
+  uint32_t exptMem;   // length of pileup arrays for experimental sample(s) (in memory)
   Pileup* ctrl;       // pileup arrays for control sample(s)
   uint32_t ctrlLen;   // length of pileup arrays for control sample(s) (dynamic)
   uint32_t ctrlMem;   // length of pileup arrays for control sample(s) (in memory)
