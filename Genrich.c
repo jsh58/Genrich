@@ -39,7 +39,6 @@ void usage(void) {
   fprintf(stderr, "  -%c  <file>       Output peak file (in ENCODE narrowPeak format)\n", OUTFILE);
   fprintf(stderr, "Optional I/O arguments:\n");
   fprintf(stderr, "  -%c  <file>       Input SAM/BAM file(s) for control sample(s)\n", CTRLFILE);
-  fprintf(stderr, "                     (matched with -%c files; 'null' if missing)\n", INFILE);
   fprintf(stderr, "  -%c  <file>       Output bedgraph-ish file for p/q values\n", LOGFILE);
   fprintf(stderr, "  -%c  <file>       Output bedgraph-ish file for pileups and p-values\n", PILEFILE);
   fprintf(stderr, "  -%c  <file>       Output BED file for reads/fragments/intervals\n", BEDFILE);

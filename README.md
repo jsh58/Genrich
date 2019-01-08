@@ -63,7 +63,6 @@ Required arguments:
   -o  <file>       Output peak file (in ENCODE narrowPeak format)
 Optional I/O arguments:
   -c  <file>       Input SAM/BAM file(s) for control sample(s)
-                     (matched with -t files; 'null' if missing)
   -f  <file>       Output bedgraph-ish file for p/q values
   -k  <file>       Output bedgraph-ish file for pileups and p-values
   -b  <file>       Output BED file for reads/fragments/intervals
@@ -107,7 +106,7 @@ Here is an overview of the method used by Genrich to identify peaks (Fig. 1):
 
 <figure>
   <img src="figures/figure1.png" alt="Peak-calling by Genrich" width="800">
-  <figcaption><strong>Figure 1.  Peak-calling by Genrich.</strong>  Information about the sample and the Genrich command can be found <a href="example">here</a>.  Visualization by <a href="http://software.broadinstitute.org/software/igv/">IGV</a>.</figcaption>
+  <figcaption><strong>Figure 1.  Peak-calling by Genrich.</strong>  Information about the sample and the Genrich command can be found <a href="https://github.com/jsh58/Genrich#full-analysis-example-">here</a>.  Visualization by <a href="http://software.broadinstitute.org/software/igv/">IGV</a>.</figcaption>
 </figure>
 <br><br>
 
@@ -163,7 +162,7 @@ The background pileup value is calculated by dividing the total sequence informa
 
 The *p*-values are calculated for each base of the genome assuming a null model with a [log-normal distribution](https://en.wikipedia.org/wiki/Log-normal_distribution).  The control/background pileup value is used as the parameter *&mu;*, and the *&sigma;* parameter is 1.2&times;*&mu;* if *&mu;* &le; 7, and 10&times;log<sub>10</sub>(*&mu;*) if *&mu;* &gt; 7.  These values, as well as the choice of the log-normal distribution, were determined from a comprehensive review of control samples from various ChIP-seq experiments (human, mouse, and worm) downloaded from [SRA](https://www.ncbi.nlm.nih.gov/sra/).
 * Because the log-normal is a continuous probability distribution, fractional experimental pileup values can be considered.  Such values are analyzed by Genrich due to reads/fragments with [multiple alignments](#multimap).
-* Earlier versions of Genrich (prior to v0.5) used the [exponential distribution](https://en.wikipedia.org/wiki/Exponential_distribution#Alternative_parameterization) for the null model.  Although this distribution has some convenient properties (continuous, one-parameter, -log<sub>10</sub>(*p*) &prop; *x*/*&beta;*), the study described above showed that the exponential distribution was a good fit to the control pileup distribution only *occasionally*.  However, this was still better than the [Poisson distribution](https://en.wikipedia.org/wiki/Poisson_distribution), which is frequently used as a null model in genomics software but was a good fit to the control pileup distribution **never**.
+* Earlier versions of Genrich (prior to v0.5) used the [exponential distribution](https://en.wikipedia.org/wiki/Exponential_distribution#Alternative_parameterization) for the null model.  Although this distribution has some convenient properties (continuous, one-parameter, -log<sub>10</sub>(*p*) &prop; *x* / *&beta;*), the study described above showed that the exponential distribution was a good fit to the control pileup distribution only *occasionally*.  However, this was still better than the [Poisson distribution](https://en.wikipedia.org/wiki/Poisson_distribution), which is frequently used as a null model in genomics software but was a good fit to the control pileup distribution **never**.
 
 
 ### *q*-value calculation <a name="qvalue"></a>
@@ -246,10 +245,9 @@ chr1    895834    896167    peak_11    343    .    114.331093    4.344683    1.9
 
 ```
   -c  <file>       Input SAM/BAM file(s) for control sample(s)
-                     (matched with -t files; 'null' if missing)
 ```
-* Alignment files for control samples can be specified.  As indicated, they should be matched with the experimental files.
-* SAM/BAM files for multiple replicates can be specified, comma-separated (or space-separated, in quotes).  Missing control files should be indicated with `null`.
+* Alignment files for control samples can be specified, although this is not strictly required.
+* SAM/BAM files for [multiple replicates](#replicate) can be listed, comma-separated (or space-separated, in quotes) and in the same order as the experimental files.  Missing control files should be indicated with `null`.
 <br><br>
 
 ```
@@ -445,7 +443,7 @@ Other options:
 
 ### Full analysis example <a name="example"></a>
 
-A [sequencing run](https://www.ncbi.nlm.nih.gov/sra/SRX2717911[accn]) was downloaded from SRA.  Its reads were adapter-trimmed by [NGmerge](https://github.com/jsh58/NGmerge) and aligned to the human genome (hg19) by [Bowtie2](http://bowtie-bio.sourceforge.net/bowtie2/manual.shtml) with `-k 20`.  The resulting alignment file `SRR5427886.bam` was analyzed by Genrich with the options to remove PCR duplicates (`-r`) and to keep singletons, extended to the average fragment length (`-x`).  All alignments to chrM and chrY were discarded (`-e chrM,chrY`), as well as alignments to two sets of excluded intervals: regions of 'N' homopolymers in the hg19 genome (produced by [`findNs.py`](https://github.com/jsh58/Genrich/blob/master/findNs.py)) and [high mappability regions](http://hgdownload.cse.ucsc.edu/goldenPath/hg19/encodeDCC/wgEncodeMapability/wgEncodeDukeMapabilityRegionsExcludable.bed.gz) (`-E hg19_Ns.bed,wgEncodeDukeMapabilityRegionsExcludable.bed.gz`).
+A [sequencing run](https://www.ncbi.nlm.nih.gov/sra/SRX2717911[accn]) was downloaded from SRA.  Its reads were adapter-trimmed by [NGmerge](https://github.com/jsh58/NGmerge) and aligned to the human genome (hg19) by [Bowtie2](http://bowtie-bio.sourceforge.net/bowtie2/manual.shtml) with `-k 20`.  The resulting alignment file `SRR5427886.bam` was analyzed by Genrich with the options to remove PCR duplicates (`-r`) and to keep singletons, extended to the average fragment length (`-x`).  All alignments to chrM and chrY were discarded (`-e chrM,chrY`), as well as alignments to two sets of excluded intervals: regions of 'N' homopolymers in the hg19 genome (produced by [`findNs.py`](https://github.com/jsh58/Genrich/blob/master/findNs.py)) and [high mappability regions](http://hgdownload.cse.ucsc.edu/goldenPath/hg19/encodeDCC/wgEncodeMapability/wgEncodeDukeMapabilityRegionsExcludable.bed.gz) (`-E hg19_Ns.bed,wgEncodeDukeMapabilityRegionsExcludable.bed.gz`).  There was no control sample.
 ```
 $ ./Genrich  -t SRR5427886.bam  -o SRR5427886.narrowPeak  -f SRR5427886.log  -r  -x  -v  \
   -e chrM,chrY  -E hg19_Ns.bed,wgEncodeDukeMapabilityRegionsExcludable.bed.gz 
