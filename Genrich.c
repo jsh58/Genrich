@@ -25,7 +25,7 @@
 void printVersion(void) {
   fprintf(stderr, "Genrich, version %s\n", VERSION);
   fprintf(stderr, "Copyright (C) 2018 John M. Gaspar (jsh58@wildcats.unh.edu)\n");
-  exit(-1);
+  exit(EXIT_FAILURE);
 }
 
 /* void usage()
@@ -66,7 +66,7 @@ void usage(void) {
   fprintf(stderr, "  -%c               Call peaks directly from a log file (-%c)\n", PEAKSONLY, LOGFILE);
   fprintf(stderr, "  -%c               Option to gzip-compress output(s)\n", GZOPT);
   fprintf(stderr, "  -%c               Option to print status updates/counts to stderr\n", VERBOSE);
-  exit(-1);
+  exit(EXIT_FAILURE);
 }
 
 /*** Utilites ***/
@@ -76,7 +76,7 @@ void usage(void) {
  */
 int error(const char* msg, enum errCode err) {
   fprintf(stderr, "Error! %s%s\n", msg, errMsg[err]);
-  return -1;
+  return EXIT_FAILURE;
 }
 
 /* void* memalloc()
@@ -222,8 +222,8 @@ void saveQval(Chrom* chrom, int chromLen, int n,
     if (chr->skip || chr->pval[n] == NULL)
       continue;
     for (uint32_t j = 0; j < chr->pvalLen[n]; j++)
-      if (chr->pval[n]->cov[j] == -1.0f)
-        chr->qval->cov[j] = -1.0f; // skipped region
+      if (chr->pval[n]->cov[j] == SKIP)
+        chr->qval->cov[j] = SKIP; // skipped region
       else
         chr->qval->cov[j] = lookup(pVal, 0, pLen,
           qVal, chr->pval[n]->cov[j]);
@@ -304,7 +304,7 @@ Hash** hashPval(Chrom* chrom, int chromLen, int n,
     uint32_t start = 0;
     for (uint32_t m = 0; m < chr->pvalLen[n]; m++) {
       // record p-value and length in hashtable
-      if (p->cov[m] != -1.0f)
+      if (p->cov[m] != SKIP)
         *pLen += recordPval(table, p->cov[m],
           p->end[m] - start);
       start = p->end[m];
@@ -555,12 +555,12 @@ float multPval(Pileup** pval, int n, uint32_t idx[]) {
   double sum = 0.0;
   int df = 0;
   for (int j = 0; j < n; j++)
-    if (pval[j] != NULL && pval[j]->cov[idx[j]] != -1.0f) {
+    if (pval[j] != NULL && pval[j]->cov[idx[j]] != SKIP) {
       sum += pval[j]->cov[idx[j]];
       df += 2;
     }
   if (df == 0)
-    return -1.0f;
+    return SKIP;
   if (df == 2 || ! sum)
     return (float) sum;
 
@@ -715,11 +715,11 @@ void printIntervalN(File out, bool gzOut, char* name,
   if (gzOut) {
     gzprintf(out.gzf, "%s\t%d\t%d", name, start, end);
     for (int i = 0; i < n; i++)
-      if (p[i] == NULL || p[i]->cov[idx[i]] == -1.0f)
+      if (p[i] == NULL || p[i]->cov[idx[i]] == SKIP)
         gzprintf(out.gzf, "\t%s", NA);
       else
         gzprintf(out.gzf, "\t%f", p[i]->cov[idx[i]]);
-    if (pval == -1.0f) {
+    if (pval == SKIP) {
       gzprintf(out.gzf, "\t%s", NA);
       if (qvalOpt)
         gzprintf(out.gzf, "\t%s", NA);
@@ -732,11 +732,11 @@ void printIntervalN(File out, bool gzOut, char* name,
   } else {
     fprintf(out.f, "%s\t%d\t%d", name, start, end);
     for (int i = 0; i < n; i++)
-      if (p[i] == NULL || p[i]->cov[idx[i]] == -1.0f)
+      if (p[i] == NULL || p[i]->cov[idx[i]] == SKIP)
         fprintf(out.f, "\t%s", NA);
       else
         fprintf(out.f, "\t%f", p[i]->cov[idx[i]]);
-    if (pval == -1.0f) {
+    if (pval == SKIP) {
       fprintf(out.f, "\t%s", NA);
       if (qvalOpt)
         fprintf(out.f, "\t%s", NA);
@@ -759,7 +759,7 @@ void printInterval(File out, bool gzOut, char* name,
     float ctrlVal, float pval, bool qvalOpt, float qval,
     bool sig) {
   if (gzOut) {
-    if (ctrlVal == -1.0f) {
+    if (ctrlVal == SKIP) {
       gzprintf(out.gzf, "%s\t%d\t%d\t%f\t%f\t%s",
         name, start, end, exptVal, 0.0f, NA);
       if (qvalOpt)
@@ -773,7 +773,7 @@ void printInterval(File out, bool gzOut, char* name,
       gzprintf(out.gzf, "%s\n", sig ? "\t*" : "");
     }
   } else {
-    if (ctrlVal == -1.0f) {
+    if (ctrlVal == SKIP) {
       fprintf(out.f, "%s\t%d\t%d\t%f\t%f\t%s",
         name, start, end, exptVal, 0.0f, NA);
       if (qvalOpt)
@@ -802,13 +802,13 @@ void printLog(File log, bool gzOut, Chrom* chr,
       start, chr->pval[n]->end[m],
       chr->expt->cov[j], chr->ctrl->cov[k],
       chr->pval[n]->cov[m], qvalOpt,
-      qvalOpt ? chr->qval->cov[m] : -1.0f, sig);
+      qvalOpt ? chr->qval->cov[m] : SKIP, sig);
   } else {
     // multiple replicates
     printIntervalN(log, gzOut, chr->name,
       start, chr->pval[n]->end[m], chr->pval, n, idx,
       chr->pval[n]->cov[m], qvalOpt,
-      qvalOpt ? chr->qval->cov[m] : -1.0f, sig);
+      qvalOpt ? chr->qval->cov[m] : SKIP, sig);
     // update indexes into pval arrays
     for (int r = 0; r < n; r++)
       if (chr->pval[r] != NULL
@@ -878,7 +878,7 @@ void printPeak(File out, bool gzOut, char* name,
       MIN((unsigned int) (1000.0f * signal / (end - start)
         + 0.5f), 1000),
       signal, pval);
-    if (qval == -1.0f)
+    if (qval == SKIP)
       gzprintf(out.gzf, "\t-1\t%d\n", pos);
     else
       gzprintf(out.gzf, "\t%f\t%d\n", qval, pos);
@@ -888,7 +888,7 @@ void printPeak(File out, bool gzOut, char* name,
       MIN((unsigned int) (1000.0f * signal / (end - start)
         + 0.5f), 1000),
       signal, pval);
-    if (qval == -1.0f)
+    if (qval == SKIP)
       fprintf(out.f, "\t-1\t%d\n", pos);
     else
       fprintf(out.f, "\t%f\t%d\n", qval, pos);
@@ -1006,7 +1006,7 @@ int callPeaks(File out, File log, bool logOpt, bool gzOut,
         updatePeak(&peakStart, &peakEnd, start,
           chr->pval[n]->end[m], &auc, pqval,
           minPQval, chr->pval[n]->cov[m],
-          qvalOpt ? chr->qval->cov[m] : -1.0f,
+          qvalOpt ? chr->qval->cov[m] : SKIP,
           &summitVal, &summitPval, &summitQval,
           &summitPos, &summitLen);
 
@@ -1015,7 +1015,7 @@ int callPeaks(File out, File log, bool logOpt, bool gzOut,
         // interval does not reach significance --
         //   check if interval is to be skipped
         //   OR distance is beyond maxGap from peak
-        if (pqval == -1.0f
+        if (pqval == SKIP
             || chr->pval[n]->end[m] - peakEnd > maxGap) {
           // check if previous peak is valid
           checkPeak(out, gzOut, chr->name, peakStart,
@@ -1384,7 +1384,7 @@ void callPeaksLog(File in, bool gz, File out, bool gzOut,
           updatePeak(&peakStart, &peakEnd, subStart,
             bedPos, &auc, pqval, minPQval,
             qvalOpt ? getFloat(pStat) : pqval,
-            qvalOpt ? pqval : -1.0f,
+            qvalOpt ? pqval : SKIP,
             &summitVal, &summitPval, &summitQval,
             &summitPos, &summitLen);
         }
@@ -1418,7 +1418,7 @@ void callPeaksLog(File in, bool gz, File out, bool gzOut,
       updatePeak(&peakStart, &peakEnd, start, end,
         &auc, pqval, minPQval,
         qvalOpt ? getFloat(pStat) : pqval,
-        qvalOpt ? pqval : -1.0f,
+        qvalOpt ? pqval : SKIP,
         &summitVal, &summitPval, &summitQval,
         &summitPos, &summitLen);
 
@@ -1606,8 +1606,8 @@ double plnorm(double x, double meanlog, double sdlog) {
  *   and observation exptVal.
  */
 float calcPval(float exptVal, float ctrlVal) {
-  if (ctrlVal == -1.0f)
-    return -1.0f; // in a skipped region
+  if (ctrlVal == SKIP)
+    return SKIP; // in a skipped region
   if (ctrlVal == 0.0f)
     return exptVal == 0.0f ? 0.0f : FLT_MAX;
   if (exptVal == 0.0f)
@@ -1678,14 +1678,14 @@ void printPile(File pile, char* name, uint32_t start,
     uint32_t end, float expt, float ctrl, float pval,
     bool gzOut) {
   if (gzOut) {
-    if (ctrl == -1.0f)
+    if (ctrl == SKIP)
       gzprintf(pile.gzf, "%s\t%d\t%d\t%f\t%f\t%s\n",
         name, start, end, expt, 0.0f, NA);
     else
       gzprintf(pile.gzf, "%s\t%d\t%d\t%f\t%f\t%f\n",
         name, start, end, expt, ctrl, pval);
   } else {
-    if (ctrl == -1.0f)
+    if (ctrl == SKIP)
       fprintf(pile.f, "%s\t%d\t%d\t%f\t%f\t%s\n",
         name, start, end, expt, 0.0f, NA);
     else
@@ -1812,7 +1812,7 @@ float calcLambda(Chrom* chrom, int chromLen,
 
 /* void saveLambda()
  * For a ctrl pileup, save constant value of lambda,
- *   or -1 for BED intervals to be skipped.
+ *   or -1 (SKIP) for BED intervals to be skipped.
  */
 void saveLambda(Chrom* chr, float lambda) {
   if (chr->bedLen == 0) {
@@ -1847,12 +1847,12 @@ void saveLambda(Chrom* chr, float lambda) {
   // populate chr->ctrl arrays: alternate lambda and -1
   for (int j = 0; j < num - 1; j++) {
     chr->ctrl->end[j] = chr->bed[idx];
-    chr->ctrl->cov[j] = save ? lambda : -1.0f;
+    chr->ctrl->cov[j] = save ? lambda : SKIP;
     save = ! save;
     idx++;
   }
   chr->ctrl->end[num-1] = chr->len;
-  chr->ctrl->cov[num-1] = save ? lambda : -1.0f;
+  chr->ctrl->cov[num-1] = save ? lambda : SKIP;
 }
 
 /* void savePileupNoCtrl()
@@ -2099,7 +2099,7 @@ void savePileupCtrl(Chrom* chrom, int chromLen,
       // determine if interval should be saved
       if (j == bedPos || (save && net != MAX(val, lambda))) {
         chr->ctrl->end[pos] = j;
-        chr->ctrl->cov[pos] = save ? net : -1.0f;
+        chr->ctrl->cov[pos] = save ? net : SKIP;
         pos++;
       }
       net = MAX(val, lambda);
@@ -2116,7 +2116,7 @@ void savePileupCtrl(Chrom* chrom, int chromLen,
 
     // save final interval
     chr->ctrl->end[pos] = j;
-    chr->ctrl->cov[pos] = save ? net : -1.0f;
+    chr->ctrl->cov[pos] = save ? net : SKIP;
 
     // update array length
     if (pos >= chr->ctrlLen) {
@@ -5687,7 +5687,7 @@ void getArgs(int argc, char** argv) {
       case VERBOSE: verbose = true; break;
       case VERSOPT: printVersion(); break;
       case HELP: usage(); break;
-      default: exit(-1);
+      default: exit(EXIT_FAILURE);
     }
   if (optind < argc)
     exit(error(argv[optind], ERRPARAM));
@@ -5748,5 +5748,5 @@ void getArgs(int argc, char** argv) {
  */
 int main(int argc, char* argv[]) {
   getArgs(argc, argv);
-  return 0;
+  return EXIT_SUCCESS;
 }

@@ -24,6 +24,7 @@
 #define COM         ", "    // separator for input file names / ref. names
 #define NA          "NA"    // results not available
 #define GZEXT       ".gz"   // extension for gzip-compressed files
+#define SKIP        -1.0f   // stats for a genomic region to be skipped
 
 // default parameter values
 #define DEFQVAL     0.05f   // default q-value
