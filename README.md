@@ -29,12 +29,12 @@
 * [Contact](#contact)
 <br><br>
 
-## Introduction <a name="intro"></a>
+## Introduction<a name="intro"></a>
 
 Genrich is a peak-caller for genomic enrichment assays (e.g. ChIP-seq, ATAC-seq).  It analyzes alignment files generated following the assay and produces a file detailing peaks of significant enrichment.
 
 
-### Quick start <a name="quick"></a>
+### Quick start<a name="quick"></a>
 
 Given:
 * `sample.bam` (alignment file, sorted by queryname)
@@ -45,7 +45,7 @@ To produce a file listing regions of genomic enrichment:
 $ ./Genrich  -t sample.bam  -o sample.narrowPeak  -v
 ```
 
-### Software compilation <a name="compile"></a>
+### Software compilation<a name="compile"></a>
 
 The software can be downloaded from [GitHub](https://github.com/jsh58/Genrich).
 
@@ -54,7 +54,7 @@ A Makefile is provided for compilation with [GCC](https://gcc.gnu.org/releases.h
 To compile, run `make` in the folder in which the software was downloaded.  The executable `Genrich` should be produced.
 
 
-### Usage message <a name="usage"></a>
+### Usage message<a name="usage"></a>
 
 ```
 Usage: ./Genrich  -t <file>  -o <file>  [optional arguments]
@@ -92,9 +92,9 @@ Other options:
   -v               Option to print status updates/counts to stderr
 ```
 
-## Attributes <a name="attributes"></a>
+## Attributes<a name="attributes"></a>
 
-### Peak-calling method <a name="method"></a>
+### Peak-calling method<a name="method"></a>
 
 Here is an overview of the method used by Genrich to identify peaks (Fig. 1):
 * Parse alignments for the experimental sample and create an experimental "pileup" by counting the DNA fragments that cover each position of the genome (additional information about alignment parsing can be found [here](#alignment)).
@@ -106,23 +106,23 @@ Here is an overview of the method used by Genrich to identify peaks (Fig. 1):
 
 <figure>
   <img src="figures/figure1.png" alt="Peak-calling by Genrich" width="800">
-  <figcaption><strong>Figure 1.  Peak-calling by Genrich.</strong>  Information about the sample and the Genrich command can be found <a href="https://github.com/jsh58/Genrich#full-analysis-example-">here</a>.  Visualization by <a href="http://software.broadinstitute.org/software/igv/">IGV</a>.</figcaption>
+  <figcaption><strong>Figure 1.  Peak-calling by Genrich.</strong>  Information about the sample and the Genrich command can be found <a href="https://github.com/jsh58/Genrich#full-analysis-example">here</a>.  Visualization by <a href="http://software.broadinstitute.org/software/igv/">IGV</a>.</figcaption>
 </figure>
 <br><br>
 
-### Alignment parsing <a name="alignment"></a>
+### Alignment parsing<a name="alignment"></a>
 
 Genrich analyzes paired-end reads aligned to a reference genome.  It correctly infers full fragments as spanning between the 5' ends of two properly paired alignments.  By default, it does not consider unpaired ("singleton") alignments, although there are three options for keeping such alignments, as described [here](#unpaired).
 
 An alternative analysis mode for ATAC-seq is also provided by Genrich, as described [here](#atacseq).
 
 
-### Multiple replicates <a name="replicate"></a>
+### Multiple replicates<a name="replicate"></a>
 
 Genrich calls peaks for multiple replicates collectively.  First, it analyzes the replicates separately, with [*p*-values calculated](#pvalue) for each. At each genomic position, the multiple replicates' *p*-values are then combined by [Fisher's method](https://en.wikipedia.org/wiki/Fisher's_method#Application_to_independent_test_statistics).  The combined *p*-values are [converted to *q*-values](#qvalue), and peaks are called.  This obviates the need for [IDR](https://www.encodeproject.org/software/idr/) (you're welcome!).
 
 
-### Multimapping reads <a name="multimap"></a>
+### Multimapping reads<a name="multimap"></a>
 
 Genrich analyzes reads/fragments that map to multiple locations in the genome by adding a fractional count to each location.  This allows for peak detection in regions of the genome that are otherwise inaccessible to the assay.
 * The input SAM/BAM file(s) must list secondary alignments for multimapping reads/fragments.
@@ -132,7 +132,7 @@ Genrich analyzes reads/fragments that map to multiple locations in the genome by
 * Additional information can be found in the description of the [`-s` parameter](#sparam).
 
 
-### PCR duplicate removal <a name="duplicate"></a>
+### PCR duplicate removal<a name="duplicate"></a>
 
 Genrich provides an option for removing PCR duplicates (`-r`).  In this process, it analyzes reads/fragments based on their alignments, in three separate groups, sequentially:
 * Proper pairs: A properly paired alignment is classified as a duplicate if the reference name (chromosome) and the 5' positions of the two reads match those of another properly paired alignment.
@@ -148,31 +148,31 @@ There is no consideration of read order (R1 vs. R2) by Genrich.  That is, if the
 For reads/fragments with [multiple alignments](#multimap), all secondary alignments within the [`-s` threshold](#sparam) are considered.  If *any* of a read's/fragment's alignments is evaluated as a duplicate, then the whole read/fragment is classified as a duplicate, and *all* of its alignments are discarded.  Note that no maximum of 10 alignments per read/fragment is imposed at this stage, and all alignments to skipped chromosomes (`-e`) or genomic regions (`-E`) are still analyzed.  For discordant alignments, all combinations of valid R1 and R2 alignments are evaluated.
 
 
-### Genome length calculation <a name="genomelen"></a>
+### Genome length calculation<a name="genomelen"></a>
 
-Genrich computes the genome length as the sum of the lengths of the chromosomes (reference sequences) in the header of the SAM/BAM file.  The length is reduced if the user specifies chromosomes (`-e`) or genomic regions (`-E`) to be ignored, as described [below](#filter).  The calculated length is used for computing a [background pileup value](#pileup) and [*q*-values](#qvalue).
+Genrich computes the genome length as the sum of the lengths of the chromosomes (reference sequences) in the header of the SAM/BAM file.  The length is reduced if the user specifies chromosomes (`-e`) or genomic regions (`-E`) to be ignored, as described [below](#eparam).  The calculated length is used for computing a [background pileup value](#pileup) and [*q*-values](#qvalue).
 
 
-### Control/background pileup calculation <a name="pileup"></a>
+### Control/background pileup calculation<a name="pileup"></a>
 
 The background pileup value is calculated by dividing the total sequence information in the experimental sample by the [calculated genome length](#genomelen).  The net control pileup value at a particular genomic position is the maximum of the background pileup value and the pileup of the control sample at that position (if a control sample is specified).  Note that control pileups are scaled to match the experimental, based on the total sequence information in each (the scaling factor is given as part of the verbose [`-v`] output).
 
 
-### *p*-value calculation <a name="pvalue"></a>
+### *p*-value calculation<a name="pvalue"></a>
 
 The *p*-values are calculated for each base of the genome assuming a null model with a [log-normal distribution](https://en.wikipedia.org/wiki/Log-normal_distribution).  The control/background pileup value is used as the parameter *&mu;*, and the *&sigma;* parameter is 1.2&times;*&mu;* if *&mu;* &le; 7, and 10&times;log<sub>10</sub>(*&mu;*) if *&mu;* &gt; 7.  These values, as well as the choice of the log-normal distribution, were determined from a comprehensive review of control samples from various ChIP-seq experiments (human, mouse, and worm) downloaded from [SRA](https://www.ncbi.nlm.nih.gov/sra/).
 * Because the log-normal is a continuous probability distribution, fractional experimental pileup values can be considered.  Such values are analyzed by Genrich due to reads/fragments with [multiple alignments](#multimap).
 * Earlier versions of Genrich (prior to v0.5) used the [exponential distribution](https://en.wikipedia.org/wiki/Exponential_distribution#Alternative_parameterization) for the null model.  Although this distribution has some convenient properties (continuous, one-parameter, -log<sub>10</sub>(*p*) &prop; *x* / *&beta;*), the study described above showed that the exponential distribution was a good fit to the control pileup distribution only *occasionally*.  However, this was still better than the [Poisson distribution](https://en.wikipedia.org/wiki/Poisson_distribution), which is frequently used as a null model in genomics software but was a good fit to the control pileup distribution **never**.
 
 
-### *q*-value calculation <a name="qvalue"></a>
+### *q*-value calculation<a name="qvalue"></a>
 
 The *q*-value for each base of the genome is calculated from the *p*-value using the [Benjamini-Hochberg procedure](http://www.math.tau.ac.il/~ybenja/MyPapers/benjamini_hochberg1995.pdf).  Note that the [calculated genome length](#genomelen) is used as the number of hypothesis tests (*m*).
 
 
-## I/O files and options <a name="files"></a>
+## I/O files and options<a name="files"></a>
 
-### Required files <a name="required"></a>
+### Required files<a name="required"></a>
 
 ```
   -t  <file>       Input SAM/BAM file(s) for experimental sample(s)
@@ -181,7 +181,7 @@ The *q*-value for each base of the genome is calculated from the *p*-value using
 * SAM/BAM files for [multiple replicates](#replicate) can be specified, comma-separated (or space-separated, in quotes).
 * Multiple SAM/BAM files for a single replicate should be combined in advance via `samtools merge`.
 * The SAM/BAM files must be sorted by queryname (via `samtools sort -n`).
-* Genrich will read from `stdin` with `-t -`.
+* Genrich reads from `stdin` with `-t -`.
 * This file need not be specified when peak-calling directly from a log file previously produced by Genrich (`-P`).
 <br><br>
 
@@ -237,16 +237,16 @@ The *q*-value for each base of the genome is calculated from the *p*-value using
 chr1    894446    894988    peak_10    402    .    217.824936    4.344683    1.946031    317
 chr1    895834    896167    peak_11    343    .    114.331093    4.344683    1.946031    90
 ```
-* Genrich will write to `stdout` with `-o -`.
+* Genrich writes to `stdout` with `-o -`.
 * This file need not be specified when peak-calling is skipped (`-X`).
 
 
-### Optional files <a name="optional"></a>
+### Optional files<a name="optional"></a>
 
 ```
   -c  <file>       Input SAM/BAM file(s) for control sample(s)
 ```
-* Alignment files for control samples can be specified, although this is not strictly required.
+* Alignment files for control samples (e.g. input DNA) can be specified, although this is not strictly required.
 * SAM/BAM files for [multiple replicates](#replicate) can be listed, comma-separated (or space-separated, in quotes) and in the same order as the experimental files.  Missing control files should be indicated with `null`.
 <br><br>
 
@@ -272,7 +272,7 @@ chr1    894451    894460    41.000000    2.477916    3.541798    1.455938    *
 ```
   -k  <file>       Output bedgraph-ish file for pileups and p-values
 ```
-* For each replicate, sequentially, this file lists a header line (`# experimental file: <name>; control file: <name>`), followed by experimental/control pileups and a *p*-value for each interval. This is the way to examine pileup values with multiple replicates, since the `-f` file will not supply them.
+* For each replicate, sequentially, this file lists a header line (`# experimental file: <name>; control file: <name>`), followed by experimental/control pileups and a *p*-value for each interval. This is the way to examine pileup values with multiple replicates, since the `-f` file does not supply them.
 <br><br>
 
 ```
@@ -295,38 +295,39 @@ SRR5427886.10866    chr14:53438632,+                    SRR5427886.4746    singl
 <br><br>
 
 
-## Filtering options <a name="filter"></a>
+## Filtering options<a name="filter"></a>
 
 ```
   -r               Remove PCR duplicates
 ```
-* With this option, all reads/fragments classified as PCR duplicates will be removed from further analysis, as described [above](#duplicate).
+* With this option, all reads/fragments classified as PCR duplicates are removed from further analysis, as described [above](#duplicate).
 <br><br>
 
+<a name="eparam"></a>
 ```
   -e  <arg>        Comma-separated list of chromosomes to ignore
 ```
-* All alignments to the given list of chromosomes (reference sequences) will be ignored.  The alignments' lengths will not factor into the [total sequence information calculation](#pileup), nor to the average fragment length calculation (`-x`), and the alignments will not be printed to the `-b` file.
-* For reads/fragments with multiple alignments, the scores of alignments to `-e` chromosomes *will* be considered for comparison purposes.
-* The lengths of the `-e` chromosomes will be subtracted from the [total genome length](#genomelen) calculated by the program.
+* All alignments to the given list of chromosomes (reference sequences) are ignored.  The alignments' lengths do not factor into the [total sequence information calculation](#pileup), nor to the average fragment length calculation (`-x`), and the alignments are not printed to the `-b` file.
+* For reads/fragments with multiple alignments, the scores of alignments to `-e` chromosomes *are* considered for comparison purposes.
+* The lengths of the `-e` chromosomes are subtracted from the [total genome length](#genomelen) calculated by the program.
 <br><br>
 
 ```
   -E  <file>       Input BED file(s) of genomic regions to ignore
 ```
-* All alignments, or portions of alignments, that lie within the given genomic regions will be ignored.  The alignments' lengths (within an ignored region) will not factor into the [total sequence information calculation](#pileup).  However, the full fragment lengths *will* be counted for the average fragment length calculation (`-x`), and the full fragments *will* be listed in the `-b` file.
-* The regions will affect peak calls, such that no peak may extend into or around an excluded region.
-* In the output log files (`-f`, `-k`), excluded regions will have experimental/control pileup values of `0.0` and *p*-/*q*-values of `NA`.
-* Multiple BED files can be specified, comma-separated (or space-separated, in quotes).  Overlapping BED intervals will be merged appropriately.
-* The regions' lengths will be subtracted from the [total genome length](#genomelen) calculated by the program.
-* Genomic regions to which reads typically do not align uniquely can be specified, but one should consider taking advantage of Genrich's ability to [analyze multimapping reads](#multimap).
-* The accessory script [`findNs.py`](https://github.com/jsh58/Genrich/blob/master/findNs.py) will produce a BED file of 'N' homopolymers in a fasta file (e.g. a reference genome).  Its output should be given to Genrich via `-E`.
+* All alignments, or portions of alignments, that lie within the given genomic regions are ignored.  The alignments' lengths (within an ignored region) do not factor into the [total sequence information calculation](#pileup).  However, the full fragment lengths *are* counted for the average fragment length calculation (`-x`), and the full fragments *are* listed in the `-b` file.
+* The regions affect peak calls, such that no peak may extend into or around an excluded region.
+* In the output log files (`-f`, `-k`), excluded regions have experimental/control pileup values of `0.0` and *p*-/*q*-values of `NA`.
+* Multiple BED files can be specified, comma-separated (or space-separated, in quotes).  Overlapping BED intervals are merged appropriately.
+* The regions' lengths are subtracted from the [total genome length](#genomelen) calculated by the program.
+* Genomic regions to which reads typically do not align uniquely can be specified, but this is not recommended.  Instead, one should consider taking advantage of Genrich's ability to [analyze multimapping reads](#multimap).
+* The accessory script [`findNs.py`](https://github.com/jsh58/Genrich/blob/master/findNs.py) produces a BED file of 'N' homopolymers in a fasta file (e.g. a reference genome).  Its output should be given to Genrich via `-E`.
 <br><br>
 
 ```
   -m  <int>        Minimum MAPQ to keep an alignment (def. 0)
 ```
-* All alignments with `MAPQ` less than the given value will be eliminated.  This is equivalent to filtering with `samtools view -q <int>`.
+* All alignments with `MAPQ` less than the given value are eliminated.  This is equivalent to filtering with `samtools view -q <int>`.
 * This option should not be used if the SAM/BAM lists [multiple alignments](#multimap) for some reads/fragments.  Instead, filtering should be accomplished via `-s <float>`, below.
 <br><br>
 
@@ -334,15 +335,15 @@ SRR5427886.10866    chr14:53438632,+                    SRR5427886.4746    singl
 ```
   -s  <float>      Keep sec alns with AS >= bestAS - <float> (def. 0)
 ```
-* Genrich analyzes all secondary alignments, but, by default, it keeps only the alignments whose [scores](http://bowtie-bio.sourceforge.net/bowtie2/manual.shtml#scores-higher-more-similar) are equal to the best score for the read/fragment.  Setting a value such as `-s 20` will cause Genrich also to keep secondary alignments whose scores are within 20 of the best.
-* The SAM/BAM should have alignment scores under the extra field `AS`.  If not, all alignments will be considered equivalent.
+* Genrich analyzes all secondary alignments, but, by default, it keeps only the alignments whose [scores](http://bowtie-bio.sourceforge.net/bowtie2/manual.shtml#scores-higher-more-similar) are equal to the best score for the read/fragment.  Setting a value such as `-s 20` causes Genrich also to keep secondary alignments whose scores are within 20 of the best.
+* The SAM/BAM should have alignment scores under the extra field `AS`.  If not, all alignments are considered equivalent.
 * Each of the `N` alignments for a read/fragment is counted as `1/N` for the pileup.
-* As described [above](#multimap), a maximum of 10 alignments per read is analyzed.  Reads with more than 10 alignments within the `-s` threshold will be subsampled based on the best alignment scores; in the case of ties, alignments appearing first in the SAM/BAM are favored.
+* As described [above](#multimap), a maximum of 10 alignments per read is analyzed.  Reads with more than 10 alignments within the `-s` threshold are subsampled based on the best alignment scores; in the case of ties, alignments appearing first in the SAM/BAM are favored.
 * The alignment score for a fragment (pair of reads) is equal to the sum of the reads' individual scores.
 * Properly paired alignments take precedence over singleton alignments, regardless of the alignment scores.
 <br><br>
 
-### Unpaired alignments <a name="unpaired"></a>
+### Unpaired alignments<a name="unpaired"></a>
 
 By default, Genrich analyzes only properly paired alignments and infers the full fragments as spanning between the 5' ends of the two alignments (Fig. 2).  It does not analyze unpaired ("singleton") alignments unless one of three options is selected:
 ```
@@ -350,9 +351,9 @@ By default, Genrich analyzes only properly paired alignments and infers the full
   -w  <int>        Keep unpaired alns, lengths changed to <int>
   -x               Keep unpaired alns, lengths changed to paired avg
 ```
-* `-y`: unpaired alignments will be kept, just as they appear in the SAM/BAM
-* `-w <int>`: unpaired alignments will be kept, with their lengths changed to the given value (from their 5' ends)
-* `-x`: unpaired alignments will be kept, with their lengths changed to the average length of fragments inferred from properly paired alignments (excluding those aligning to skipped chromosomes [`-e`])
+* `-y`: unpaired alignments are kept, just as they appear in the SAM/BAM
+* `-w <int>`: unpaired alignments are kept, with their lengths changed to the given value (from their 5' ends)
+* `-x`: unpaired alignments are kept, with their lengths changed to the average length of fragments inferred from properly paired alignments (excluding those aligning to skipped chromosomes [`-e`])
 
 <figure>
   <img src="figures/figure2.png" alt="Alignment analysis" width="700">
@@ -360,9 +361,9 @@ By default, Genrich analyzes only properly paired alignments and infers the full
 </figure>
 <br><br>
 
-## ATAC-seq mode <a name="atacseq"></a>
+## ATAC-seq mode<a name="atacseq"></a>
 
-[ATAC-seq](https://informatics.fas.harvard.edu/atac-seq-guidelines.html#overview) is a method for assessing genomic regions of open chromatin.  Since only the ends of the DNA fragments indicate where the transposase enzyme was able to insert into the chromatin, it may not be optimal to interpret alignments as shown above (Fig. 2).  Genrich has an alternative analysis mode for ATAC-seq in which it will create intervals centered on transposase cut sites (Fig. 3).
+[ATAC-seq](https://informatics.fas.harvard.edu/atac-seq-guidelines.html#overview) is a method for assessing genomic regions of open chromatin.  Since only the ends of the DNA fragments indicate where the transposase enzyme was able to insert into the chromatin, it may not be optimal to interpret alignments as shown above (Fig. 2).  Genrich has an alternative analysis mode for ATAC-seq in which it creates intervals centered on transposase cut sites (Fig. 3).
 
 ```
   -j               Use ATAC-seq mode (def. false)
@@ -375,7 +376,7 @@ By default, Genrich analyzes only properly paired alignments and infers the full
 </figure>
 <br><br>
 
-Unpaired alignments can be analyzed with `-y`, though only one interval, centered on the read's 5' end, will be inferred.  Both `-w <int>` and `-x` are equivalent to `-y` in ATAC-seq mode.
+Unpaired alignments can be analyzed with `-y`, though only one interval, centered on the read's 5' end, is inferred.  Both `-w <int>` and `-x` are equivalent to `-y` in ATAC-seq mode.
 
 The remainder of the peak-calling process (calculating pileups and significance values) is identical to the [default analysis mode](#method).  Note that the interval lengths (*not* the fragment lengths) are used to sum the total sequence information for the calculation of [control/background pileup values](#pileup).
 <br><br>
@@ -387,8 +388,8 @@ The remainder of the peak-calling process (calculating pileups and significance 
   -q  <float>      Maximum q-value (FDR-adjusted p-value; def. 0.05)
   -p  <float>      Maximum p-value (overrides -q if set)
 ```
-* This is the threshold below which a base is considered significantly enriched in the experimental sample(s) vs. the control/background.  Note that the significance value will be automatically converted to a -log<sub>10</sub> scale.
-* When `-p` is selected, *q*-values will not be calculated (reported as `-1`).
+* This is the threshold below which a base is considered significantly enriched in the experimental sample(s) vs. the control/background.  Note that the significance value is automatically converted to a -log<sub>10</sub> scale.
+* When `-p` is selected, *q*-values are not calculated (reported as `-1`).
 <br><br>
 
 ```
@@ -401,7 +402,7 @@ The remainder of the peak-calling process (calculating pileups and significance 
 ```
   -l  <int>        Minimum length of a peak (def. 0)
 ```
-* With this option, all called peaks are required to have at least the specified minimum length.  Any potential peaks whose lengths are below that threshold are eliminated, regardless of the significance.  The default of 0 means that no peaks will be eliminated on this basis.
+* With this option, all called peaks are required to have at least the specified minimum length.  Any potential peaks whose lengths are below that threshold are eliminated, regardless of the significance.  The default of 0 means that no peaks are eliminated on this basis.
 <br><br>
 
 ```
@@ -411,27 +412,28 @@ The remainder of the peak-calling process (calculating pileups and significance 
 <br><br>
 
 
-## Miscellaneous <a name="misc"></a>
+## Miscellaneous<a name="misc"></a>
 
 ```
   -X               Skip peak-calling
 ```
-* This is a convenience option for those who are unsure of the peak-calling parameters but do not want to run the full analysis multiple times.  Genrich will interpret the alignment files (including identifying PCR duplicates) and produce intermediate log files, but will not perform the peak-calling step.  The bedgraph-ish log file listing statistics (`-f`) can subsequently be used to call peaks directly (see `-P`, below).
-* With this option, the requirement to specify an output peak file (`-o`) is suspended, and no such file will be produced.
+* This is a convenience option for those who are unsure of the peak-calling parameters but do not want to run the full analysis multiple times.  Genrich interprets the alignment files (including identifying PCR duplicates) and produces intermediate log files, but does not perform the peak-calling step.  The bedgraph-ish log file listing statistics (`-f`) can subsequently be used to call peaks directly (see `-P`, below).
+* With this option, the requirement to specify an output peak file (`-o`) is suspended, and no such file is produced.
 <br><br>
 
 ```
   -P               Call peaks directly from a log file (-f)
 ```
-* This is a convenience option to call peaks from a bedgraph-ish log file (`-f`) produced by a previous Genrich run.  One can modify the [peak-calling parameters](#peakcalling) and explore the results without needing to run the full analysis (and requiring much less time and memory).
-* Any chromosomes (`-e`) and genomic regions (`-E`) to be ignored, which were previously specified in the Genrich run that produced the log file, will be honored.  Additional chromosomes and regions can be specified via the same command-line options, although the results may be slightly different than running the full analysis, due to differences in the calculations of [genome length](#genomelen) and [sequence information](#pileup).  Note that there is no verification that an excluded region (`-E`) does not extend past the end of a chromosome, unlike when the full analysis is run.
+* This is a convenience option to call peaks from a bedgraph-ish log file (`-f`) produced by a previous Genrich run.  One can modify the [peak-calling parameters](#peakcalling) and explore the results without needing to run the full analysis (and requiring [much less time and memory](#example)).
+* Any chromosomes (`-e`) and genomic regions (`-E`) to be ignored, which were previously specified in the Genrich run that produced the log file, are honored.  Additional chromosomes and regions can be specified via the same command-line options, although the results may be slightly different than running the full analysis, due to differences in the calculations of [genome length](#genomelen) and [sequence information](#pileup).  Note that there is no verification that an excluded region (`-E`) does not extend past the end of a chromosome, unlike when the full analysis is run.
 * With this option, the requirement to specify input SAM/BAM file(s) (`-t`) is suspended, but the input log file (`-f`) *must* be specified.
+* No optional output files are produced.
 <br><br>
 
 ```
   -z               Option to gzip-compress output(s)
 ```
-* When selected, all output files will be gzip-compressed.
+* When selected, all output files are gzip-compressed.
 <br><br>
 
 Other options:
@@ -441,7 +443,7 @@ Other options:
   -V/--version     Print the version and exit
 ```
 
-### Full analysis example <a name="example"></a>
+### Full analysis example<a name="example"></a>
 
 A [sequencing run](https://www.ncbi.nlm.nih.gov/sra/SRX2717911[accn]) was downloaded from SRA.  Its reads were adapter-trimmed by [NGmerge](https://github.com/jsh58/NGmerge) and aligned to the human genome (hg19) by [Bowtie2](http://bowtie-bio.sourceforge.net/bowtie2/manual.shtml) with `-k 20`.  The resulting alignment file `SRR5427886.bam` was analyzed by Genrich with the options to remove PCR duplicates (`-r`) and to keep singletons, extended to the average fragment length (`-x`).  All alignments to chrM and chrY were discarded (`-e chrM,chrY`), as well as alignments to two sets of excluded intervals: regions of 'N' homopolymers in the hg19 genome (produced by [`findNs.py`](https://github.com/jsh58/Genrich/blob/master/findNs.py)) and [high mappability regions](http://hgdownload.cse.ucsc.edu/goldenPath/hg19/encodeDCC/wgEncodeMapability/wgEncodeDukeMapabilityRegionsExcludable.bed.gz) (`-E hg19_Ns.bed,wgEncodeDukeMapabilityRegionsExcludable.bed.gz`).  There was no control sample.
 ```
@@ -493,24 +495,24 @@ Peaks identified: 47329 (62194983bp)
 This required just 36sec and less than 0.1MB of memory.
 
 
-### Warning messages <a name="warning"></a>
+### Warning messages<a name="warning"></a>
 
 In verbose mode, Genrich may print one or more warnings to `stderr`:
 * `Read N prevented from extending below 0 on <chrom>`: This may occur due to extending unpaired alignments (`-w <int>`, `-x`) or in ATAC-seq mode (`-j`).
 * `Read N prevented from extending past <int> on <chrom>`: This also may occur due to extending unpaired alignments (`-w <int>`, `-x`) or in ATAC-seq mode (`-j`).
 * `Large scaling may mask true signal`: This is printed if the [scaling factor](#pileup) for the control pileup is greater than 5.
-* `BED interval ignored - located off end of reference`: An excluded BED interval (`-E`) whose start coordinate is past the end of the reference sequence will be ignored.  One should ensure that the genome version that produced the BED intervals matches that of the SAM/BAM.
-* `BED interval extends past end of ref. - edited to <loc>`: An excluded BED interval (`-E`) whose end coordinate is past the end of the reference sequence will be adjusted as indicated.  Again, one should ensure that the genome version that produced the BED intervals matches that of the SAM/BAM.
-* `No paired alignments to calculate avg frag length -- Printing singletons "as is"`: When there are *no* properly paired alignments and the [`-x` average extension option](#unpaired) is selected, the unpaired alignments will be printed as they appear in the SAM/BAM.
-* `Read N, alignment at <loc> skipped due to overflow`: The maximum difference in pileup values from one genomic position to the next is +32767, and additional reads will be skipped due to this limitation.  Removing PCR duplicates (`-r`) may help reduce this issue.
-* `Read N, alignment at <loc> skipped due to underflow`: The minimum difference in pileup values from one genomic position to the next is -32768, and additional reads will be skipped due to this limitation.  Removing PCR duplicates (`-r`) may help reduce this issue.
+* `BED interval ignored - located off end of reference`: An excluded BED interval (`-E`) whose start coordinate is past the end of the reference sequence is ignored.  One should ensure that the genome version that produced the BED intervals matches that of the SAM/BAM.
+* `BED interval extends past end of ref. - edited to <loc>`: An excluded BED interval (`-E`) whose end coordinate is past the end of the reference sequence is adjusted as indicated.  Again, one should ensure that the genome version that produced the BED intervals matches that of the SAM/BAM.
+* `No paired alignments to calculate avg frag length -- Printing singletons "as is"`: When there are *no* properly paired alignments and the [`-x` average extension option](#unpaired) is selected, the unpaired alignments are printed as they appear in the SAM/BAM.
+* `Read N, alignment at <loc> skipped due to overflow`: The maximum difference in pileup values from one genomic position to the next is +32767, and additional read alignments are skipped due to this limitation.  Removing PCR duplicates (`-r`) may help reduce this issue.
+* `Read N, alignment at <loc> skipped due to underflow`: The minimum difference in pileup values from one genomic position to the next is -32768, and additional read alignments are skipped due to this limitation.  Removing PCR duplicates (`-r`) may help reduce this issue.
 * `Read N has more than 128 alignments`: If a read has more than 128 alignments in the SAM/BAM, only the first 128 are considered.  As described [above](#sparam), the best 10 alignments are ultimately analyzed by Genrich.
 * `All q-values are 1`: When no *p*-values are smaller than the reciprocal of the [calculated genome length](#genomelen), all [*q*-values](#qvalue) are calculated to be 1.  If peaks are expected to be called, one should consider using a *p*-value threshold instead (`-p`).
 * `Skipping chromosome N -- Reads aligning to it were used...`: This occurs when peak-calling directly from a log file (`-P`), and the log file indicates that reads/fragments aligned to a chromosome to be skipped (`-e`).  When Genrich created the log file, the chromosome was not skipped.  Therefore, the reads/fragments that aligned to it were used in the [background pileup calculation](#pileup), and its length was included in the [genome length calculation](#genomelen).  Those calculations affected the statistics present in the log file, so the called peaks may be slightly different than those called when running the full analysis.
 * `Skipping given BED regions -- Reads aligning to them were used...`: This occurs when peak-calling directly from a log file (`-P`), and the log file indicates that reads/fragments aligned to one or more genomic regions to be skipped (`-E`).  When Genrich created the log file, the regions were not skipped.  Therefore, the reads/fragments that aligned to them were used in the [background pileup calculation](#pileup), and their lengths were included in the [genome length calculation](#genomelen).  Those calculations affected the statistics present in the log file, so the called peaks may be slightly different than those called when running the full analysis.
 * `"orphan" alns`: An "orphan" alignment is one that the SAM/BAM indicates is properly paired, but its pair could not be found.  This could be due to a poorly formatted SAM/BAM, or possibly (but unlikely) a bug in alignment parsing by Genrich.  This is not a warning message *per se*, but if it appears in the verbose accounting of alignments analyzed, it should be treated as such.
 
-### Computational requirements <a name="memory"></a>
+### Computational requirements<a name="memory"></a>
 
 Genrich runs very quickly but uses a considerable amount of memory.  For starters, it requires 3 bytes for every base-pair of the reference genome, i.e. ~9GB for a human sample.  The number of input files has little effect on memory, but certain analysis options (especially the option to remove PCR duplicates) can greatly increase the memory usage, particularly with large SAM/BAM input files.  See [above](#example) for an example.
 
@@ -518,7 +520,7 @@ Genrich is not multi-threaded.
 <br><br>
 
 
-## Contact <a name="contact"></a>
+## Contact<a name="contact"></a>
 
 Genrich
 
