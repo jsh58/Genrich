@@ -494,6 +494,8 @@ Peaks identified: 47329 (62194983bp)
 ```
 This required just 36sec and less than 0.1MB of memory.
 
+If one wished for the alignments to be interpreted differently, such as [ATAC-seq mode (`-j`)](#atacseq), the original command (with `-t SRR5427886.bam`) would need to be rerun.
+
 
 ### Warning messages<a name="warning"></a>
 
