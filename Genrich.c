@@ -49,7 +49,7 @@ void usage(void) {
   fprintf(stderr, "  -%c  <file>       Input BED file(s) of genomic regions to ignore\n", XFILE);
   fprintf(stderr, "  -%c  <int>        Minimum MAPQ to keep an alignment (def. 0)\n", MINMAPQ);
   fprintf(stderr, "  -%c  <float>      Keep sec alns with AS >= bestAS - <float> (def. 0)\n", ASDIFF);
-  fprintf(stderr, "  -%c               Keep unpaired alignments (def. false)\n", SINGLEOPT);
+  fprintf(stderr, "  -%c               Keep unpaired alignments (def. false)\n", UNPAIROPT);
   fprintf(stderr, "  -%c  <int>        Keep unpaired alns, lengths changed to <int>\n", EXTENDOPT);
   fprintf(stderr, "  -%c               Keep unpaired alns, lengths changed to paired avg\n", AVGEXTOPT);
   fprintf(stderr, "Options for ATAC-seq:\n");
@@ -2569,8 +2569,8 @@ int calcAvgLen(double totalLen, int pairedPr,
     bool verbose) {
   if (! pairedPr) {
     if (verbose) {
-      fprintf(stderr, "Warning! No paired alignments to calculate avg ");
-      fprintf(stderr, "frag length --\n  Printing singletons \"as is\"\n");
+      fprintf(stderr, "Warning! No paired alignments to calculate avg frag ");
+      fprintf(stderr, "length --\n  Printing unpaired alignments \"as is\"\n");
     }
     return 0;
   }
@@ -2652,12 +2652,12 @@ void saveAvgExt(char* qname, Aln* b, uint8_t count,
   }
 }
 
-/* void saveSingle()
- * Control processing of singleton alignments
+/* void saveUnpair()
+ * Control processing of unpaired alignments
  *   (either keeping them as is, or extending
  *   to a given length).
  */
-void saveSingle(char* qname, Aln* a, uint8_t count,
+void saveUnpair(char* qname, Aln* a, uint8_t count,
     bool extendOpt, int extend, bool atacOpt,
     int atacLen5, int atacLen3, File bed, bool bedOpt,
     bool gzOut, bool ctrl, int sample, bool verbose) {
@@ -2937,7 +2937,7 @@ void saveAlns(char* qname, Aln* aln, int alnLen, bool pair,
 /*** Process a set of alignments ***/
 
 /* void subsampleSingle()
- * For sets of single alns at an invalid count (>10, 9, 7),
+ * For sets of unpaired alns at an invalid count (>10, 9, 7),
  *   find a more stringent score.
  */
 void subsampleSingle(Aln* aln, int alnLen, bool first,
@@ -2970,7 +2970,7 @@ void subsampleSingle(Aln* aln, int alnLen, bool first,
 }
 
 /* int processSingle()
- * Process a set of singleton alignments, weighted to
+ * Process a set of unpaired alignments, weighted to
  *   1/n (number of valid alignments).
  *   Return 1 if valid alignments found, else 0.
  */
@@ -2986,7 +2986,7 @@ int processSingle(char* qname, Aln* aln, int alnLen,
   if (score != NOSCORE)
     score -= asDiff;
 
-  // determine number of valid single alignments
+  // determine number of valid unpaired alignments
   //   (within score threshold and not to skipped chrom)
   uint8_t count = 0;
   for (int i = 0; i < alnLen; i++) {
@@ -3003,7 +3003,7 @@ int processSingle(char* qname, Aln* aln, int alnLen,
   if (count > 10 || count == 7 || count == 9)
     subsampleSingle(aln, alnLen, first, &count, &score);
 
-  // find singletons to save
+  // find unpaired alns to save
   uint8_t saved = 0;
   for (int i = 0; i < alnLen; i++) {
     Aln* a = aln + i;
@@ -3018,8 +3018,8 @@ int processSingle(char* qname, Aln* aln, int alnLen,
           unpairIdx, unpairLen, unpairMem);
 
       else
-        // for other options, save singleton interval
-        saveSingle(qname, a, count, extendOpt, extend,
+        // for other options, save interval
+        saveUnpair(qname, a, count, extendOpt, extend,
           atacOpt, atacLen5, atacLen3, bed, bedOpt,
           gzOut, ctrl, sample, verbose);
 
@@ -3170,7 +3170,7 @@ void processAlns(char* qname, Aln* aln, int alnLen,
       } else
         (*orphan)++;  // incomplete paired alignment
     } else if (singleOpt && ! pair) {
-      // update best scores of singletons
+      // update best scores of unpaired alns
       if (a->first && scoreR1 < a->score) {
         scoreR1 = a->score;
         singleR1 = true;
@@ -3199,7 +3199,7 @@ void processAlns(char* qname, Aln* aln, int alnLen,
         atacLen3, bed, bedOpt, gzOut, ctrl, sample,
         verbose);
     else if (singleOpt) {
-      // process singleton alignments (separately for R1, R2)
+      // process unpaired alignments (separately for R1, R2)
       if (singleR1)
         *singlePr += processSingle(qname, aln, alnLen,
           extendOpt, extend, avgExtOpt,
@@ -4043,7 +4043,7 @@ bool savePairedAln(Aln** aln, int* alnLen,
 }
 
 /* bool saveSingleAln()
- * Save the information for a singleton alignment.
+ * Save the information for an unpaired alignment.
  *   Return false if max. number has been reached.
  */
 bool saveSingleAln(Aln** aln, int* alnLen,
@@ -4439,7 +4439,7 @@ int readSAM(File in, bool gz, char* line, Aln** aln,
   uint8_t mapq;
 
   int alnLen = 0;     // number of alignments for this read
-  int unpairIdx = 0;  // \ indexes into singleton array(s)
+  int unpairIdx = 0;  // \ indexes into unpaired array(s)
   int unpairLen = 0;  // /   (with avgExtOpt)
   int readIdxPr = 0;  // \ indexes into read array readPr
   int readLenPr = 0;  // /   (with dupsOpt)
@@ -4795,7 +4795,7 @@ int parseBAM(gzFile in, char* line, Aln** aln,
   char* read_name, *qual, *extra;
 
   int alnLen = 0;     // number of alignments for this read
-  int unpairIdx = 0;  // \ indexes into singleton array(s)
+  int unpairIdx = 0;  // \ indexes into unpaired array(s)
   int unpairLen = 0;  // /   (with avgExtOpt)
   int readIdxPr = 0;  // \ indexes into read array readPr
   int readLenPr = 0;  // /   (with dupsOpt)
@@ -5286,13 +5286,14 @@ void logCounts(int count, int unmapped, int supp,
   if (pairedPr && ! atacOpt)
     fprintf(stderr, "      (avg. length: %.1fbp)\n", avgLen);
   if (singleOpt) {
-    fprintf(stderr, "    Singletons:         %10d\n", singlePr);
+    fprintf(stderr, "    Half fragments:     %10d\n", singlePr);
     if (singlePr) {
+      fprintf(stderr, "      (from unpaired alns");
       if (extendOpt)
-        fprintf(stderr, "      (extended to length %dbp)\n", extend);
+        fprintf(stderr, ", extended to %dbp", extend);
       else if (avgExtOpt && pairedPr)
-        fprintf(stderr, "      (extended to length %dbp)\n",
-          (int) (avgLen + 0.5));
+        fprintf(stderr, ", extended to %dbp", (int) (avgLen + 0.5));
+      fprintf(stderr, ")\n");
     }
   }
   if (atacOpt) {
@@ -5666,7 +5667,7 @@ void getArgs(int argc, char** argv) {
       case PILEFILE: pileFile = optarg; break;
       case BEDFILE: bedFile = optarg; break;
       case GZOPT: gzOut = true; break;
-      case SINGLEOPT: singleOpt = true; break;
+      case UNPAIROPT: singleOpt = true; break;
       case EXTENDOPT: extend = getInt(optarg); extendOpt = true; break;
       case AVGEXTOPT: avgExtOpt = true; break;
       case ATACOPT: atacOpt = true; break;
@@ -5709,7 +5710,7 @@ void getArgs(int argc, char** argv) {
       exit(error("", ERREXTEND));
   }
   if (atacOpt) {
-    avgExtOpt = extendOpt = false;  // no singleton extensions in ATAC-seq mode
+    avgExtOpt = extendOpt = false;  // no unpaired extensions in ATAC-seq mode
     if (atacLen5 <= 0)
       exit(error("", ERRATAC));
     // split atacLen into atacLen5 and atacLen3

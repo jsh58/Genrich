@@ -112,7 +112,7 @@ Here is an overview of the method used by Genrich to identify peaks (Fig. 1):
 
 ### Alignment parsing<a name="alignment"></a>
 
-Genrich analyzes paired-end reads aligned to a reference genome.  It correctly infers full fragments as spanning between the 5' ends of two properly paired alignments.  By default, it does not consider unpaired ("singleton") alignments, although there are three options for keeping such alignments, as described [here](#unpaired).
+Genrich analyzes paired-end reads aligned to a reference genome.  It correctly infers full fragments as spanning between the 5' ends of two properly paired alignments.  By default, it does not consider unpaired alignments, although there are three options for keeping such alignments, as described [here](#unpaired).
 
 An alternative analysis mode for ATAC-seq is also provided by Genrich, as described [here](#atacseq).
 
@@ -340,12 +340,12 @@ SRR5427886.10866    chr14:53438632,+                    SRR5427886.4746    singl
 * Each of the `N` alignments for a read/fragment is counted as `1/N` for the pileup.
 * As described [above](#multimap), a maximum of 10 alignments per read is analyzed.  Reads with more than 10 alignments within the `-s` threshold are subsampled based on the best alignment scores; in the case of ties, alignments appearing first in the SAM/BAM are favored.
 * The alignment score for a fragment (pair of reads) is equal to the sum of the reads' individual scores.
-* Properly paired alignments take precedence over singleton alignments, regardless of the alignment scores.
+* Properly paired alignments take precedence over unpaired alignments, regardless of the alignment scores.
 <br><br>
 
 ### Unpaired alignments<a name="unpaired"></a>
 
-By default, Genrich analyzes only properly paired alignments and infers the full fragments as spanning between the 5' ends of the two alignments (Fig. 2).  It does not analyze unpaired ("singleton") alignments unless one of three options is selected:
+By default, Genrich analyzes only properly paired alignments and infers the full fragments as spanning between the 5' ends of the two alignments (Fig. 2).  It does not analyze unpaired alignments unless one of three options is selected:
 ```
   -y               Keep unpaired alignments (def. false)
   -w  <int>        Keep unpaired alns, lengths changed to <int>
@@ -357,7 +357,7 @@ By default, Genrich analyzes only properly paired alignments and infers the full
 
 <figure>
   <img src="figures/figure2.png" alt="Alignment analysis" width="700">
-  <figcaption><strong>Figure 2.  Analysis of alignments by Genrich.</strong>  The alignment file <code>example.bam</code> has both properly paired alignments (top left) and unpaired "singleton" alignments (top right).  By default, Genrich infers the full fragments from the paired alignments and discards the unpaired alignments.  Unpaired alignments can be kept via <code>-y</code>, <code>-w &lt;int&gt;</code>, or <code>-x</code>, as described above.</figcaption>
+  <figcaption><strong>Figure 2.  Analysis of alignments by Genrich.</strong>  The alignment file <code>example.bam</code> has both properly paired alignments (top left) and unpaired alignments (top right).  By default, Genrich infers the full fragments from the paired alignments and discards the unpaired alignments.  Unpaired alignments can be kept via <code>-y</code>, <code>-w &lt;int&gt;</code>, or <code>-x</code>, as described above.</figcaption>
 </figure>
 <br><br>
 
@@ -445,7 +445,7 @@ Other options:
 
 ### Full analysis example<a name="example"></a>
 
-A [sequencing run](https://www.ncbi.nlm.nih.gov/sra/SRX2717911[accn]) was downloaded from SRA.  Its reads were adapter-trimmed by [NGmerge](https://github.com/jsh58/NGmerge) and aligned to the human genome (hg19) by [Bowtie2](http://bowtie-bio.sourceforge.net/bowtie2/manual.shtml) with `-k 20`.  The resulting alignment file `SRR5427886.bam` was analyzed by Genrich with the options to remove PCR duplicates (`-r`) and to keep singletons, extended to the average fragment length (`-x`).  All alignments to chrM and chrY were discarded (`-e chrM,chrY`), as well as alignments to two sets of excluded intervals: regions of 'N' homopolymers in the hg19 genome (produced by [`findNs.py`](https://github.com/jsh58/Genrich/blob/master/findNs.py)) and [high mappability regions](http://hgdownload.cse.ucsc.edu/goldenPath/hg19/encodeDCC/wgEncodeMapability/wgEncodeDukeMapabilityRegionsExcludable.bed.gz) (`-E hg19_Ns.bed,wgEncodeDukeMapabilityRegionsExcludable.bed.gz`).  There was no control sample.
+A [sequencing run](https://www.ncbi.nlm.nih.gov/sra/SRX2717911[accn]) was downloaded from SRA.  Its reads were adapter-trimmed by [NGmerge](https://github.com/jsh58/NGmerge) and aligned to the human genome (hg19) by [Bowtie2](http://bowtie-bio.sourceforge.net/bowtie2/manual.shtml) with `-k 20`.  The resulting alignment file `SRR5427886.bam` was analyzed by Genrich with the options to remove PCR duplicates (`-r`) and to keep unpaired alignments, extended to the average fragment length (`-x`).  All alignments to chrM and chrY were discarded (`-e chrM,chrY`), as well as alignments to two sets of excluded intervals: regions of 'N' homopolymers in the hg19 genome (produced by [`findNs.py`](https://github.com/jsh58/Genrich/blob/master/findNs.py)) and [high mappability regions](http://hgdownload.cse.ucsc.edu/goldenPath/hg19/encodeDCC/wgEncodeMapability/wgEncodeDukeMapabilityRegionsExcludable.bed.gz) (`-E hg19_Ns.bed,wgEncodeDukeMapabilityRegionsExcludable.bed.gz`).  There was no control sample.
 ```
 $ ./Genrich  -t SRR5427886.bam  -o SRR5427886.narrowPeak  -f SRR5427886.log  -r  -x  -v  \
   -e chrM,chrY  -E hg19_Ns.bed,wgEncodeDukeMapabilityRegionsExcludable.bed.gz 
@@ -468,8 +468,8 @@ Processing experimental file #0: SRR5427886.bam
   Fragments analyzed:     31286234
     Full fragments:       30616993
       (avg. length: 226.4bp)
-    Singletons:             669241
-      (extended to length 226bp)
+    Half fragments:         669241
+      (from unpaired alns, extended to 226bp)
 - control file #0 not provided -
   Background pileup value: 2.477916
 Peak-calling parameters:
@@ -479,9 +479,9 @@ Peak-calling parameters:
   Max. gap between sites: 100bp
 Peaks identified: 35114 (27918264bp)
 ```
-The total time to execute the above command (analyzing a single BAM of 146.3 million alignments and calling peaks) was 10.5min.  It required 17.1GB of memory.
+The total time to execute the above command (analyzing a BAM of 146.3 million alignments and calling peaks) was 10.5min.  It required 17.1GB of memory.
 
-Once a log file (`SRR5427886.log`) is produced, calling peaks with an alternative set of parameters is accomplished most easily with `-P`.  For example, with `-p 0.01  -a 200`:
+Once a log file (`SRR5427886.log`) is produced, calling peaks with an alternative set of parameters is accomplished most easily with `-P`.  For example, with `-p 0.01 -a 200`:
 ```
 $ ./Genrich  -P  -f SRR5427886.log  -o SRR5427886_p01_a200.narrowPeak  -p 0.01  -a 200  -v
 Peak-calling from log file: SRR5427886.log
@@ -494,7 +494,7 @@ Peaks identified: 47329 (62194983bp)
 ```
 This required just 36sec and less than 0.1MB of memory.
 
-If one wished for the alignments to be interpreted differently, such as [ATAC-seq mode (`-j`)](#atacseq), the original command (with `-t SRR5427886.bam`) would need to be rerun.
+However, if one wanted the alignments to be interpreted differently, such as [ATAC-seq mode (`-j`)](#atacseq), the original command (with `-t SRR5427886.bam`) would need to be rerun.
 
 
 ### Warning messages<a name="warning"></a>
@@ -505,7 +505,7 @@ In verbose mode, Genrich may print one or more warnings to `stderr`:
 * `Large scaling may mask true signal`: This is printed if the [scaling factor](#pileup) for the control pileup is greater than 5.
 * `BED interval ignored - located off end of reference`: An excluded BED interval (`-E`) whose start coordinate is past the end of the reference sequence is ignored.  One should ensure that the genome version that produced the BED intervals matches that of the SAM/BAM.
 * `BED interval extends past end of ref. - edited to <loc>`: An excluded BED interval (`-E`) whose end coordinate is past the end of the reference sequence is adjusted as indicated.  Again, one should ensure that the genome version that produced the BED intervals matches that of the SAM/BAM.
-* `No paired alignments to calculate avg frag length -- Printing singletons "as is"`: When there are *no* properly paired alignments and the [`-x` average extension option](#unpaired) is selected, the unpaired alignments are printed as they appear in the SAM/BAM.
+* `No paired alignments to calculate avg frag length -- Printing unpaired alignments "as is"`: When there are *no* properly paired alignments and the [`-x` average extension option](#unpaired) is selected, the unpaired alignments are printed as they appear in the SAM/BAM.
 * `Read N, alignment at <loc> skipped due to overflow`: The maximum difference in pileup values from one genomic position to the next is +32767, and additional read alignments are skipped due to this limitation.  Removing PCR duplicates (`-r`) may help reduce this issue.
 * `Read N, alignment at <loc> skipped due to underflow`: The minimum difference in pileup values from one genomic position to the next is -32768, and additional read alignments are skipped due to this limitation.  Removing PCR duplicates (`-r`) may help reduce this issue.
 * `Read N has more than 128 alignments`: If a read has more than 128 alignments in the SAM/BAM, only the first 128 are considered.  As described [above](#sparam), the best 10 alignments are ultimately analyzed by Genrich.
