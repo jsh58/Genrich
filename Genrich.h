@@ -179,8 +179,8 @@ typedef struct chrom {
   uint32_t len;       // length of chromosome
   bool skip;          // chromosome to be skipped?
   bool save;          // chromosome to be saved? (by sample)
-  uint32_t* bed;      // coordinates (paired) of regions to be ignored
-  int bedLen;         // number of coordinates of regions to be ignored
+  uint32_t* bed;      // coordinates (paired) of regions to be excluded
+  int bedLen;         // number of coordinates of regions to be excluded
   Diff* diff;         // arrays for keeping track of pileup changes
   Pileup* expt;       // pileup arrays for experimental sample(s)
   uint32_t exptLen;   // length of pileup arrays for experimental sample(s) (dynamic)

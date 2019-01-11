@@ -45,8 +45,8 @@ void usage(void) {
   fprintf(stderr, "  -%c  <file>       Output file for PCR duplicates (only with -%c)\n", DUPSFILE, DUPSOPT);
   fprintf(stderr, "Filtering options:\n");
   fprintf(stderr, "  -%c               Remove PCR duplicates\n", DUPSOPT);
-  fprintf(stderr, "  -%c  <arg>        Comma-separated list of chromosomes to ignore\n", XCHROM);
-  fprintf(stderr, "  -%c  <file>       Input BED file(s) of genomic regions to ignore\n", XFILE);
+  fprintf(stderr, "  -%c  <arg>        Comma-separated list of chromosomes to exclude\n", XCHROM);
+  fprintf(stderr, "  -%c  <file>       Input BED file(s) of genomic regions to exclude\n", XFILE);
   fprintf(stderr, "  -%c  <int>        Minimum MAPQ to keep an alignment (def. 0)\n", MINMAPQ);
   fprintf(stderr, "  -%c  <float>      Keep sec alns with AS >= bestAS - <float> (def. 0)\n", ASDIFF);
   fprintf(stderr, "  -%c               Keep unpaired alignments (def. false)\n", UNPAIROPT);
@@ -1265,7 +1265,7 @@ void callPeaksLog(File in, bool gz, File out, bool gzOut,
   int idxQ = -1;
   int idxP = getIdx(in, gz, line, qvalOpt, &idxQ);
 
-  // initialize variables for genomic regions to be ignored
+  // initialize variables for genomic regions to be excluded
   uint32_t* bed = NULL;         // array of BED coordinates
   int bedLen = 0;               // length of bed array
   int bedIdx = 0;               // index into bed array
@@ -5118,7 +5118,7 @@ bool openRead(char* inFile, File* in) {
 }
 
 /* int loadBED()
- * Load genomic regions to ignore from BED file(s).
+ * Load genomic regions to exclude from BED file(s).
  *   Return number saved.
  */
 int loadBED(char* xFile, char* line, Bed** xBed) {
@@ -5182,7 +5182,7 @@ void findPeaksOnly(char* logFile, char* outFile,
     float pqvalue, bool qvalOpt, int minLen, int maxGap,
     float minAUC, bool verbose) {
 
-  // save genomic regions to ignore
+  // save genomic regions to exclude
   char* line = (char*) memalloc(MAX_SIZE);
   Bed* xBed = NULL;
   int xBedLen = 0;
@@ -5375,7 +5375,7 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
   uint16_t* qual2 = NULL;   // |
   uint32_t arrMem = 0;      // length of above order/qual arrays
 
-  // save genomic regions to ignore
+  // save genomic regions to exclude
   Bed* xBed = NULL;
   int xBedLen = 0;
   if (xFile != NULL)
@@ -5620,7 +5620,7 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
 }
 
 /* int saveXChrom()
- * Save list of chromosomes (ref names) to ignore.
+ * Save list of chromosomes (ref names) to exclude.
  *   Return count.
  */
 int saveXChrom(char* xchrom, char*** xchrList) {
@@ -5724,7 +5724,7 @@ void getArgs(int argc, char** argv) {
   if (asDiff < 0.0f)
     exit(error("", ERRASDIFF));
 
-  // save list of chromosomes to ignore
+  // save list of chromosomes to exclude
   int xcount = 0;
   char** xchrList = NULL;
   if (xchrom != NULL)
