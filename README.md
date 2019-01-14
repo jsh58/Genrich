@@ -101,7 +101,7 @@ Here is an overview of the method used by Genrich to identify peaks (Fig. 1):
 * Create a control pileup using the control sample (if available) and background level (additional information about control/background pileup calculation can be found [here](#pileup)).
 * Calculate *p*-values for each genomic position, as described [here](#pvalue).
 * Convert *p*-values to *q*-values, as described [here](#qvalue).
-* Calculate the "area under the curve" (AUC) for all regions whose -log(*q*) values rise above the statistical threshold.
+* Calculate the "area under the curve" (AUC) for all regions reaching statistical significance (*q* &lt; 0.05 &rArr; -log(*q*) &gt; 1.301).
 * Combine nearby regions and call peaks whose total AUC is above a threshold (details of peak-calling parameters can be found [here](#peakcalling)).
 
 <figure>
@@ -134,7 +134,7 @@ Genrich computes the genome length as the sum of the lengths of the chromosomes 
 
 ### Control/background pileup calculation<a name="pileup"></a>
 
-The background pileup value is calculated by dividing the total sequence information in the experimental sample by the [calculated genome length](#genomelen).  The net control pileup value at a particular genomic position is the maximum of the background pileup value and the pileup of the control sample at that position (if a control sample is specified).  Note that control pileups are scaled to match the experimental, based on the total sequence information in each.
+The background pileup value is calculated by dividing the total sequence information (sum of read/fragment/interval lengths) in the experimental sample by the [calculated genome length](#genomelen).  The net control pileup value at a particular genomic position is the maximum of the background pileup value and the pileup of the control sample at that position (if a control sample is specified).  Note that control pileups are scaled to match the experimental, based on the total sequence information in each.
 
 
 ### *p*-value calculation<a name="pvalue"></a>
@@ -146,7 +146,7 @@ The *p*-value for each base of the genome is calculated assuming a null model wi
 
 ### *q*-value calculation<a name="qvalue"></a>
 
-The *q*-value for each base of the genome is calculated from the *p*-value using the [Benjamini-Hochberg procedure](http://www.math.tau.ac.il/~ybenja/MyPapers/benjamini_hochberg1995.pdf).  Note that the [calculated genome length](#genomelen) is used as the number of hypothesis tests (*m*).
+The *q*-value for each base of the genome is calculated from the *p*-value using the [Benjamini-Hochberg procedure](http://www.math.tau.ac.il/~ybenja/MyPapers/benjamini_hochberg1995.pdf).  The [calculated genome length](#genomelen) is used as the number of hypothesis tests (*m*).
 
 
 ### Multiple replicates<a name="replicate"></a>
@@ -166,7 +166,7 @@ Genrich calls peaks for multiple replicates collectively.  First, it analyzes th
 * Multiple SAM/BAM files for a single replicate should be combined in advance via `samtools merge`.
 * The SAM/BAM files must be sorted by queryname (via `samtools sort -n`).
 * Genrich reads from `stdin` with `-t -`.
-* This file need not be specified when peak-calling directly from a log file previously produced by Genrich (`-P`).
+* This file need not be specified when peak-calling directly from a log file previously produced by Genrich ([`-P` option](#pparam)).
 <br><br>
 
 ```
@@ -250,13 +250,13 @@ chr1    894451    894460    41.000000    2.477916    3.541798    1.455938    *
 * With multiple replicates, this log file lists *p*-values of each replicate, combined *p*-value, *q*-value, and significance for each interval.
 * Note that this file (as well as the `-k` file, below) is called "bedgraph-ish" because it contains multiple `dataValue` fields, which isn't strictly allowed in the [bedGraph format](https://genome.ucsc.edu/goldenpath/help/bedgraph.html).  However, a simple application of `awk` can produce the desired bedgraph files for visualization purposes (see this [awk reference](http://kirste.userpage.fu-berlin.de/chemnet/use/info/gawk/gawk_7.html#SEC57) for a guide to printing specific fields of input records).
 * When peak-calling is skipped (`-X`), the significance column is not produced.
-* This file functions as the *input* when peak-calling directly from a log file (`-P`).
+* This file functions as the *input* when peak-calling directly from a log file ([`-P` option](#pparam)).
 <br><br>
 
 ```
   -k  <file>       Output bedgraph-ish file for pileups and p-values
 ```
-* For each replicate, sequentially, this file lists a header line (`# experimental file: <name>; control file: <name>`), followed by experimental/control pileups and a *p*-value for each interval. This is the way to examine pileup values with multiple replicates, since the `-f` file does not supply them in that case.
+* For each replicate, sequentially, this file lists a header line (`# experimental file: <name>; control file: <name>`), followed by experimental/control pileups and a *p*-value for each interval. This is the way to examine pileup values with multiple replicates, since the `-f` log file does not supply them in that case.
 <br><br>
 
 ```
@@ -288,7 +288,7 @@ SRR5427886.10866    chr14:53438632,+                    SRR5427886.4746    singl
   * Proper pairs: A properly paired alignment is classified as a duplicate if the reference name (chromosome) and the 5' positions of the two reads match those of another properly paired alignment.
   * Discordant pairs (where both R1 and R2 reads align, but not in a proper pair): A discordant alignment is classified as a duplicate if the reference name, 5' position, and strand (orientation) of *both* alignments match those of another discordant alignment.
   * Singletons (where either R1 or R2 aligns): A singleton alignment is classified as a duplicate if the reference name, 5' position, and strand (orientation) match either end of a properly paired alignment, either end of a discordant pair, or another singleton alignment.
-* Within each of the three groups, Genrich analyzes reads/fragments in order based on the total sums of the quality scores (sums of both R1's and R2's quality scores with paired alignments).  In case of ties (which are frequent), reads are processed in the order they appear in the SAM/BAM.
+* Within each of the three groups, Genrich analyzes reads/fragments in order based on the total sums of the quality scores (sums of both R1's and R2's quality scores with paired alignments).  In case of ties, reads are processed in the order they appear in the SAM/BAM.
 * Discordant and singleton duplicates are evaluated only if [unpaired alignments](#unpaired) are to be kept.
 * There is no consideration of read order (R1 vs. R2) by Genrich.  That is, if the 5' coordinates of R1 and R2 of one paired alignment match the coordinates of R2 and R1 of another paired alignment, respectively, it is classified as a duplicate.  The same applies to discordant and singleton duplicates.
 * For reads/fragments with [multiple alignments](#multimap), all secondary alignments within the [`-s` threshold](#sparam) are considered.  If *any* of a read's/fragment's alignments is evaluated as a duplicate, then the whole read/fragment is classified as a duplicate, and *all* of its alignments are discarded.  Note that no maximum of 10 alignments per read/fragment is imposed at this stage, and all alignments to skipped chromosomes (`-e`) or genomic regions (`-E`) are still evaluated.
@@ -300,7 +300,7 @@ SRR5427886.10866    chr14:53438632,+                    SRR5427886.4746    singl
 ```
   -e  <arg>        Comma-separated list of chromosomes to exclude
 ```
-* All alignments to the given list of chromosomes (reference sequences) are excluded from analysis.  The alignments' lengths do not factor into the [total sequence information calculation](#pileup), nor to the average fragment length calculation (`-x`), and the alignments are not printed to the `-b` file.
+* All alignments to the given list of chromosomes (reference sequences) are excluded from peak-calling.  The alignments' lengths do not factor into the [total sequence information calculation](#pileup), nor to the average fragment length calculation (`-x`), and the alignments are not printed to the `-b` file.
 * For reads/fragments with multiple alignments, the scores of alignments to `-e` chromosomes *are* considered for comparison purposes.
 * The lengths of the `-e` chromosomes are subtracted from the [total genome length](#genomelen) calculated by the program.
 <br><br>
@@ -308,8 +308,7 @@ SRR5427886.10866    chr14:53438632,+                    SRR5427886.4746    singl
 ```
   -E  <file>       Input BED file(s) of genomic regions to exclude
 ```
-* All alignments, or portions of alignments, that lie within the given genomic regions are excluded from analysis.  The alignments' lengths (within an excluded region) do not factor into the [total sequence information calculation](#pileup).  However, the full fragment lengths *are* counted for the average fragment length calculation (`-x`), and the full fragments *are* listed in the `-b` file.
-* The regions affect peak calls, such that no peak may extend into or around an excluded region.
+* All alignments, or portions of alignments, that lie within the given genomic regions are excluded from peak-calling, and no peak may extend into or around an excluded region.  The alignments' lengths (within an excluded region) do not factor into the [total sequence information calculation](#pileup).  However, the full fragment lengths *are* counted for the average fragment length calculation (`-x`), and the full fragments *are* listed in the `-b` file.
 * In the output log files (`-f`, `-k`), excluded regions have experimental/control pileup values of `0.0` and *p*-/*q*-values of `NA`.
 * Multiple BED files can be specified, comma-separated (or space-separated, in quotes).  Overlapping BED intervals are merged appropriately.
 * The regions' lengths are subtracted from the [total genome length](#genomelen) calculated by the program.
@@ -328,13 +327,13 @@ SRR5427886.10866    chr14:53438632,+                    SRR5427886.4746    singl
 ```
   -s  <float>      Keep sec alns with AS >= bestAS - <float> (def. 0)
 ```
-* Genrich considers all secondary alignments, but, by default, it keeps only the alignments whose [scores](http://bowtie-bio.sourceforge.net/bowtie2/manual.shtml#scores-higher-more-similar) are equal to the best score for the read/fragment.  Setting a value such as `-s 20` causes Genrich also to keep secondary alignments whose scores are within 20 of the best.
+* Genrich considers all secondary alignments of [multimapping reads](#multimap), but, by default, it keeps only the alignments whose [scores](http://bowtie-bio.sourceforge.net/bowtie2/manual.shtml#scores-higher-more-similar) are equal to the best score for the read/fragment.  Setting a value such as `-s 20` causes Genrich also to keep secondary alignments whose scores are within 20 of the best.
 * The SAM/BAM should have alignment scores under the extra field `AS`.  If not, all alignments are considered equivalent.
 * Each of the `N` alignments for a read/fragment is counted as `1/N` for the pileup.
 * To avoid excessive memory usage and the imprecision inherent in floating-point values, a maximum of 10 alignments per read/fragment are analyzed by Genrich.  Reads/fragments with more than 10 alignments within the `-s` threshold are subsampled based on the best alignment scores; in the case of ties, alignments appearing first in the SAM/BAM are favored.
 * The alignment score for a fragment (pair of reads) is equal to the sum of the reads' individual scores.
 * Properly paired alignments take precedence over unpaired alignments, regardless of the alignment scores.
-* As stated [above](#multimap) [Bowtie2](http://bowtie-bio.sourceforge.net/bowtie2/manual.shtml) reports secondary alignments in [`-k <int>` mode](http://bowtie-bio.sourceforge.net/bowtie2/manual.shtml#k-mode-search-for-one-or-more-alignments-report-each) or [`-a` mode](http://bowtie-bio.sourceforge.net/bowtie2/manual.shtml#a-mode-search-for-and-report-all-alignments).  Note that a [software bug](https://github.com/BenLangmead/bowtie2/issues/202) causes errors with some secondary alignments that Bowtie2 reports; perhaps it will be fixed at some point.  The short read aligner [BWA](http://bio-bwa.sourceforge.net/bwa.shtml) does not report secondary alignments.
+* As stated [above](#multimap), [Bowtie2](http://bowtie-bio.sourceforge.net/bowtie2/manual.shtml) reports secondary alignments in [`-k <int>` mode](http://bowtie-bio.sourceforge.net/bowtie2/manual.shtml#k-mode-search-for-one-or-more-alignments-report-each) or [`-a` mode](http://bowtie-bio.sourceforge.net/bowtie2/manual.shtml#a-mode-search-for-and-report-all-alignments).  Note that a [software bug](https://github.com/BenLangmead/bowtie2/issues/202) causes errors with some secondary alignments that Bowtie2 reports; perhaps it will be fixed at some point.  The short read aligner [BWA](http://bio-bwa.sourceforge.net/bwa.shtml) does not report secondary alignments.
 <br><br>
 
 ### Unpaired alignments<a name="unpaired"></a>
@@ -382,21 +381,21 @@ The remainder of the peak-calling process (calculating pileups and significance 
   -q  <float>      Maximum q-value (FDR-adjusted p-value; def. 0.05)
   -p  <float>      Maximum p-value (overrides -q if set)
 ```
-* This is the threshold below which a base is considered significantly enriched in the experimental sample(s) vs. the control/background.  Note that the significance value is automatically converted to a -log<sub>10</sub> scale.
+* These parameters establish the statistical threshold below which a base is considered significantly enriched in the experimental sample(s) vs. the control/background.  The significance value is automatically converted to a -log<sub>10</sub> scale by Genrich.
 * When `-p` is selected, *q*-values are not calculated (reported as `-1`).
 <br><br>
 
 ```
   -a  <float>      Minimum AUC for a peak (def. 20.0)
 ```
-* The peak-calling method requires that, for a peak to be called, the total significance of the region must exceed a minimum value. The total significance is calculated as the sum of the -log(*q*) values above the `-q` threshold over the length of the region (i.e. the area under the -log(*q*) "curve").
+* The peak-calling method requires that, for a peak to be called, the total significance of the region must exceed a minimum value. The total significance is calculated as the sum of the -log(*q*) values above the threshold set by `-q` over the length of the region (i.e. the Area Under the -log(*q*) Curve; see Fig. 1).
 * If a `-p` threshold is specified, the area under the -log(*p*) curve is calculated.
 <br><br>
 
 ```
   -l  <int>        Minimum length of a peak (def. 0)
 ```
-* With this option, all called peaks are required to have at least the specified minimum length.  Any potential peaks whose lengths are below that threshold are eliminated, regardless of the significance.  The default of 0 means that no peaks are eliminated on this basis.
+* With this option, any potential peak whose length is below the specified value is discarded, regardless of its significance.  The default of 0 means that no peaks are eliminated on this basis.
 <br><br>
 
 ```
@@ -415,6 +414,7 @@ The remainder of the peak-calling process (calculating pileups and significance 
 * With this option, the requirement to specify an output peak file (`-o`) is suspended, and no such file is produced.
 <br><br>
 
+<a name="pparam"></a>
 ```
   -P               Call peaks directly from a log file (-f)
 ```
@@ -475,7 +475,7 @@ Peaks identified: 35114 (27918264bp)
 ```
 The total time to execute the above command (analyzing a BAM of 146.3 million alignments and calling peaks) was 10.5min.  It required 17.1GB of memory.
 
-Once a log file (`SRR5427886.log`) is produced, calling peaks with an alternative set of parameters is accomplished most easily with `-P`.  For example, with `-p 0.01 -a 200`:
+Once a log file (`SRR5427886.log`) is produced, calling peaks with an alternative set of parameters is accomplished most easily with the [`-P` option](#pparam).  For example, with `-p 0.01 -a 200`:
 ```
 $ ./Genrich  -P  -f SRR5427886.log  -o SRR5427886_p01_a200.narrowPeak  -p 0.01  -a 200  -v
 Peak-calling from log file: SRR5427886.log
