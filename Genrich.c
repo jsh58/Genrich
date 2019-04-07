@@ -5263,7 +5263,8 @@ void logCounts(int count, int unmapped, int supp,
   if (secPair)
     fprintf(stderr, "      secondary alns:   %10d\n", secPair);
   if (orphan)
-    fprintf(stderr, "      \"orphan\" alns:    %10d\n", orphan);
+    fprintf(stderr, "      \"orphan\" alns:    %10d\t** Warning! **\n",
+      orphan);
   fprintf(stderr, "    Unpaired alignments:%10d\n", single);
   if (secSingle)
     fprintf(stderr, "      secondary alns:   %10d\n", secSingle);
