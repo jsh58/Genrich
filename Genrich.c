@@ -2518,7 +2518,6 @@ uint32_t saveInterval(Chrom* c, int64_t start, int64_t end,
           qname, c->len, c->name);
       (*errCount)++;
     }
-    if (verbose)
     end = c->len;
   }
 
