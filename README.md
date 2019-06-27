@@ -1,4 +1,6 @@
 # Genrich: detecting sites of genomic enrichment
+[![Anaconda-Server Badge](https://anaconda.org/bioconda/genrich/badges/installer/conda.svg)](https://conda.anaconda.org/bioconda) 
+[![Anaconda-Server Badge](https://anaconda.org/bioconda/genrich/badges/downloads.svg)](https://anaconda.org/bioconda/genrich)
 
 ## Table of Contents
 * [Introduction](#intro)
