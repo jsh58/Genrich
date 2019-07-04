@@ -4,7 +4,7 @@
 
   Finding sites of enrichment from genome-wide assays.
 
-  Version 0.5
+  Version 0.5_dev
 */
 
 #include <stdio.h>
@@ -55,6 +55,7 @@ void usage(void) {
   fprintf(stderr, "Options for ATAC-seq:\n");
   fprintf(stderr, "  -%c               Use ATAC-seq mode (def. false)\n", ATACOPT);
   fprintf(stderr, "  -%c  <int>        Expand cut sites to <int> bp (def. %d)\n", ATACLEN, DEFATAC);
+  fprintf(stderr, "  -%c               Skip Tn5 adjustments of cut sites (def. false)\n", DNASEOPT);
   fprintf(stderr, "Options for peak-calling:\n");
   fprintf(stderr, "  -%c  <float>      Maximum q-value (FDR-adjusted p-value; def. %.2f)\n", QVALUE, DEFQVAL);
   fprintf(stderr, "  -%c  <float>      Maximum p-value (overrides -%c if set)\n", PVALUE, QVALUE);
@@ -2666,9 +2667,9 @@ void saveAvgExt(char* qname, Aln* b, uint8_t count,
  */
 void saveUnpair(char* qname, Aln* a, uint8_t count,
     bool extendOpt, int extend, bool atacOpt,
-    int atacLen5, int atacLen3, File bed, bool bedOpt,
-    bool gzOut, bool ctrl, int sample, int* errCount,
-    bool verbose) {
+    int atacLen5, int atacLen3, bool atacAdj,
+    File bed, bool bedOpt, bool gzOut, bool ctrl,
+    int sample, int* errCount, bool verbose) {
   if (extendOpt) {
     if (a->strand)
       saveInterval(a->chrom, a->pos[0], a->pos[0] + extend,
@@ -2679,14 +2680,19 @@ void saveUnpair(char* qname, Aln* a, uint8_t count,
         a->pos[1], qname, count, bed, bedOpt, gzOut, ctrl,
         sample, errCount, verbose);
   } else if (atacOpt) {
-    if (a->strand)
+    if (a->strand) {
+      if (atacAdj)
+        a->pos[0] += ATACADJF;
       saveInterval(a->chrom, (signed) (a->pos[0] - atacLen5),
         a->pos[0] + atacLen3, qname, count, bed, bedOpt,
         gzOut, ctrl, sample, errCount, verbose);
-    else
+    } else {
+      if (atacAdj)
+        a->pos[1] += ATACADJR;
       saveInterval(a->chrom, (signed) (a->pos[1] - atacLen3),
         a->pos[1] + atacLen5, qname, count, bed, bedOpt,
         gzOut, ctrl, sample, errCount, verbose);
+    }
   } else
     saveInterval(a->chrom, a->pos[0], a->pos[1], qname,
       count, bed, bedOpt, gzOut, ctrl, sample, errCount,
@@ -2699,10 +2705,14 @@ void saveUnpair(char* qname, Aln* a, uint8_t count,
  *   Return total length.
  */
 uint32_t saveFragAtac(Chrom* c, uint32_t start,
-    uint32_t end, int atacLen5, int atacLen3,
+    uint32_t end, int atacLen5, int atacLen3, bool atacAdj,
     char* qname, uint8_t count, File bed, bool bedOpt,
     bool gzOut, bool ctrl, int sample, int* errCount,
     bool verbose) {
+  if (atacAdj) {
+    start += ATACADJF;
+    end += ATACADJR;
+  }
   if (start + atacLen3 >= (signed) (end - atacLen3))
     // expanded intervals overlap: just save one
     return saveInterval(c, (signed) (start - atacLen5),
@@ -2721,7 +2731,7 @@ uint32_t saveFragAtac(Chrom* c, uint32_t start,
  * Save full fragment for a proper pair. Return length.
  */
 uint32_t saveFragment(char* qname, Aln* a, uint8_t count,
-    bool atacOpt, int atacLen5, int atacLen3,
+    bool atacOpt, int atacLen5, int atacLen3, bool atacAdj,
     File bed, bool bedOpt, bool gzOut, bool ctrl,
     int sample, int* errCount, bool verbose) {
   // ensure start < end
@@ -2735,8 +2745,8 @@ uint32_t saveFragment(char* qname, Aln* a, uint8_t count,
   }
   if (atacOpt)
     return saveFragAtac(a->chrom, start, end, atacLen5,
-      atacLen3, qname, count, bed, bedOpt, gzOut, ctrl,
-      sample, errCount, verbose);
+      atacLen3, atacAdj, qname, count, bed, bedOpt,
+      gzOut, ctrl, sample, errCount, verbose);
   return saveInterval(a->chrom, start, end, qname,
     count, bed, bedOpt, gzOut, ctrl, sample, errCount,
     verbose);
@@ -2990,8 +3000,9 @@ int processSingle(char* qname, Aln* aln, int alnLen,
     Aln*** unpair, int* unpairIdx, int* unpairLen,
     int* unpairMem, float score, float asDiff,
     bool first, bool atacOpt, int atacLen5,
-    int atacLen3, File bed, bool bedOpt, bool gzOut,
-    bool ctrl, int sample, int* errCount, bool verbose) {
+    int atacLen3, bool atacAdj, File bed, bool bedOpt,
+    bool gzOut, bool ctrl, int sample, int* errCount,
+    bool verbose) {
 
   // adjust AS tolerance for secondary alns
   if (score != NOSCORE)
@@ -3031,8 +3042,8 @@ int processSingle(char* qname, Aln* aln, int alnLen,
       else
         // for other options, save interval
         saveUnpair(qname, a, count, extendOpt, extend,
-          atacOpt, atacLen5, atacLen3, bed, bedOpt,
-          gzOut, ctrl, sample, errCount, verbose);
+          atacOpt, atacLen5, atacLen3, atacAdj, bed,
+          bedOpt, gzOut, ctrl, sample, errCount, verbose);
 
       if (++saved == count)
         break;  // in case of AS ties
@@ -3089,7 +3100,7 @@ void subsamplePair(Aln* aln, int alnLen, uint8_t* count,
  */
 int processPair(char* qname, Aln* aln, int alnLen,
     double* totalLen, float score, float asDiff,
-    bool atacOpt, int atacLen5, int atacLen3,
+    bool atacOpt, int atacLen5, int atacLen3, bool atacAdj,
     File bed, bool bedOpt, bool gzOut, bool ctrl,
     int sample, int* errCount, bool verbose) {
 
@@ -3123,7 +3134,7 @@ int processPair(char* qname, Aln* aln, int alnLen,
 
       // save full fragment
       fragLen += saveFragment(qname, a, count,
-        atacOpt, atacLen5, atacLen3, bed, bedOpt,
+        atacOpt, atacLen5, atacLen3, atacAdj, bed, bedOpt,
         gzOut, ctrl, sample, errCount, verbose);
 
       if (++saved == count)
@@ -3158,13 +3169,14 @@ void processAlns(char* qname, Aln* aln, int alnLen,
     int extend, bool avgExtOpt, Aln*** unpair,
     int* unpairIdx, int* unpairLen, int* unpairMem,
     float asDiff, bool atacOpt, int atacLen5,
-    int atacLen3, File bed, bool bedOpt, bool gzOut,
-    bool ctrl, int sample, bool dupsOpt, Read*** readPr,
-    int* readIdxPr, int* readLenPr, int* readMemPr,
-    Read*** readDc, int* readIdxDc, int* readLenDc,
-    int* readMemDc, Read*** readSn, int* readIdxSn,
-    int* readLenSn, int* readMemSn, uint16_t qualR1,
-    uint16_t qualR2, int* errCount, bool verbose) {
+    int atacLen3, bool atacAdj, File bed, bool bedOpt,
+    bool gzOut, bool ctrl, int sample, bool dupsOpt,
+    Read*** readPr, int* readIdxPr, int* readLenPr,
+    int* readMemPr, Read*** readDc, int* readIdxDc,
+    int* readLenDc, int* readMemDc, Read*** readSn,
+    int* readIdxSn, int* readLenSn, int* readMemSn,
+    uint16_t qualR1, uint16_t qualR2, int* errCount,
+    bool verbose) {
 
   // determine if paired alns are valid, and best score
   float scorePr = NOSCORE, scoreR1 = NOSCORE,
@@ -3207,8 +3219,8 @@ void processAlns(char* qname, Aln* aln, int alnLen,
       // process paired alignments
       *pairedPr += processPair(qname, aln, alnLen,
         totalLen, scorePr, asDiff, atacOpt, atacLen5,
-        atacLen3, bed, bedOpt, gzOut, ctrl, sample,
-        errCount, verbose);
+        atacLen3, atacAdj, bed, bedOpt, gzOut, ctrl,
+        sample, errCount, verbose);
     else if (singleOpt) {
       // process unpaired alignments (separately for R1, R2)
       if (singleR1)
@@ -3216,15 +3228,17 @@ void processAlns(char* qname, Aln* aln, int alnLen,
           extendOpt, extend, avgExtOpt,
           unpair, unpairIdx, unpairLen, unpairMem,
           scoreR1, asDiff, true,
-          atacOpt, atacLen5, atacLen3, bed, bedOpt,
-          gzOut, ctrl, sample, errCount, verbose);
+          atacOpt, atacLen5, atacLen3, atacAdj,
+          bed, bedOpt, gzOut, ctrl, sample, errCount,
+          verbose);
       if (singleR2)
         *singlePr += processSingle(qname, aln, alnLen,
           extendOpt, extend, avgExtOpt,
           unpair, unpairIdx, unpairLen, unpairMem,
           scoreR2, asDiff, false,
-          atacOpt, atacLen5, atacLen3, bed, bedOpt,
-          gzOut, ctrl, sample, errCount, verbose);
+          atacOpt, atacLen5, atacLen3, atacAdj,
+          bed, bedOpt, gzOut, ctrl, sample, errCount,
+          verbose);
     }
   }
 }
@@ -3581,9 +3595,9 @@ bool checkHashPr(Read* r, HashAln** table,
 void findDupsPr(Read** readPr, int readIdxPr,
     int readLenPr, int* countPr, int* dupsPr,
     int* pairedPr, double* totalLen, float asDiff,
-    bool atacOpt, int atacLen5, int atacLen3, File bed,
-    bool bedOpt, bool gzOut, bool ctrl, int sample,
-    HashAln*** table, uint32_t* tableMem,
+    bool atacOpt, int atacLen5, int atacLen3, bool atacAdj,
+    File bed, bool bedOpt, bool gzOut, bool ctrl,
+    int sample, HashAln*** table, uint32_t* tableMem,
     HashAln** tableSn, uint32_t hashSizeSn, File dups,
     bool dupsVerb, uint32_t* order, uint32_t* order0,
     uint32_t* order1, uint32_t* order2, uint16_t* qual,
@@ -3622,8 +3636,9 @@ void findDupsPr(Read** readPr, int readIdxPr,
       // process alignments too
       *pairedPr += processPair(r->name, r->aln,
         r->alnLen, totalLen, r->score, asDiff,
-        atacOpt, atacLen5, atacLen3, bed, bedOpt,
-        gzOut, ctrl, sample, errCount, verbose);
+        atacOpt, atacLen5, atacLen3, atacAdj,
+        bed, bedOpt, gzOut, ctrl, sample, errCount,
+        verbose);
     }
 
     // free Read
@@ -3726,13 +3741,14 @@ void findDupsDc(Read** readDc, int readIdxDc,
     int readLenDc, int* countDc, int* dupsDc,
     int* singlePr, bool extendOpt, int extend,
     float asDiff, bool atacOpt, int atacLen5, int atacLen3,
-    File bed, bool bedOpt, bool gzOut, bool ctrl,
-    int sample, HashAln*** table, uint32_t* tableMem,
-    HashAln** tableSn, uint32_t hashSizeSn, File dups,
-    bool dupsVerb, uint32_t* order, uint32_t* order0,
-    uint32_t* order1, uint32_t* order2, uint16_t* qual,
-    uint16_t* qual0, uint16_t* qual1, uint16_t* qual2,
-    int* errCount, bool verbose) {
+    bool atacAdj, File bed, bool bedOpt, bool gzOut,
+    bool ctrl, int sample, HashAln*** table,
+    uint32_t* tableMem, HashAln** tableSn,
+    uint32_t hashSizeSn, File dups, bool dupsVerb,
+    uint32_t* order, uint32_t* order0, uint32_t* order1,
+    uint32_t* order2, uint16_t* qual, uint16_t* qual0,
+    uint16_t* qual1, uint16_t* qual2, int* errCount,
+    bool verbose) {
 
   // initialize hashtable
   uint32_t count = readIdxDc * MAX_SIZE + readLenDc;
@@ -3768,14 +3784,16 @@ void findDupsDc(Read** readDc, int readIdxDc,
         r->alnLen, extendOpt, extend, false,
         NULL, NULL, NULL, NULL,
         r->score, asDiff, true,
-        atacOpt, atacLen5, atacLen3, bed, bedOpt,
-        gzOut, ctrl, sample, errCount, verbose);
+        atacOpt, atacLen5, atacLen3, atacAdj,
+        bed, bedOpt, gzOut, ctrl, sample, errCount,
+        verbose);
       *singlePr += processSingle(r->name, r->alnR2,
         r->alnLenR2, extendOpt, extend, false,
         NULL, NULL, NULL, NULL,
         r->scoreR2, asDiff, false,
-        atacOpt, atacLen5, atacLen3, bed, bedOpt,
-        gzOut, ctrl, sample, errCount, verbose);
+        atacOpt, atacLen5, atacLen3, atacAdj,
+        bed, bedOpt, gzOut, ctrl, sample, errCount,
+        verbose);
     }
 
     // free Read
@@ -3848,12 +3866,13 @@ void findDupsSn(Read** readSn, int readIdxSn,
     int readLenSn, int* countSn, int* dupsSn,
     int* singlePr, bool extendOpt, int extend,
     float asDiff, bool atacOpt, int atacLen5, int atacLen3,
-    File bed, bool bedOpt, bool gzOut, bool ctrl,
-    int sample, HashAln** table, uint32_t hashSize,
-    File dups, bool dupsVerb, uint32_t* order,
-    uint32_t* order0, uint32_t* order1, uint32_t* order2,
-    uint16_t* qual, uint16_t* qual0, uint16_t* qual1,
-    uint16_t* qual2, int* errCount, bool verbose) {
+    bool atacAdj, File bed, bool bedOpt, bool gzOut,
+    bool ctrl, int sample, HashAln** table,
+    uint32_t hashSize, File dups, bool dupsVerb,
+    uint32_t* order, uint32_t* order0, uint32_t* order1,
+    uint32_t* order2, uint16_t* qual, uint16_t* qual0,
+    uint16_t* qual1, uint16_t* qual2, int* errCount,
+    bool verbose) {
 
   // sort reads by qual score sum
   uint32_t count = readIdxSn * MAX_SIZE + readLenSn;
@@ -3877,8 +3896,9 @@ void findDupsSn(Read** readSn, int readIdxSn,
         r->alnLen, extendOpt, extend, false,
         NULL, NULL, NULL, NULL,
         r->score, asDiff, r->first,
-        atacOpt, atacLen5, atacLen3, bed, bedOpt,
-        gzOut, ctrl, sample, errCount, verbose);
+        atacOpt, atacLen5, atacLen3, atacAdj,
+        bed, bedOpt, gzOut, ctrl, sample, errCount,
+        verbose);
     }
 
     // free Read
@@ -3918,9 +3938,9 @@ void findDups(Read** readPr, int readIdxPr, int readLenPr,
     int* pairedPr, int* singlePr, double* totalLen,
     bool extendOpt, int extend, bool avgExtOpt,
     float asDiff, bool atacOpt, int atacLen5, int atacLen3,
-    File bed, bool bedOpt, bool gzOut, File dups,
-    bool dupsVerb, bool ctrl, int sample, int* errCount,
-    bool verbose) {
+    bool atacAdj, File bed, bool bedOpt, bool gzOut,
+    File dups, bool dupsVerb, bool ctrl, int sample,
+    int* errCount, bool verbose) {
 
   // initialize hash table for singletons
   uint32_t hashSizeSn = 0;
@@ -3964,8 +3984,8 @@ void findDups(Read** readPr, int readIdxPr, int readLenPr,
   if (readIdxPr || readLenPr)
     findDupsPr(readPr, readIdxPr, readLenPr, countPr,
       dupsPr, pairedPr, totalLen, asDiff, atacOpt,
-      atacLen5, atacLen3, bed, bedOpt, gzOut, ctrl,
-      sample, table, tableMem, *tableSn, hashSizeSn,
+      atacLen5, atacLen3, atacAdj, bed, bedOpt, gzOut,
+      ctrl, sample, table, tableMem, *tableSn, hashSizeSn,
       dups, dupsVerb, *order, *order0, *order1, *order2,
       *qual, *qual0, *qual1, *qual2, errCount, verbose);
 
@@ -3982,8 +4002,8 @@ void findDups(Read** readPr, int readIdxPr, int readLenPr,
     if (readIdxDc || readLenDc)
       findDupsDc(readDc, readIdxDc, readLenDc, countDc,
         dupsDc, singlePr, extendOpt, extend, asDiff,
-        atacOpt, atacLen5, atacLen3, bed, bedOpt, gzOut,
-        ctrl, sample, table, tableMem, *tableSn,
+        atacOpt, atacLen5, atacLen3, atacAdj, bed, bedOpt,
+        gzOut, ctrl, sample, table, tableMem, *tableSn,
         hashSizeSn, dups, dupsVerb, *order, *order0,
         *order1, *order2, *qual, *qual0, *qual1, *qual2,
         errCount, verbose);
@@ -3992,10 +4012,10 @@ void findDups(Read** readPr, int readIdxPr, int readLenPr,
     if (readIdxSn || readLenSn)
       findDupsSn(readSn, readIdxSn, readLenSn, countSn,
         dupsSn, singlePr, extendOpt, extend, asDiff,
-        atacOpt, atacLen5, atacLen3, bed, bedOpt, gzOut,
-        ctrl, sample, *tableSn, hashSizeSn, dups, dupsVerb,
-        *order, *order0, *order1, *order2, *qual, *qual0,
-        *qual1, *qual2, errCount, verbose);
+        atacOpt, atacLen5, atacLen3, atacAdj, bed, bedOpt,
+        gzOut, ctrl, sample, *tableSn, hashSizeSn, dups,
+        dupsVerb, *order, *order0, *order1, *order2, *qual,
+        *qual0, *qual1, *qual2, errCount, verbose);
   }
 
 }
@@ -4430,14 +4450,14 @@ int readSAM(File in, bool gz, char* line, Aln** aln,
     int* chromLen, Chrom** chrom, bool singleOpt,
     bool extendOpt, int extend, bool avgExtOpt,
     Aln*** unpair, int* unpairMem, float asDiff,
-    bool atacOpt, int atacLen5, int atacLen3, File bed,
-    bool bedOpt, bool gzOut, bool ctrl, int sample,
-    bool dupsOpt, File dups, bool dupsVerb, Read*** readPr,
-    int* readMemPr, Read*** readDc, int* readMemDc,
-    Read*** readSn, int* readMemSn, HashAln*** table,
-    uint32_t* tableMem, HashAln*** tableSn,
-    uint32_t* tableSnMem, uint32_t** order,
-    uint32_t** order0, uint32_t** order1,
+    bool atacOpt, int atacLen5, int atacLen3, bool atacAdj,
+    File bed, bool bedOpt, bool gzOut, bool ctrl,
+    int sample, bool dupsOpt, File dups, bool dupsVerb,
+    Read*** readPr, int* readMemPr, Read*** readDc,
+    int* readMemDc, Read*** readSn, int* readMemSn,
+    HashAln*** table, uint32_t* tableMem,
+    HashAln*** tableSn, uint32_t* tableSnMem,
+    uint32_t** order, uint32_t** order0, uint32_t** order1,
     uint32_t** order2, uint16_t** qualA, uint16_t** qual0,
     uint16_t** qual1, uint16_t** qual2, uint32_t* arrMem,
     int* countPr, int* dupsPr, int* countDc, int* dupsDc,
@@ -4520,8 +4540,8 @@ int readSAM(File in, bool gz, char* line, Aln** aln,
           pairedPr, singlePr, orphan, singleOpt,
           extendOpt, extend, avgExtOpt, unpair,
           &unpairIdx, &unpairLen, unpairMem, asDiff,
-          atacOpt, atacLen5, atacLen3, bed, bedOpt,
-          gzOut, ctrl, sample, dupsOpt,
+          atacOpt, atacLen5, atacLen3, atacAdj,
+          bed, bedOpt, gzOut, ctrl, sample, dupsOpt,
           readPr, &readIdxPr, &readLenPr, readMemPr,
           readDc, &readIdxDc, &readLenDc, readMemDc,
           readSn, &readIdxSn, &readLenSn, readMemSn,
@@ -4550,8 +4570,8 @@ int readSAM(File in, bool gz, char* line, Aln** aln,
       pairedPr, singlePr, orphan, singleOpt,
       extendOpt, extend, avgExtOpt, unpair,
       &unpairIdx, &unpairLen, unpairMem, asDiff,
-      atacOpt, atacLen5, atacLen3, bed, bedOpt,
-      gzOut, ctrl, sample, dupsOpt,
+      atacOpt, atacLen5, atacLen3, atacAdj,
+      bed, bedOpt, gzOut, ctrl, sample, dupsOpt,
       readPr, &readIdxPr, &readLenPr, readMemPr,
       readDc, &readIdxDc, &readLenDc, readMemDc,
       readSn, &readIdxSn, &readLenSn, readMemSn,
@@ -4566,8 +4586,8 @@ int readSAM(File in, bool gz, char* line, Aln** aln,
       countPr, dupsPr, countDc, dupsDc, countSn, dupsSn,
       singleOpt, pairedPr, singlePr, totalLen, extendOpt,
       extend, avgExtOpt, asDiff, atacOpt, atacLen5,
-      atacLen3, bed, bedOpt, gzOut, dups, dupsVerb, ctrl,
-      sample, errCount, verbose);
+      atacLen3, atacAdj, bed, bedOpt, gzOut, dups,
+      dupsVerb, ctrl, sample, errCount, verbose);
 
   else if (avgExtOpt)
     // process single alignments w/ avgExtOpt
@@ -4787,13 +4807,14 @@ int parseBAM(gzFile in, char* line, Aln** aln,
     bool singleOpt, bool extendOpt, int extend,
     bool avgExtOpt, Aln*** unpair, int* unpairMem,
     float asDiff, bool atacOpt, int atacLen5,
-    int atacLen3, File bed, bool bedOpt, bool gzOut,
-    bool ctrl, int sample, bool dupsOpt, File dups,
-    bool dupsVerb, Read*** readPr, int* readMemPr,
-    Read*** readDc, int* readMemDc, Read*** readSn,
-    int* readMemSn, HashAln*** table, uint32_t* tableMem,
-    HashAln*** tableSn, uint32_t* tableSnMem,
-    uint32_t** order, uint32_t** order0, uint32_t** order1,
+    int atacLen3, bool atacAdj, File bed, bool bedOpt,
+    bool gzOut, bool ctrl, int sample, bool dupsOpt,
+    File dups, bool dupsVerb, Read*** readPr,
+    int* readMemPr, Read*** readDc, int* readMemDc,
+    Read*** readSn, int* readMemSn, HashAln*** table,
+    uint32_t* tableMem, HashAln*** tableSn,
+    uint32_t* tableSnMem, uint32_t** order,
+    uint32_t** order0, uint32_t** order1,
     uint32_t** order2, uint16_t** qualA, uint16_t** qual0,
     uint16_t** qual1, uint16_t** qual2, uint32_t* arrMem,
     int* countPr, int* dupsPr, int* countDc, int* dupsDc,
@@ -4871,8 +4892,8 @@ int parseBAM(gzFile in, char* line, Aln** aln,
           pairedPr, singlePr, orphan, singleOpt,
           extendOpt, extend, avgExtOpt, unpair,
           &unpairIdx, &unpairLen, unpairMem, asDiff,
-          atacOpt, atacLen5, atacLen3, bed, bedOpt,
-          gzOut, ctrl, sample, dupsOpt,
+          atacOpt, atacLen5, atacLen3, atacAdj,
+          bed, bedOpt, gzOut, ctrl, sample, dupsOpt,
           readPr, &readIdxPr, &readLenPr, readMemPr,
           readDc, &readIdxDc, &readLenDc, readMemDc,
           readSn, &readIdxSn, &readLenSn, readMemSn,
@@ -4902,8 +4923,8 @@ int parseBAM(gzFile in, char* line, Aln** aln,
       pairedPr, singlePr, orphan, singleOpt,
       extendOpt, extend, avgExtOpt, unpair,
       &unpairIdx, &unpairLen, unpairMem, asDiff,
-      atacOpt, atacLen5, atacLen3, bed, bedOpt,
-      gzOut, ctrl, sample, dupsOpt,
+      atacOpt, atacLen5, atacLen3, atacAdj,
+      bed, bedOpt, gzOut, ctrl, sample, dupsOpt,
       readPr, &readIdxPr, &readLenPr, readMemPr,
       readDc, &readIdxDc, &readLenDc, readMemDc,
       readSn, &readIdxSn, &readLenSn, readMemSn,
@@ -4918,8 +4939,8 @@ int parseBAM(gzFile in, char* line, Aln** aln,
       countPr, dupsPr, countDc, dupsDc, countSn, dupsSn,
       singleOpt, pairedPr, singlePr, totalLen, extendOpt,
       extend, avgExtOpt, asDiff, atacOpt, atacLen5,
-      atacLen3, bed, bedOpt, gzOut, dups, dupsVerb, ctrl,
-      sample, errCount, verbose);
+      atacLen3, atacAdj, bed, bedOpt, gzOut, dups,
+      dupsVerb, ctrl, sample, errCount, verbose);
 
   else if (avgExtOpt)
     // process single alignments w/ avgExtOpt
@@ -4943,14 +4964,14 @@ int readBAM(gzFile in, char* line, Aln** aln,
     int* chromLen, Chrom** chrom, bool singleOpt,
     bool extendOpt, int extend, bool avgExtOpt,
     Aln*** unpair, int* unpairMem, float asDiff,
-    bool atacOpt, int atacLen5, int atacLen3, File bed,
-    bool bedOpt, bool gzOut, bool ctrl, int sample,
-    bool dupsOpt, File dups, bool dupsVerb, Read*** readPr,
-    int* readMemPr, Read*** readDc, int* readMemDc,
-    Read*** readSn, int* readMemSn, HashAln*** table,
-    uint32_t* tableMem, HashAln*** tableSn,
-    uint32_t* tableSnMem, uint32_t** order,
-    uint32_t** order0, uint32_t** order1,
+    bool atacOpt, int atacLen5, int atacLen3, bool atacAdj,
+    File bed, bool bedOpt, bool gzOut, bool ctrl,
+    int sample, bool dupsOpt, File dups, bool dupsVerb,
+    Read*** readPr, int* readMemPr, Read*** readDc,
+    int* readMemDc, Read*** readSn, int* readMemSn,
+    HashAln*** table, uint32_t* tableMem,
+    HashAln*** tableSn, uint32_t* tableSnMem,
+    uint32_t** order, uint32_t** order0, uint32_t** order1,
     uint32_t** order2, uint16_t** qual, uint16_t** qual0,
     uint16_t** qual1, uint16_t** qual2, uint32_t* arrMem,
     int* countPr, int* dupsPr, int* countDc, int* dupsDc,
@@ -5011,12 +5032,12 @@ int readBAM(gzFile in, char* line, Aln** aln,
     pairedPr, singlePr, supp, skipped, lowMapQ, minMapQ,
     secPair, secSingle, orphan, singleOpt, extendOpt,
     extend, avgExtOpt, unpair, unpairMem, asDiff, atacOpt,
-    atacLen5, atacLen3, bed, bedOpt, gzOut, ctrl, sample,
-    dupsOpt, dups, dupsVerb, readPr, readMemPr, readDc,
-    readMemDc, readSn, readMemSn, table, tableMem, tableSn,
-    tableSnMem, order, order0, order1, order2, qual, qual0,
-    qual1, qual2, arrMem, countPr, dupsPr, countDc, dupsDc,
-    countSn, dupsSn, errCount, verbose);
+    atacLen5, atacLen3, atacAdj, bed, bedOpt, gzOut, ctrl,
+    sample, dupsOpt, dups, dupsVerb, readPr, readMemPr,
+    readDc, readMemDc, readSn, readMemSn, table, tableMem,
+    tableSn, tableSnMem, order, order0, order1, order2,
+    qual, qual0, qual1, qual2, arrMem, countPr, dupsPr,
+    countDc, dupsDc, countSn, dupsSn, errCount, verbose);
 }
 
 /*** File I/O ***/
@@ -5340,8 +5361,8 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
     char** xchrList, char* xFile, float pqvalue,
     bool qvalOpt, int minLen, int maxGap, float minAUC,
     float asDiff, bool atacOpt, int atacLen5, int atacLen3,
-    bool dupsOpt, char* dupsFile, bool peaksOpt,
-    bool peaksOnly, bool verbose) {
+    bool atacAdj, bool dupsOpt, char* dupsFile,
+    bool peaksOpt, bool peaksOnly, bool verbose) {
 
   // option to call peaks only, from already produced log file
   if (peaksOnly) {
@@ -5474,9 +5495,9 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
           &secPair, &secSingle, &orphan, &chromLen, &chrom,
           singleOpt, extendOpt, extend, avgExtOpt, &unpair,
           &unpairMem, asDiff, atacOpt, atacLen5, atacLen3,
-          bed, bedFile != NULL, gzOut, i, sample, dupsOpt,
-          dups, dupsVerb, &readPr, &readMemPr, &readDc,
-          &readMemDc, &readSn, &readMemSn, &table,
+          atacAdj, bed, bedFile != NULL, gzOut, i, sample,
+          dupsOpt, dups, dupsVerb, &readPr, &readMemPr,
+          &readDc, &readMemDc, &readSn, &readMemSn, &table,
           &tableMem, &tableSn, &tableSnMem, &order,
           &order0, &order1, &order2, &qual, &qual0, &qual1,
           &qual2, &arrMem, &countPr, &dupsPr, &countDc,
@@ -5489,9 +5510,9 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
           &secPair, &secSingle, &orphan, &chromLen, &chrom,
           singleOpt, extendOpt, extend, avgExtOpt, &unpair,
           &unpairMem, asDiff, atacOpt, atacLen5, atacLen3,
-          bed, bedFile != NULL, gzOut, i, sample, dupsOpt,
-          dups, dupsVerb, &readPr, &readMemPr, &readDc,
-          &readMemDc, &readSn, &readMemSn, &table,
+          atacAdj, bed, bedFile != NULL, gzOut, i, sample,
+          dupsOpt, dups, dupsVerb, &readPr, &readMemPr,
+          &readDc, &readMemDc, &readSn, &readMemSn, &table,
           &tableMem, &tableSn, &tableSnMem, &order,
           &order0, &order1, &order2, &qual, &qual0, &qual1,
           &qual2, &arrMem, &countPr, &dupsPr, &countDc,
@@ -5671,8 +5692,8 @@ void getArgs(int argc, char** argv) {
     maxGap = DEFMAXGAP, atacLen5 = DEFATAC, atacLen3 = 0;
   float asDiff = 0.0f, pqvalue = DEFQVAL, minAUC = DEFAUC;
   bool singleOpt = false, extendOpt = false,
-    avgExtOpt = false, atacOpt = false, gzOut = false,
-    qvalOpt = true, dupsOpt = false,
+    avgExtOpt = false, atacOpt = false, atacAdj = true,
+    gzOut = false, qvalOpt = true, dupsOpt = false,
     peaksOpt = true, peaksOnly = false;
   bool verbose = false;
 
@@ -5692,6 +5713,7 @@ void getArgs(int argc, char** argv) {
       case AVGEXTOPT: avgExtOpt = true; break;
       case ATACOPT: atacOpt = true; break;
       case ATACLEN: atacLen5 = getInt(optarg); break;
+      case DNASEOPT: atacAdj = false; break;
       case XCHROM: xchrom = optarg; break;
       case XFILE: xFile = optarg; break;
       case MINMAPQ: minMapQ = getInt(optarg); break;
@@ -5760,8 +5782,8 @@ void getArgs(int argc, char** argv) {
     bedFile, gzOut, singleOpt, extendOpt, extend,
     avgExtOpt, minMapQ, xcount, xchrList, xFile, pqvalue,
     qvalOpt, minLen, maxGap, minAUC, asDiff,
-    atacOpt, atacLen5, atacLen3, dupsOpt, dupsFile,
-    peaksOpt, peaksOnly, verbose);
+    atacOpt, atacLen5, atacLen3, atacAdj, dupsOpt,
+    dupsFile, peaksOpt, peaksOnly, verbose);
 }
 
 /* int main()

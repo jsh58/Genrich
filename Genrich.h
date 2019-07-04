@@ -4,9 +4,9 @@
 
   Finding sites of enrichment from genome-wide assays.
 
-  Version 0.5
+  Version 0.5_dev
 */
-#define VERSION     "0.5"
+#define VERSION     "0.5_dev"
 
 // macros
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
@@ -32,6 +32,8 @@
 #define DEFMAXGAP   100     // maximum gap between significant sites
 #define DEFMINLEN   0       // minimum length of a peak
 #define DEFATAC     100     // interval length for ATAC-seq mode
+#define ATACADJF    5       // adjustment for ATAC interval on fwd strand
+#define ATACADJR    -5      // adjustment for ATAC interval on rev strand
 
 // SAM fields
 enum sam { NIL, QNAME, FLAG, RNAME, POS, MAPQ, CIGAR, RNEXT,
@@ -51,7 +53,7 @@ enum bedGraph { CHR, START, END };
 #define SQRTLOG     0.944456478248262   // sqrt(log(2.44))
 
 // command-line options
-#define OPTIONS     "ht:c:o:f:k:b:zyw:xjd:e:E:m:s:p:q:a:l:g:rR:XPvV"
+#define OPTIONS     "ht:c:o:f:k:b:zyw:xjd:De:E:m:s:p:q:a:l:g:rR:XPvV"
 #define HELP        'h'
 #define INFILE      't'
 #define CTRLFILE    'c'
@@ -65,6 +67,7 @@ enum bedGraph { CHR, START, END };
 #define AVGEXTOPT   'x'
 #define ATACOPT     'j'
 #define ATACLEN     'd'
+#define DNASEOPT    'D'
 #define XCHROM      'e'
 #define XFILE       'E'
 #define MINMAPQ     'm'
