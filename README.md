@@ -79,6 +79,7 @@ Filtering options:
 Options for ATAC-seq:
   -j               Use ATAC-seq mode (def. false)
   -d  <int>        Expand cut sites to <int> bp (def. 100)
+  -D               Skip Tn5 adjustments of cut sites (def. false)
 Options for peak-calling:
   -q  <float>      Maximum q-value (FDR-adjusted p-value; def. 0.05)
   -p  <float>      Maximum p-value (overrides -q if set)
@@ -356,20 +357,25 @@ By default, Genrich analyzes only properly paired alignments and infers the full
 
 ## ATAC-seq mode<a name="atacseq"></a>
 
-[ATAC-seq](https://informatics.fas.harvard.edu/atac-seq-guidelines.html#overview) is a method for assessing genomic regions of open chromatin.  Since only the ends of the DNA fragments indicate where the transposase enzyme was able to insert into the chromatin, it may not be optimal to interpret alignments as shown above (Fig. 2).  Genrich has an alternative analysis mode for ATAC-seq in which it creates intervals centered on transposase cut sites (Fig. 3).
+[ATAC-seq](https://informatics.fas.harvard.edu/atac-seq-guidelines.html#overview) is a method for assessing genomic regions of open chromatin.  Since only the ends of the DNA fragments indicate where the Tn5 transposase enzyme was able to insert into the chromatin, it may not be optimal to interpret alignments as shown above (Fig. 2).  Genrich has an alternative analysis mode for ATAC-seq in which it creates intervals centered on transposase cut sites (Fig. 3).
 
 ```
   -j               Use ATAC-seq mode (def. false)
   -d  <int>        Expand cut sites to <int> bp (def. 100)
+  -D               Skip Tn5 adjustments of cut sites (def. false)
 ```
 
 <figure>
   <img src="figures/figure3.png" alt="ATAC-seq mode" width="700">
-  <figcaption><strong>Figure 3.  ATAC-seq mode of Genrich.</strong>  Genrich analyzes intervals centered on cut sites (both ends of full fragments, as well as the 5' ends of unpaired alignments if <code>-y</code> is set).  The lengths of the intervals can be changed from the default of <code>-d 100</code>.</figcaption>
+  <figcaption><strong>Figure 3.  ATAC-seq mode of Genrich.</strong>  Genrich analyzes intervals centered on cut sites (both ends of full fragments, as well as the 5' ends of unpaired alignments if <code>-y</code> is set, adjusted forward by 5bp).  The lengths of the intervals can be changed from the default of <code>-d 100</code>.</figcaption>
 </figure>
 <br><br>
 
 Unpaired alignments can be analyzed with `-y`, though only one interval, centered on the read's 5' end, is inferred.  Both `-w <int>` and `-x` are equivalent to `-y` in ATAC-seq mode.
+
+By default, Genrich centers the intervals at the ends of the reads/fragments, adjusted *forward* by 5bp to account for the Tn5 transposase occupancy.  That is, for the 5' ends of fragments (or for reads aligning in a normal orientation), the position is increased by +5, and for the 3' ends of fragments (or for reads aligning in a reverse-complement orientation), the position is adjusted by -5.  To avoid this position adjustment (e.g. for DNase-seq), one can use `-D`.
+
+To get a BED file of cut sites, one can run `-d 1 -b <file>`.  For full fragments, when the two cut site intervals overlap, they are merged into a single interval.
 
 The remainder of the peak-calling process (calculating pileups and significance values) is identical to the [default analysis mode](#method).  Note that the interval lengths (*not* the fragment lengths) are used to sum the total sequence information for the calculation of [control/background pileup values](#pileup).
 <br><br>
