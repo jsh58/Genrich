@@ -81,9 +81,9 @@ Options for ATAC-seq:
   -d  <int>        Expand cut sites to <int> bp (def. 100)
   -D               Skip Tn5 adjustments of cut sites (def. false)
 Options for peak-calling:
-  -q  <float>      Maximum q-value (FDR-adjusted p-value; def. 0.05)
-  -p  <float>      Maximum p-value (overrides -q if set)
-  -a  <float>      Minimum AUC for a peak (def. 20.0)
+  -p  <float>      Maximum p-value (def. 0.01)
+  -q  <float>      Maximum q-value (FDR-adjusted p-value; def. 1)
+  -a  <float>      Minimum AUC for a peak (def. 200.0)
   -l  <int>        Minimum length of a peak (def. 0)
   -g  <int>        Maximum distance between signif. sites (def. 100)
 Other options:
@@ -101,8 +101,8 @@ Here is an overview of the method used by Genrich to identify peaks (Fig. 1):
 * Parse alignments for the experimental sample and create an experimental "pileup" by counting the DNA fragments that cover each position of the genome (additional information about alignment parsing can be found [here](#alignment)).
 * Create a control pileup using the control sample (if available) and background level (additional information about control/background pileup calculation can be found [here](#pileup)).
 * Calculate *p*-values for each genomic position, as described [here](#pvalue).
-* Convert *p*-values to *q*-values, as described [here](#qvalue).
-* Calculate the "area under the curve" (AUC) for all regions reaching statistical significance (*q* &lt; 0.05 &rArr; -log(*q*) &gt; 1.301).
+* (Optional) Convert *p*-values to *q*-values, as described [here](#qvalue).
+* Calculate the "area under the curve" (AUC) for all regions reaching statistical significance (e.g., *q* &lt; 0.05 &rArr; -log(*q*) &gt; 1.301).
 * Combine nearby regions and call peaks whose total AUC is above a threshold (details of peak-calling parameters can be found [here](#peakcalling)).
 
 <figure>
@@ -209,7 +209,7 @@ Genrich calls peaks for multiple replicates collectively.  First, it analyzes th
   </tr>
   <tr>
     <td>9. qValue</td>
-    <td>Summit -log<sub>10</sub>(<i>q</i>-value), or <code>-1</code> if not available (e.g. with <code>-p</code>)</td>
+    <td>Summit -log<sub>10</sub>(<i>q</i>-value), or <code>-1</code> if not available (e.g. without <code>-q</code>)</td>
   </tr>
   <tr>
     <td>10. peak</td>
@@ -384,18 +384,19 @@ The remainder of the peak-calling process (calculating pileups and significance 
 ## Peak-calling parameters<a name="peakcalling"></a>
 
 ```
-  -q  <float>      Maximum q-value (FDR-adjusted p-value; def. 0.05)
-  -p  <float>      Maximum p-value (overrides -q if set)
+  -p  <float>      Maximum p-value (def. 0.01)
+  -q  <float>      Maximum q-value (FDR-adjusted p-value; def. 1)
 ```
 * These parameters establish the statistical threshold below which a base is considered significantly enriched in the experimental sample(s) vs. the control/background.  The significance value is automatically converted to a -log<sub>10</sub> scale by Genrich.
-* When `-p` is selected, *q*-values are not calculated (reported as `-1`).
+* If a `-q` threshold is specified, the `-p` threshold is ignored.
+* If a `-q` threshold is not specified, *q*-values are not calculated (reported as `-1`).
 <br><br>
 
 ```
-  -a  <float>      Minimum AUC for a peak (def. 20.0)
+  -a  <float>      Minimum AUC for a peak (def. 200.0)
 ```
-* The peak-calling method requires that, for a peak to be called, the total significance of the region must exceed a minimum value. The total significance is calculated as the sum of the -log(*q*) values above the threshold set by `-q` over the length of the region (i.e. the Area Under the -log(*q*) Curve; see Fig. 1).
-* If a `-p` threshold is specified, the area under the -log(*p*) curve is calculated.
+* The peak-calling method requires that, for a peak to be called, the total significance of the region must exceed a minimum value. The total significance is calculated as the sum of the -log(*p*) values above the threshold set by `-p` over the length of the region (i.e. the Area Under the -log(*p*) Curve).
+* If a `-q` threshold is specified, the Area Under the -log(*q*) Curve is calculated (see Fig. 1).
 <br><br>
 
 ```
@@ -445,9 +446,10 @@ Other options:
 
 ### Full analysis example<a name="example"></a>
 
-A [sequencing run](https://www.ncbi.nlm.nih.gov/sra/SRX2717911[accn]) was downloaded from SRA.  Its reads were adapter-trimmed by [NGmerge](https://github.com/jsh58/NGmerge) and aligned to the human genome (hg19) by [Bowtie2](http://bowtie-bio.sourceforge.net/bowtie2/manual.shtml) with `-k 20`.  The resulting alignment file `SRR5427886.bam` was analyzed by Genrich with the options to remove PCR duplicates (`-r`) and to keep unpaired alignments, extended to the average fragment length (`-x`).  All alignments to chrM and chrY were discarded (`-e chrM,chrY`), as well as alignments to two sets of excluded intervals: regions of 'N' homopolymers in the hg19 genome (produced by [`findNs.py`](https://github.com/jsh58/Genrich/blob/master/findNs.py)) and [high mappability regions](http://hgdownload.cse.ucsc.edu/goldenPath/hg19/encodeDCC/wgEncodeMapability/wgEncodeDukeMapabilityRegionsExcludable.bed.gz) (`-E hg19_Ns.bed,wgEncodeDukeMapabilityRegionsExcludable.bed.gz`).  There was no control sample.
+A [sequencing run](https://www.ncbi.nlm.nih.gov/sra/SRX2717911[accn]) was downloaded from SRA.  Its reads were adapter-trimmed by [NGmerge](https://github.com/jsh58/NGmerge) and aligned to the human genome (hg19) by [Bowtie2](http://bowtie-bio.sourceforge.net/bowtie2/manual.shtml) with `-k 20`.  The resulting alignment file `SRR5427886.bam` was analyzed by Genrich with the options to remove PCR duplicates (`-r`) and to keep unpaired alignments, extended to the average fragment length (`-x`).  All alignments to chrM and chrY were discarded (`-e chrM,chrY`), as well as alignments to two sets of excluded intervals: regions of 'N' homopolymers in the hg19 genome (produced by [`findNs.py`](https://github.com/jsh58/Genrich/blob/master/findNs.py)) and [high mappability regions](http://hgdownload.cse.ucsc.edu/goldenPath/hg19/encodeDCC/wgEncodeMapability/wgEncodeDukeMapabilityRegionsExcludable.bed.gz) (`-E hg19_Ns.bed,wgEncodeDukeMapabilityRegionsExcludable.bed.gz`).  There was no control sample.  Peaks were called using a maximum *q*-value of 0.05 (`-q 0.05`) and a minimum AUC of 20.0 (`-a 20.0`).
 ```
-$ ./Genrich  -t SRR5427886.bam  -o SRR5427886.narrowPeak  -f SRR5427886.log  -r  -x  -v  \
+$ ./Genrich  -t SRR5427886.bam  -o SRR5427886.narrowPeak  \
+  -f SRR5427886.log  -r  -x  -q 0.05  -a 20.0  -v  \
   -e chrM,chrY  -E hg19_Ns.bed,wgEncodeDukeMapabilityRegionsExcludable.bed.gz 
 Processing experimental file #0: SRR5427886.bam
   BAM records analyzed:  146277509
