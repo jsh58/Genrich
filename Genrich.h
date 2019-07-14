@@ -27,8 +27,8 @@
 #define SKIP        -1.0f   // stats for a genomic region to be skipped
 
 // default parameter values
-#define DEFQVAL     0.05f   // default q-value
-#define DEFAUC      20.0f   // area under the curve for peak calling
+#define DEFPVAL     0.01f   // default p-value
+#define DEFAUC      200.0f  // area under the curve for peak calling
 #define DEFMAXGAP   100     // maximum gap between significant sites
 #define DEFMINLEN   0       // minimum length of a peak
 #define DEFATAC     100     // interval length for ATAC-seq mode

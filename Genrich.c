@@ -57,8 +57,8 @@ void usage(void) {
   fprintf(stderr, "  -%c  <int>        Expand cut sites to <int> bp (def. %d)\n", ATACLEN, DEFATAC);
   fprintf(stderr, "  -%c               Skip Tn5 adjustments of cut sites (def. false)\n", DNASEOPT);
   fprintf(stderr, "Options for peak-calling:\n");
-  fprintf(stderr, "  -%c  <float>      Maximum q-value (FDR-adjusted p-value; def. %.2f)\n", QVALUE, DEFQVAL);
-  fprintf(stderr, "  -%c  <float>      Maximum p-value (overrides -%c if set)\n", PVALUE, QVALUE);
+  fprintf(stderr, "  -%c  <float>      Maximum p-value (def. %.2f)\n", PVALUE, DEFPVAL);
+  fprintf(stderr, "  -%c  <float>      Maximum q-value (FDR-adjusted p-value; def. 1)\n", QVALUE);
   fprintf(stderr, "  -%c  <float>      Minimum AUC for a peak (def. %.1f)\n", MINAUC, DEFAUC);
   fprintf(stderr, "  -%c  <int>        Minimum length of a peak (def. %d)\n", MINLEN, DEFMINLEN);
   fprintf(stderr, "  -%c  <int>        Maximum distance between signif. sites (def. %d)\n", MAXGAP, DEFMAXGAP);
@@ -5690,10 +5690,10 @@ void getArgs(int argc, char** argv) {
   char* xchrom = NULL;
   int extend = 0, minMapQ = 0, minLen = DEFMINLEN,
     maxGap = DEFMAXGAP, atacLen5 = DEFATAC, atacLen3 = 0;
-  float asDiff = 0.0f, pqvalue = DEFQVAL, minAUC = DEFAUC;
+  float asDiff = 0.0f, pqvalue = DEFPVAL, minAUC = DEFAUC;
   bool singleOpt = false, extendOpt = false,
     avgExtOpt = false, atacOpt = false, atacAdj = true,
-    gzOut = false, qvalOpt = true, dupsOpt = false,
+    gzOut = false, qvalOpt = false, dupsOpt = false,
     peaksOpt = true, peaksOnly = false;
   bool verbose = false;
 
@@ -5718,8 +5718,8 @@ void getArgs(int argc, char** argv) {
       case XFILE: xFile = optarg; break;
       case MINMAPQ: minMapQ = getInt(optarg); break;
       case ASDIFF: asDiff = getFloat(optarg); break;
-      case QVALUE: pqvalue = getFloat(optarg); break;
-      case PVALUE: pqvalue = getFloat(optarg); qvalOpt = false; break;
+      case PVALUE: pqvalue = getFloat(optarg); break;
+      case QVALUE: pqvalue = getFloat(optarg); qvalOpt = true; break;
       case MINAUC: minAUC = getFloat(optarg); break;
       case MINLEN: minLen = getInt(optarg); break;
       case MAXGAP: maxGap = getInt(optarg); break;
