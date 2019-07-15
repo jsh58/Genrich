@@ -17,9 +17,9 @@ def openRead(filename):
     return sys.stdin
   try:
     if filename[-3:] == '.gz':
-      f = gzip.open(filename, 'rb')
+      f = gzip.open(filename, 'rt')
     else:
-      f = open(filename, 'rU')
+      f = open(filename, 'r')
   except IOError:
     sys.stderr.write('Error! Cannot open %s for reading\n' % filename)
     sys.exit(-1)
@@ -48,7 +48,7 @@ def printNs(fOut, head, seq, minLen):
   '''
   count = 0
   start = -1
-  for i in xrange(len(seq)):
+  for i in range(len(seq)):
     if seq[i].upper() != 'N':
       if start != -1:
         if i - start >= minLen:
