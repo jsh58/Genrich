@@ -530,3 +530,5 @@ Genrich
 
 Copyright &copy; 2018  John M. Gaspar (jsh58@wildcats.unh.edu)
 
+Any question, concern, or bug report about the program should be posted as an [Issue](https://github.com/jsh58/Genrich/issues) on GitHub.  Before posting, please check previous issues (both Open and Closed) to see if your issue has been addressed already.  Also, please follow these [good GitHub practices](https://hackernoon.com/45-github-issues-dos-and-donts-dfec9ab4b612).
+
