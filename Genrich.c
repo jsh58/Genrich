@@ -2494,7 +2494,7 @@ void printBED(File bed, bool gzOut, char* chr,
  */
 uint32_t saveInterval(Chrom* c, int64_t start, int64_t end,
     char* qname, uint8_t count, File bed, bool bedOpt,
-    bool gzOut, bool ctrl, int sample, int* errCount,
+    bool gzOut, bool ctrl, int sample, uint64_t* errCount,
     bool verbose) {
 
   // check validity of positions
@@ -2573,7 +2573,7 @@ uint32_t saveInterval(Chrom* c, int64_t start, int64_t end,
  * Calculate the average fragment length.
  *   Return 0 if no fragments.
  */
-int calcAvgLen(double totalLen, int pairedPr,
+int calcAvgLen(double totalLen, uint64_t pairedPr,
     bool verbose) {
   if (! pairedPr) {
     if (verbose) {
@@ -2591,9 +2591,9 @@ int calcAvgLen(double totalLen, int pairedPr,
  *   calculating average length from paired alns.
  */
 void processAvgExt(Aln** unpair, int unpairIdx,
-    int unpairLen, double totalLen, int pairedPr,
+    int unpairLen, double totalLen, uint64_t pairedPr,
     File bed, bool bedOpt, bool gzOut, bool ctrl,
-    int sample, int* errCount, bool verbose) {
+    int sample, uint64_t* errCount, bool verbose) {
 
   // determine average fragment length
   int avgLen = calcAvgLen(totalLen, pairedPr, verbose);
@@ -2669,7 +2669,7 @@ void saveUnpair(char* qname, Aln* a, uint8_t count,
     bool extendOpt, int extend, bool atacOpt,
     int atacLen5, int atacLen3, bool atacAdj,
     File bed, bool bedOpt, bool gzOut, bool ctrl,
-    int sample, int* errCount, bool verbose) {
+    int sample, uint64_t* errCount, bool verbose) {
   if (extendOpt) {
     if (a->strand)
       saveInterval(a->chrom, a->pos[0], a->pos[0] + extend,
@@ -2707,7 +2707,7 @@ void saveUnpair(char* qname, Aln* a, uint8_t count,
 uint32_t saveFragAtac(Chrom* c, uint32_t start,
     uint32_t end, int atacLen5, int atacLen3, bool atacAdj,
     char* qname, uint8_t count, File bed, bool bedOpt,
-    bool gzOut, bool ctrl, int sample, int* errCount,
+    bool gzOut, bool ctrl, int sample, uint64_t* errCount,
     bool verbose) {
   if (atacAdj) {
     start += ATACADJF;
@@ -2733,7 +2733,7 @@ uint32_t saveFragAtac(Chrom* c, uint32_t start,
 uint32_t saveFragment(char* qname, Aln* a, uint8_t count,
     bool atacOpt, int atacLen5, int atacLen3, bool atacAdj,
     File bed, bool bedOpt, bool gzOut, bool ctrl,
-    int sample, int* errCount, bool verbose) {
+    int sample, uint64_t* errCount, bool verbose) {
   // ensure start < end
   uint32_t start, end;
   if (a->pos[0] > a->pos[1]) {
@@ -3001,7 +3001,7 @@ int processSingle(char* qname, Aln* aln, int alnLen,
     int* unpairMem, float score, float asDiff,
     bool first, bool atacOpt, int atacLen5,
     int atacLen3, bool atacAdj, File bed, bool bedOpt,
-    bool gzOut, bool ctrl, int sample, int* errCount,
+    bool gzOut, bool ctrl, int sample, uint64_t* errCount,
     bool verbose) {
 
   // adjust AS tolerance for secondary alns
@@ -3102,7 +3102,7 @@ int processPair(char* qname, Aln* aln, int alnLen,
     double* totalLen, float score, float asDiff,
     bool atacOpt, int atacLen5, int atacLen3, bool atacAdj,
     File bed, bool bedOpt, bool gzOut, bool ctrl,
-    int sample, int* errCount, bool verbose) {
+    int sample, uint64_t* errCount, bool verbose) {
 
   // adjust AS tolerance for secondary alns
   if (score != NOSCORE)
@@ -3164,19 +3164,19 @@ int processPair(char* qname, Aln* aln, int alnLen,
  *   or processSingle() directly.
  */
 void processAlns(char* qname, Aln* aln, int alnLen,
-    double* totalLen, int* pairedPr, int* singlePr,
-    int* orphan, bool singleOpt, bool extendOpt,
-    int extend, bool avgExtOpt, Aln*** unpair,
-    int* unpairIdx, int* unpairLen, int* unpairMem,
-    float asDiff, bool atacOpt, int atacLen5,
-    int atacLen3, bool atacAdj, File bed, bool bedOpt,
-    bool gzOut, bool ctrl, int sample, bool dupsOpt,
-    Read*** readPr, int* readIdxPr, int* readLenPr,
-    int* readMemPr, Read*** readDc, int* readIdxDc,
-    int* readLenDc, int* readMemDc, Read*** readSn,
-    int* readIdxSn, int* readLenSn, int* readMemSn,
-    uint16_t qualR1, uint16_t qualR2, int* errCount,
-    bool verbose) {
+    double* totalLen, uint64_t* pairedPr,
+    uint64_t* singlePr, uint64_t* orphan, bool singleOpt,
+    bool extendOpt, int extend, bool avgExtOpt,
+    Aln*** unpair, int* unpairIdx, int* unpairLen,
+    int* unpairMem, float asDiff, bool atacOpt,
+    int atacLen5, int atacLen3, bool atacAdj, File bed,
+    bool bedOpt, bool gzOut, bool ctrl, int sample,
+    bool dupsOpt, Read*** readPr, int* readIdxPr,
+    int* readLenPr, int* readMemPr, Read*** readDc,
+    int* readIdxDc, int* readLenDc, int* readMemDc,
+    Read*** readSn, int* readIdxSn, int* readLenSn,
+    int* readMemSn, uint16_t qualR1, uint16_t qualR2,
+    uint64_t* errCount, bool verbose) {
 
   // determine if paired alns are valid, and best score
   float scorePr = NOSCORE, scoreR1 = NOSCORE,
@@ -3593,8 +3593,8 @@ bool checkHashPr(Read* r, HashAln** table,
  *   alignment sets.
  */
 void findDupsPr(Read** readPr, int readIdxPr,
-    int readLenPr, int* countPr, int* dupsPr,
-    int* pairedPr, double* totalLen, float asDiff,
+    int readLenPr, uint64_t* countPr, uint64_t* dupsPr,
+    uint64_t* pairedPr, double* totalLen, float asDiff,
     bool atacOpt, int atacLen5, int atacLen3, bool atacAdj,
     File bed, bool bedOpt, bool gzOut, bool ctrl,
     int sample, HashAln*** table, uint32_t* tableMem,
@@ -3602,7 +3602,7 @@ void findDupsPr(Read** readPr, int readIdxPr,
     bool dupsVerb, uint32_t* order, uint32_t* order0,
     uint32_t* order1, uint32_t* order2, uint16_t* qual,
     uint16_t* qual0, uint16_t* qual1, uint16_t* qual2,
-    int* errCount, bool verbose) {
+    uint64_t* errCount, bool verbose) {
 
   // initialize hashtable
   uint32_t count = readIdxPr * MAX_SIZE + readLenPr;
@@ -3738,8 +3738,8 @@ bool checkHashDc(Read* r, HashAln** table,
  *   alignment sets.
  */
 void findDupsDc(Read** readDc, int readIdxDc,
-    int readLenDc, int* countDc, int* dupsDc,
-    int* singlePr, bool extendOpt, int extend,
+    int readLenDc, uint64_t* countDc, uint64_t* dupsDc,
+    uint64_t* singlePr, bool extendOpt, int extend,
     float asDiff, bool atacOpt, int atacLen5, int atacLen3,
     bool atacAdj, File bed, bool bedOpt, bool gzOut,
     bool ctrl, int sample, HashAln*** table,
@@ -3747,7 +3747,7 @@ void findDupsDc(Read** readDc, int readIdxDc,
     uint32_t hashSizeSn, File dups, bool dupsVerb,
     uint32_t* order, uint32_t* order0, uint32_t* order1,
     uint32_t* order2, uint16_t* qual, uint16_t* qual0,
-    uint16_t* qual1, uint16_t* qual2, int* errCount,
+    uint16_t* qual1, uint16_t* qual2, uint64_t* errCount,
     bool verbose) {
 
   // initialize hashtable
@@ -3863,15 +3863,15 @@ bool checkHashSn(Read* r, HashAln** table,
  *   populated by paired and discordant alns.
  */
 void findDupsSn(Read** readSn, int readIdxSn,
-    int readLenSn, int* countSn, int* dupsSn,
-    int* singlePr, bool extendOpt, int extend,
+    int readLenSn, uint64_t* countSn, uint64_t* dupsSn,
+    uint64_t* singlePr, bool extendOpt, int extend,
     float asDiff, bool atacOpt, int atacLen5, int atacLen3,
     bool atacAdj, File bed, bool bedOpt, bool gzOut,
     bool ctrl, int sample, HashAln** table,
     uint32_t hashSize, File dups, bool dupsVerb,
     uint32_t* order, uint32_t* order0, uint32_t* order1,
     uint32_t* order2, uint16_t* qual, uint16_t* qual0,
-    uint16_t* qual1, uint16_t* qual2, int* errCount,
+    uint16_t* qual1, uint16_t* qual2, uint64_t* errCount,
     bool verbose) {
 
   // sort reads by qual score sum
@@ -3933,14 +3933,14 @@ void findDups(Read** readPr, int readIdxPr, int readLenPr,
     uint32_t** order, uint32_t** order0, uint32_t** order1,
     uint32_t** order2, uint16_t** qual, uint16_t** qual0,
     uint16_t** qual1, uint16_t** qual2, uint32_t* arrMem,
-    int* countPr, int* dupsPr, int* countDc, int* dupsDc,
-    int* countSn, int* dupsSn, bool singleOpt,
-    int* pairedPr, int* singlePr, double* totalLen,
-    bool extendOpt, int extend, bool avgExtOpt,
-    float asDiff, bool atacOpt, int atacLen5, int atacLen3,
-    bool atacAdj, File bed, bool bedOpt, bool gzOut,
-    File dups, bool dupsVerb, bool ctrl, int sample,
-    int* errCount, bool verbose) {
+    uint64_t* countPr, uint64_t* dupsPr, uint64_t* countDc,
+    uint64_t* dupsDc, uint64_t* countSn, uint64_t* dupsSn,
+    bool singleOpt, uint64_t* pairedPr, uint64_t* singlePr,
+    double* totalLen, bool extendOpt, int extend,
+    bool avgExtOpt, float asDiff, bool atacOpt,
+    int atacLen5, int atacLen3, bool atacAdj, File bed,
+    bool bedOpt, bool gzOut, File dups, bool dupsVerb,
+    bool ctrl, int sample, uint64_t* errCount, bool verbose) {
 
   // initialize hash table for singletons
   uint32_t hashSizeSn = 0;
@@ -4119,10 +4119,10 @@ uint16_t sumQual(char* qual, int len, int offset) {
  */
 bool parseAlign(Aln** aln, int* alnLen, uint16_t flag,
     Chrom* chrom, uint32_t pos, int length, uint32_t pnext,
-    int* paired, int* single, int* secPair, int* secSingle,
-    int* skipped, bool singleOpt, float score,
-    bool dupsOpt, char* qual, int qualLen, int offset,
-    uint16_t* qualR1, uint16_t* qualR2) {
+    uint64_t* paired, uint64_t* single, uint64_t* secPair,
+    uint64_t* secSingle, uint64_t* skipped, bool singleOpt,
+    float score, bool dupsOpt, char* qual, int qualLen,
+    int offset, uint16_t* qualR1, uint16_t* qualR2) {
 
   // check for linear template or missing index
   if (flag & 0x1) {
@@ -4438,31 +4438,32 @@ int calcDist(char* qname, char* seq, char* cigar) {
   return length + offset;
 }
 
-/* int readSAM()
+/* uint64_t readSAM()
  * Parse the alignments in a SAM file.
  */
-int readSAM(File in, bool gz, char* line, Aln** aln,
-    char* readName, double* totalLen, int* unmapped,
-    int* paired, int* single, int* pairedPr, int* singlePr,
-    int* supp, int* skipped, int* lowMapQ, int minMapQ,
-    int xcount, char** xchrList, int xBedLen, Bed* xBed,
-    int* secPair, int* secSingle, int* orphan,
-    int* chromLen, Chrom** chrom, bool singleOpt,
-    bool extendOpt, int extend, bool avgExtOpt,
-    Aln*** unpair, int* unpairMem, float asDiff,
-    bool atacOpt, int atacLen5, int atacLen3, bool atacAdj,
-    File bed, bool bedOpt, bool gzOut, bool ctrl,
-    int sample, bool dupsOpt, File dups, bool dupsVerb,
-    Read*** readPr, int* readMemPr, Read*** readDc,
-    int* readMemDc, Read*** readSn, int* readMemSn,
-    HashAln*** table, uint32_t* tableMem,
+uint64_t readSAM(File in, bool gz, char* line, Aln** aln,
+    char* readName, double* totalLen, uint64_t* unmapped,
+    uint64_t* paired, uint64_t* single, uint64_t* pairedPr,
+    uint64_t* singlePr, uint64_t* supp, uint64_t* skipped,
+    uint64_t* lowMapQ, int minMapQ, int xcount,
+    char** xchrList, int xBedLen, Bed* xBed,
+    uint64_t* secPair, uint64_t* secSingle,
+    uint64_t* orphan, int* chromLen, Chrom** chrom,
+    bool singleOpt, bool extendOpt, int extend,
+    bool avgExtOpt, Aln*** unpair, int* unpairMem,
+    float asDiff, bool atacOpt, int atacLen5, int atacLen3,
+    bool atacAdj, File bed, bool bedOpt, bool gzOut,
+    bool ctrl, int sample, bool dupsOpt, File dups,
+    bool dupsVerb, Read*** readPr, int* readMemPr,
+    Read*** readDc, int* readMemDc, Read*** readSn,
+    int* readMemSn, HashAln*** table, uint32_t* tableMem,
     HashAln*** tableSn, uint32_t* tableSnMem,
     uint32_t** order, uint32_t** order0, uint32_t** order1,
     uint32_t** order2, uint16_t** qualA, uint16_t** qual0,
     uint16_t** qual1, uint16_t** qual2, uint32_t* arrMem,
-    int* countPr, int* dupsPr, int* countDc, int* dupsDc,
-    int* countSn, int* dupsSn, int* errCount,
-    bool verbose) {
+    uint64_t* countPr, uint64_t* dupsPr, uint64_t* countDc,
+    uint64_t* dupsDc, uint64_t* countSn, uint64_t* dupsSn,
+    uint64_t* errCount, bool verbose) {
 
   // SAM fields to save
   char* qname, *rname, *cigar, *rnext, *seq, *qual, *extra;
@@ -4482,7 +4483,7 @@ int readSAM(File in, bool gz, char* line, Aln** aln,
   int readLenSn = 0;  // /   (with dupsOpt)
   uint16_t qualR1 = 0, qualR2 = 0; // sums of quality scores
   bool pastHeader = false;    // to check for misplaced header lines
-  int count = 0;
+  uint64_t count = 0;
   while (getLine(line, MAX_SIZE, in, gz) != NULL) {
 
     if (line[0] == '@') {
@@ -4795,31 +4796,31 @@ float getBAMscore(char* extra, int len) {
   return NOSCORE;
 }
 
-/* int parseBAM()
+/* uint64_t parseBAM()
  * Parse the alignments in a BAM file.
  */
-int parseBAM(gzFile in, char* line, Aln** aln,
+uint64_t parseBAM(gzFile in, char* line, Aln** aln,
     char* readName, int chromLen, Chrom* chrom, int n_ref,
-    int idx[], double* totalLen, int* unmapped,
-    int* paired, int* single, int* pairedPr, int* singlePr,
-    int* supp, int* skipped, int* lowMapQ, int minMapQ,
-    int* secPair, int* secSingle, int* orphan,
-    bool singleOpt, bool extendOpt, int extend,
-    bool avgExtOpt, Aln*** unpair, int* unpairMem,
-    float asDiff, bool atacOpt, int atacLen5,
-    int atacLen3, bool atacAdj, File bed, bool bedOpt,
-    bool gzOut, bool ctrl, int sample, bool dupsOpt,
-    File dups, bool dupsVerb, Read*** readPr,
-    int* readMemPr, Read*** readDc, int* readMemDc,
-    Read*** readSn, int* readMemSn, HashAln*** table,
-    uint32_t* tableMem, HashAln*** tableSn,
-    uint32_t* tableSnMem, uint32_t** order,
-    uint32_t** order0, uint32_t** order1,
+    int idx[], double* totalLen, uint64_t* unmapped,
+    uint64_t* paired, uint64_t* single, uint64_t* pairedPr,
+    uint64_t* singlePr, uint64_t* supp, uint64_t* skipped,
+    uint64_t* lowMapQ, int minMapQ, uint64_t* secPair,
+    uint64_t* secSingle, uint64_t* orphan, bool singleOpt,
+    bool extendOpt, int extend, bool avgExtOpt,
+    Aln*** unpair, int* unpairMem, float asDiff,
+    bool atacOpt, int atacLen5, int atacLen3, bool atacAdj,
+    File bed, bool bedOpt, bool gzOut, bool ctrl,
+    int sample, bool dupsOpt, File dups, bool dupsVerb,
+    Read*** readPr, int* readMemPr, Read*** readDc,
+    int* readMemDc, Read*** readSn, int* readMemSn,
+    HashAln*** table, uint32_t* tableMem,
+    HashAln*** tableSn, uint32_t* tableSnMem,
+    uint32_t** order, uint32_t** order0, uint32_t** order1,
     uint32_t** order2, uint16_t** qualA, uint16_t** qual0,
     uint16_t** qual1, uint16_t** qual2, uint32_t* arrMem,
-    int* countPr, int* dupsPr, int* countDc, int* dupsDc,
-    int* countSn, int* dupsSn, int* errCount,
-    bool verbose) {
+    uint64_t* countPr, uint64_t* dupsPr, uint64_t* countDc,
+    uint64_t* dupsDc, uint64_t* countSn, uint64_t* dupsSn,
+    uint64_t* errCount, bool verbose) {
 
   // BAM fields to save
   int32_t refID, pos, l_seq, next_refID, next_pos, tlen;
@@ -4839,7 +4840,7 @@ int parseBAM(gzFile in, char* line, Aln** aln,
   int readIdxSn = 0;  // \ indexes into read array readSn
   int readLenSn = 0;  // /   (with dupsOpt)
   uint16_t qualR1 = 0, qualR2 = 0; // sums of quality scores
-  int count = 0;
+  uint64_t count = 0;
   int32_t block_size;
   while ((block_size = readInt32(in, false)) != EOF) {
 
@@ -4951,32 +4952,33 @@ int parseBAM(gzFile in, char* line, Aln** aln,
   return count;
 }
 
-/* int readBAM()
+/* uint64_t readBAM()
  * Parse the header from a BAM file, then
  *   call parseBAM().
  */
-int readBAM(gzFile in, char* line, Aln** aln,
-    char* readName, double* totalLen, int* unmapped,
-    int* paired, int* single, int* pairedPr, int* singlePr,
-    int* supp, int* skipped, int* lowMapQ, int minMapQ,
-    int xcount, char** xchrList, int xBedLen, Bed* xBed,
-    int* secPair, int* secSingle, int* orphan,
-    int* chromLen, Chrom** chrom, bool singleOpt,
-    bool extendOpt, int extend, bool avgExtOpt,
-    Aln*** unpair, int* unpairMem, float asDiff,
-    bool atacOpt, int atacLen5, int atacLen3, bool atacAdj,
-    File bed, bool bedOpt, bool gzOut, bool ctrl,
-    int sample, bool dupsOpt, File dups, bool dupsVerb,
-    Read*** readPr, int* readMemPr, Read*** readDc,
-    int* readMemDc, Read*** readSn, int* readMemSn,
-    HashAln*** table, uint32_t* tableMem,
+uint64_t readBAM(gzFile in, char* line, Aln** aln,
+    char* readName, double* totalLen, uint64_t* unmapped,
+    uint64_t* paired, uint64_t* single, uint64_t* pairedPr,
+    uint64_t* singlePr, uint64_t* supp, uint64_t* skipped,
+    uint64_t* lowMapQ, int minMapQ, int xcount,
+    char** xchrList, int xBedLen, Bed* xBed,
+    uint64_t* secPair, uint64_t* secSingle,
+    uint64_t* orphan, int* chromLen, Chrom** chrom,
+    bool singleOpt, bool extendOpt, int extend,
+    bool avgExtOpt, Aln*** unpair, int* unpairMem,
+    float asDiff, bool atacOpt, int atacLen5, int atacLen3,
+    bool atacAdj, File bed, bool bedOpt, bool gzOut,
+    bool ctrl, int sample, bool dupsOpt, File dups,
+    bool dupsVerb, Read*** readPr, int* readMemPr,
+    Read*** readDc, int* readMemDc, Read*** readSn,
+    int* readMemSn, HashAln*** table, uint32_t* tableMem,
     HashAln*** tableSn, uint32_t* tableSnMem,
     uint32_t** order, uint32_t** order0, uint32_t** order1,
     uint32_t** order2, uint16_t** qual, uint16_t** qual0,
     uint16_t** qual1, uint16_t** qual2, uint32_t* arrMem,
-    int* countPr, int* dupsPr, int* countDc, int* dupsDc,
-    int* countSn, int* dupsSn, int* errCount,
-    bool verbose) {
+    uint64_t* countPr, uint64_t* dupsPr, uint64_t* countDc,
+    uint64_t* dupsDc, uint64_t* countSn, uint64_t* dupsSn,
+    uint64_t* errCount, bool verbose) {
 
   // load first line from header
   int32_t l_text = readInt32(in, true);
@@ -5265,27 +5267,29 @@ void findPeaksOnly(char* logFile, char* outFile,
 /* void logCounts()
  * Log alignment counts to stderr.
  */
-void logCounts(int count, int unmapped, int supp,
-    int skipped, Chrom* chrom, int chromLen, int minMapQ,
-    int lowMapQ, int paired, int secPair, int orphan,
-    int single, int secSingle, int singlePr, int pairedPr,
-    double totalLen, bool singleOpt, bool extendOpt,
-    int extend, bool avgExtOpt, bool bam, bool atacOpt,
-    int atacLen, bool dupsOpt, int countPr, int dupsPr,
-    int countDc, int dupsDc, int countSn, int dupsSn,
-    int errCount) {
+void logCounts(uint64_t count, uint64_t unmapped,
+    uint64_t supp, uint64_t skipped, Chrom* chrom,
+    int chromLen, int minMapQ, uint64_t lowMapQ,
+    uint64_t paired, uint64_t secPair, uint64_t orphan,
+    uint64_t single, uint64_t secSingle, uint64_t singlePr,
+    uint64_t pairedPr, double totalLen, bool singleOpt,
+    bool extendOpt, int extend, bool avgExtOpt, bool bam,
+    bool atacOpt, int atacLen, bool dupsOpt,
+    uint64_t countPr, uint64_t dupsPr, uint64_t countDc,
+    uint64_t dupsDc, uint64_t countSn, uint64_t dupsSn,
+    uint64_t errCount) {
   if (errCount > MAX_ALNS)
-    fprintf(stderr, "(another %d warning messages suppressed)\n",
+    fprintf(stderr, "(another %ld warning messages suppressed)\n",
       errCount - MAX_ALNS);
   double avgLen = pairedPr ? totalLen / pairedPr : 0.0;
-  fprintf(stderr, "  %s records analyzed: %10d\n",
+  fprintf(stderr, "  %s records analyzed: %11ld\n",
     bam ? "BAM" : "SAM", count);
   if (unmapped)
-    fprintf(stderr, "    Unmapped:           %10d\n", unmapped);
+    fprintf(stderr, "    Unmapped:           %11ld\n", unmapped);
   if (supp)
-    fprintf(stderr, "    Supp./dups/lowQual: %10d\n", supp);
+    fprintf(stderr, "    Supp./dups/lowQual: %11ld\n", supp);
   if (skipped) {
-    fprintf(stderr, "    To skipped refs:    %10d\n", skipped);
+    fprintf(stderr, "    To skipped refs:    %11ld\n", skipped);
     fprintf(stderr, "      (");
     bool first = true;
     for (int i = 0; i < chromLen; i++) {
@@ -5298,36 +5302,36 @@ void logCounts(int count, int unmapped, int supp,
     fprintf(stderr, ")\n");
   }
   if (lowMapQ)
-    fprintf(stderr, "    MAPQ < %-2d:          %10d\n", minMapQ, lowMapQ);
-  fprintf(stderr, "    Paired alignments:  %10d\n", paired);
+    fprintf(stderr, "    MAPQ < %-2d:          %11ld\n", minMapQ, lowMapQ);
+  fprintf(stderr, "    Paired alignments:  %11ld\n", paired);
   if (secPair)
-    fprintf(stderr, "      secondary alns:   %10d\n", secPair);
+    fprintf(stderr, "      secondary alns:   %11ld\n", secPair);
   if (orphan)
-    fprintf(stderr, "      \"orphan\" alns:    %10d\t** Warning! **\n",
+    fprintf(stderr, "      \"orphan\" alns:    %11ld\t** Warning! **\n",
       orphan);
-  fprintf(stderr, "    Unpaired alignments:%10d\n", single);
+  fprintf(stderr, "    Unpaired alignments:%11ld\n", single);
   if (secSingle)
-    fprintf(stderr, "      secondary alns:   %10d\n", secSingle);
+    fprintf(stderr, "      secondary alns:   %11ld\n", secSingle);
   if (dupsOpt) {
     fprintf(stderr, "  PCR duplicates --\n");
-    fprintf(stderr, "    Paired aln sets:    %10d\n", countPr);
-    fprintf(stderr, "      duplicates:       %10d (%.1f%%)\n",
+    fprintf(stderr, "    Paired aln sets:    %11ld\n", countPr);
+    fprintf(stderr, "      duplicates:       %11ld (%.1f%%)\n",
       dupsPr, countPr ? 100.0f * dupsPr / countPr : 0.0f);
     if (singleOpt) {
-      fprintf(stderr, "    Discordant aln sets:%10d\n", countDc);
-      fprintf(stderr, "      duplicates:       %10d (%.1f%%)\n",
+      fprintf(stderr, "    Discordant aln sets:%11ld\n", countDc);
+      fprintf(stderr, "      duplicates:       %11ld (%.1f%%)\n",
         dupsDc, countDc ? 100.0f * dupsDc / countDc : 0.0f);
-      fprintf(stderr, "    Singleton aln sets: %10d\n", countSn);
-      fprintf(stderr, "      duplicates:       %10d (%.1f%%)\n",
+      fprintf(stderr, "    Singleton aln sets: %11ld\n", countSn);
+      fprintf(stderr, "      duplicates:       %11ld (%.1f%%)\n",
         dupsSn, countSn ? 100.0f * dupsSn / countSn : 0.0f);
     }
   }
-  fprintf(stderr, "  Fragments analyzed:   %10d\n", singlePr + pairedPr);
-  fprintf(stderr, "    Full fragments:     %10d\n", pairedPr);
+  fprintf(stderr, "  Fragments analyzed:   %11ld\n", singlePr + pairedPr);
+  fprintf(stderr, "    Full fragments:     %11ld\n", pairedPr);
   if (pairedPr && ! atacOpt)
     fprintf(stderr, "      (avg. length: %.1fbp)\n", avgLen);
   if (singleOpt) {
-    fprintf(stderr, "    Half fragments:     %10d\n", singlePr);
+    fprintf(stderr, "    Half fragments:     %11ld\n", singlePr);
     if (singlePr) {
       fprintf(stderr, "      (from unpaired alns");
       if (extendOpt)
@@ -5338,7 +5342,7 @@ void logCounts(int count, int unmapped, int supp,
     }
   }
   if (atacOpt) {
-    fprintf(stderr, "    ATAC-seq cut sites: %10d\n",
+    fprintf(stderr, "    ATAC-seq cut sites: %11ld\n",
       2 * pairedPr + singlePr);
     fprintf(stderr, "      (expanded to length %dbp)\n", atacLen);
   }
@@ -5480,13 +5484,14 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
       }
 
       // load and process alignments
-      int unmapped = 0, paired = 0, single = 0, orphan = 0,
-        pairedPr = 0, singlePr = 0, supp = 0, skipped = 0,
-        lowMapQ = 0, secPair = 0, secSingle = 0,
-        countPr = 0, dupsPr = 0, countDc = 0, dupsDc = 0,
-        countSn = 0, dupsSn = 0, errCount = 0;  // counting variables
+      uint64_t unmapped = 0, paired = 0, single = 0,
+        orphan = 0, pairedPr = 0, singlePr = 0, supp = 0,
+        skipped = 0, lowMapQ = 0, secPair = 0,
+        secSingle = 0, countPr = 0, dupsPr = 0,
+        countDc = 0, dupsDc = 0, countSn = 0, dupsSn = 0,
+        errCount = 0;  // counting variables
       double totalLen = 0.0;  // total weighted length of paired fragments
-      int count;
+      uint64_t count;
       if (bam)
         count = readBAM(in.gzf, line, &aln, readName,
           &totalLen, &unmapped, &paired, &single,
