@@ -53,7 +53,7 @@ enum bedGraph { CHR, START, END };
 #define SQRTLOG     0.944456478248262   // sqrt(log(2.44))
 
 // command-line options
-#define OPTIONS     "ht:c:o:f:k:b:zyw:xjd:De:E:m:s:p:q:a:l:g:rR:XPvV"
+#define OPTIONS     "ht:c:o:f:k:b:zyw:xjd:De:E:m:s:p:q:a:l:g:rR:XPSvV"
 #define HELP        'h'
 #define INFILE      't'
 #define CTRLFILE    'c'
@@ -81,6 +81,7 @@ enum bedGraph { CHR, START, END };
 #define DUPSFILE    'R'
 #define NOPEAKS     'X'
 #define PEAKSONLY   'P'
+#define SORTOPT     'S'
 #define VERBOSE     'v'
 #define VERSOPT     'V'
 

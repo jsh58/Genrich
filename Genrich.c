@@ -4285,7 +4285,7 @@ void loadChrom(char* line, int* chromLen, Chrom** chrom,
  */
 void checkHeader(char* line, int* chromLen, Chrom** chrom,
     int xcount, char** xchrList, int xBedLen, Bed* xBed,
-    bool ctrl, bool verbose) {
+    bool ctrl, bool sortOpt, bool verbose) {
 
   // load tag from SAM header line
   char* tag = strtok(line, TAB);
@@ -4307,7 +4307,8 @@ void checkHeader(char* line, int* chromLen, Chrom** chrom,
     order[i] = '\0';
 
     // sort order must be queryname
-    if (order == NULL || strcmp(order, "queryname"))
+    if (sortOpt && (order == NULL
+        || strcmp(order, "queryname")))
       exit(error("", ERRSORT));
 
   } else if (! strcmp(tag, "@SQ"))
@@ -4463,7 +4464,7 @@ uint64_t readSAM(File in, bool gz, char* line, Aln** aln,
     uint16_t** qual1, uint16_t** qual2, uint32_t* arrMem,
     uint64_t* countPr, uint64_t* dupsPr, uint64_t* countDc,
     uint64_t* dupsDc, uint64_t* countSn, uint64_t* dupsSn,
-    uint64_t* errCount, bool verbose) {
+    uint64_t* errCount, bool sortOpt, bool verbose) {
 
   // SAM fields to save
   char* qname, *rname, *cigar, *rnext, *seq, *qual, *extra;
@@ -4490,7 +4491,7 @@ uint64_t readSAM(File in, bool gz, char* line, Aln** aln,
       if (pastHeader)
         exit(error(line, ERRHEAD));
       checkHeader(line, chromLen, chrom, xcount, xchrList,
-        xBedLen, xBed, ctrl, verbose);
+        xBedLen, xBed, ctrl, sortOpt, verbose);
       continue;
     }
     pastHeader = true;
@@ -4978,7 +4979,7 @@ uint64_t readBAM(gzFile in, char* line, Aln** aln,
     uint16_t** qual1, uint16_t** qual2, uint32_t* arrMem,
     uint64_t* countPr, uint64_t* dupsPr, uint64_t* countDc,
     uint64_t* dupsDc, uint64_t* countSn, uint64_t* dupsSn,
-    uint64_t* errCount, bool verbose) {
+    uint64_t* errCount, bool sortOpt, bool verbose) {
 
   // load first line from header
   int32_t l_text = readInt32(in, true);
@@ -5004,7 +5005,8 @@ uint64_t readBAM(gzFile in, char* line, Aln** aln,
       sortOrder = field + 3;
     field = strtok(NULL, TAB);
   }
-  if (sortOrder == NULL || strcmp(sortOrder, "queryname"))
+  if (sortOpt && (sortOrder == NULL
+      || strcmp(sortOrder, "queryname")))
     exit(error("", ERRSORT));
   if (gzseek(in, l_text - i - 1, SEEK_CUR) == -1)
     exit(error("", ERRBAM));
@@ -5366,7 +5368,8 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
     bool qvalOpt, int minLen, int maxGap, float minAUC,
     float asDiff, bool atacOpt, int atacLen5, int atacLen3,
     bool atacAdj, bool dupsOpt, char* dupsFile,
-    bool peaksOpt, bool peaksOnly, bool verbose) {
+    bool peaksOpt, bool peaksOnly, bool sortOpt,
+    bool verbose) {
 
   // option to call peaks only, from already produced log file
   if (peaksOnly) {
@@ -5506,7 +5509,8 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
           &tableMem, &tableSn, &tableSnMem, &order,
           &order0, &order1, &order2, &qual, &qual0, &qual1,
           &qual2, &arrMem, &countPr, &dupsPr, &countDc,
-          &dupsDc, &countSn, &dupsSn, &errCount, verbose);
+          &dupsDc, &countSn, &dupsSn, &errCount, sortOpt,
+          verbose);
       else
         count = readSAM(in, gz, line, &aln, readName,
           &totalLen, &unmapped, &paired, &single,
@@ -5521,7 +5525,8 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
           &tableMem, &tableSn, &tableSnMem, &order,
           &order0, &order1, &order2, &qual, &qual0, &qual1,
           &qual2, &arrMem, &countPr, &dupsPr, &countDc,
-          &dupsDc, &countSn, &dupsSn, &errCount, verbose);
+          &dupsDc, &countSn, &dupsSn, &errCount, sortOpt,
+          verbose);
 
       // log counts
       if (verbose)
@@ -5699,7 +5704,7 @@ void getArgs(int argc, char** argv) {
   bool singleOpt = false, extendOpt = false,
     avgExtOpt = false, atacOpt = false, atacAdj = true,
     gzOut = false, qvalOpt = false, dupsOpt = false,
-    peaksOpt = true, peaksOnly = false;
+    peaksOpt = true, peaksOnly = false, sortOpt = true;
   bool verbose = false;
 
   // parse argv
@@ -5732,6 +5737,7 @@ void getArgs(int argc, char** argv) {
       case DUPSFILE: dupsFile = optarg; break;
       case NOPEAKS: peaksOpt = false; break;
       case PEAKSONLY: peaksOnly = true; break;
+      case SORTOPT: sortOpt = false; break;
       case VERBOSE: verbose = true; break;
       case VERSOPT: printVersion(); break;
       case HELP: usage(); break;
@@ -5788,7 +5794,7 @@ void getArgs(int argc, char** argv) {
     avgExtOpt, minMapQ, xcount, xchrList, xFile, pqvalue,
     qvalOpt, minLen, maxGap, minAUC, asDiff,
     atacOpt, atacLen5, atacLen3, atacAdj, dupsOpt,
-    dupsFile, peaksOpt, peaksOnly, verbose);
+    dupsFile, peaksOpt, peaksOnly, sortOpt, verbose);
 }
 
 /* int main()
