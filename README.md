@@ -113,7 +113,7 @@ Here is an overview of the method used by Genrich to identify peaks (Fig. 1):
 
 ### Alignment parsing<a name="alignment"></a>
 
-Genrich analyzes paired-end reads aligned to a reference genome.  It correctly infers full fragments as spanning between the 5' ends of two properly paired alignments.  By default, it does not consider unpaired alignments, although there are three options for keeping such alignments, as described [here](#unpaired).
+Genrich analyzes paired-end reads aligned to a reference genome.  It correctly infers full fragments as spanning between the 5' ends of two properly paired alignments.  By default, it does **not** consider unpaired alignments (including those from single-end reads), although there are three options for keeping such alignments, as described [here](#unpaired).
 
 An alternative analysis mode for ATAC-seq is also provided by Genrich, as described [here](#atacseq).
 
@@ -163,9 +163,9 @@ Genrich calls peaks for multiple replicates collectively.  First, it analyzes th
   -t  <file>       Input SAM/BAM file(s) for experimental sample(s)
 ```
 * Genrich analyzes alignment files in [SAM/BAM format](https://samtools.github.io/hts-specs/SAMv1.pdf).  SAM files must have a header.
+* The SAM/BAM files must be sorted by queryname (via `samtools sort -n`).
 * SAM/BAM files for [multiple replicates](#replicate) can be specified, comma-separated (or space-separated, in quotes).
 * Multiple SAM/BAM files for a single replicate should be combined in advance via `samtools merge`.
-* The SAM/BAM files must be sorted by queryname (via `samtools sort -n`).
 * Genrich reads from `stdin` with `-t -`.
 * This file need not be specified when peak-calling directly from a log file previously produced by Genrich ([`-P` option](#pparam)).
 <br><br>
@@ -375,7 +375,7 @@ Unpaired alignments can be analyzed with `-y`, though only one interval, centere
 
 By default, Genrich centers the intervals at the ends of the reads/fragments, adjusted *forward* by 5bp to account for the Tn5 transposase occupancy.  That is, for the 5' ends of fragments (or for reads aligning in a normal orientation), the position is increased by +5, and for the 3' ends of fragments (or for reads aligning in a reverse-complement orientation), the position is adjusted by -5.  To avoid this position adjustment (e.g. for DNase-seq), one can use `-D`.
 
-To get a BED file of cut sites, one can run `-d 1 -b <file>`.  For full fragments, when the two cut site intervals overlap, they are merged into a single interval.
+For full fragments, when the two cut site intervals overlap, they are merged into a single interval.  To get a BED file of cut sites, one can run `-d 1 -b <file>`.
 
 The remainder of the peak-calling process (calculating pileups and significance values) is identical to the [default analysis mode](#method).  Note that the interval lengths (*not* the fragment lengths) are used to sum the total sequence information for the calculation of [control/background pileup values](#pileup).
 <br><br>
@@ -437,6 +437,12 @@ The remainder of the peak-calling process (calculating pileups and significance 
 * When selected, all output files are gzip-compressed.
 <br><br>
 
+```
+  -S               Option to skip sort order check
+```
+* When selected, Genrich does not verify that the sort order of the input SAM/BAM file is queryname, even though the file is still parsed under that assumption.  This is a convenience option, to be used only by those who understand the consequences.
+<br><br>
+
 Other options:
 ```
   -v/--verbose     Option to print status updates/counts to stderr
@@ -446,7 +452,7 @@ Other options:
 
 ### Full analysis example<a name="example"></a>
 
-A [sequencing run](https://www.ncbi.nlm.nih.gov/sra/SRX2717911[accn]) was downloaded from SRA.  Its reads were adapter-trimmed by [NGmerge](https://github.com/jsh58/NGmerge) and aligned to the human genome (hg19) by [Bowtie2](http://bowtie-bio.sourceforge.net/bowtie2/manual.shtml) with `-k 20`.  The resulting alignment file `SRR5427886.bam` was analyzed by Genrich with the options to remove PCR duplicates (`-r`) and to keep unpaired alignments, extended to the average fragment length (`-x`).  All alignments to chrM and chrY were discarded (`-e chrM,chrY`), as well as alignments to two sets of excluded intervals: regions of 'N' homopolymers in the hg19 genome (produced by [`findNs.py`](https://github.com/jsh58/Genrich/blob/master/findNs.py)) and [high mappability regions](http://hgdownload.cse.ucsc.edu/goldenPath/hg19/encodeDCC/wgEncodeMapability/wgEncodeDukeMapabilityRegionsExcludable.bed.gz) (`-E hg19_Ns.bed,wgEncodeDukeMapabilityRegionsExcludable.bed.gz`).  There was no control sample.  Peaks were called using a maximum *q*-value of 0.05 (`-q 0.05`) and a minimum AUC of 20.0 (`-a 20.0`).
+A [sequencing run](https://www.ncbi.nlm.nih.gov/sra/SRX2717911[accn]) was downloaded from SRA.  Its reads were adapter-trimmed by [NGmerge](https://github.com/jsh58/NGmerge) and aligned to the human genome (hg19) by [Bowtie2](http://bowtie-bio.sourceforge.net/bowtie2/manual.shtml) with `-k 20`.  The SAM alignments from bowtie2 were piped through [SAMtools](https://www.htslib.org/doc/samtools.html) to sort them by queryname and convert the file to the BAM format.  The resulting alignment file `SRR5427886.bam` was analyzed by Genrich with the options to remove PCR duplicates (`-r`) and to keep unpaired alignments, extended to the average fragment length (`-x`).  All alignments to chrM and chrY were discarded (`-e chrM,chrY`), as well as alignments to two sets of excluded intervals: regions of 'N' homopolymers in the hg19 genome (produced by [`findNs.py`](https://github.com/jsh58/Genrich/blob/master/findNs.py)) and [high mappability regions](http://hgdownload.cse.ucsc.edu/goldenPath/hg19/encodeDCC/wgEncodeMapability/wgEncodeDukeMapabilityRegionsExcludable.bed.gz) (`-E hg19_Ns.bed,wgEncodeDukeMapabilityRegionsExcludable.bed.gz`).  There was no control sample.  Peaks were called using a maximum *q*-value of 0.05 (`-q 0.05`) and a minimum AUC of 20.0 (`-a 20.0`).
 ```
 $ ./Genrich  -t SRR5427886.bam  -o SRR5427886.narrowPeak  \
   -f SRR5427886.log  -r  -x  -q 0.05  -a 20.0  -v  \
