@@ -4,9 +4,9 @@
 
   Finding sites of enrichment from genome-wide assays.
 
-  Version 0.5_dev
+  Version 0.6
 */
-#define VERSION     "0.5_dev"
+#define VERSION     "0.6"
 
 // macros
 #define MAX(a, b) ((a) > (b) ? (a) : (b))

@@ -4,7 +4,7 @@
 
   Finding sites of enrichment from genome-wide assays.
 
-  Version 0.5_dev
+  Version 0.6
 */
 
 #include <stdio.h>
