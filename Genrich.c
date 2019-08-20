@@ -3194,10 +3194,10 @@ void processAlns(char* qname, Aln* aln, int alnLen,
         (*orphan)++;  // incomplete paired alignment
     } else if (singleOpt && ! pair) {
       // update best scores of unpaired alns
-      if (a->first && scoreR1 < a->score) {
+      if (a->first && scoreR1 <= a->score) {
         scoreR1 = a->score;
         singleR1 = true;
-      } else if (! a->first && scoreR2 < a->score) {
+      } else if (! a->first && scoreR2 <= a->score) {
         scoreR2 = a->score;
         singleR2 = true;
       }
