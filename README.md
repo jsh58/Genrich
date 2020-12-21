@@ -527,6 +527,16 @@ In verbose mode, Genrich may print one or more warnings to `stderr`:
 Genrich runs very quickly but uses a considerable amount of memory.  For starters, it requires 3 bytes for every base-pair of the reference genome, i.e. ~9GB for a human sample.  The number of input files has little effect on memory, but certain analysis options (especially the option to remove PCR duplicates) can greatly increase the memory usage, particularly with large SAM/BAM input files.  See [above](#example) for an example.
 
 Genrich is not multi-threaded.
+
+### Using Genrich with GNU Parallel<a name="Parallel"></a>
+
+* Peak-calling directly from a *large* log file (`-P`) can be profitably spread across multiple cores using [GNU Parallel](https://www.gnu.org/software/parallel/), taking advantage of Genrich's understanding of '-' to mean `stdin` as a value for `-f`, and `stdout` as a value for `-o`.
+
+For example, the following will keep busy up to 80 simultaneous Genrich jobs at a time, with each processing about 1MB worth of the log:
+
+```
+$ parallel --keep -a SRR5427886.log -j80 --header : --pipepart --block 1M ./Genrich  -P  -f - -o -  -p 0.01  -a 200  -v' > SRR5427886_p01_a200.narrowPeak 
+```
 <br><br>
 
 
