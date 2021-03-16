@@ -4,7 +4,7 @@
 
   Finding sites of enrichment from genome-wide assays.
 
-  Version 0.6
+  Version 0.6.1
 */
 
 #include <stdio.h>
@@ -3556,7 +3556,7 @@ void addHashPr(Read* r, HashAln** table,
       0, 0, table, idx, dupsVerb ? r->name : NULL);
 
     // also add both alignments as singletons to hashtable
-    if (tableSn != NULL) {
+    if (tableSn != NULL && hashSizeSn) {
       checkAndAdd(tableSn, hashSizeSn, a->chrom, a->pos[0],
         true, dupsVerb ? r->name : NULL);
       checkAndAdd(tableSn, hashSizeSn, a->chrom, a->pos[1],
@@ -3680,7 +3680,7 @@ void addHashDc(Read* r, HashAln** table,
         b->strand, table, idx, dupsVerb ? r->name : NULL);
 
       // also add both alignments as singletons to hashtable
-      if (tableSn != NULL) {
+      if (tableSn != NULL && hashSizeSn) {
         if (! j)
           checkAndAdd(tableSn, hashSizeSn, a->chrom, pos,
             a->strand, dupsVerb ? r->name : NULL);
