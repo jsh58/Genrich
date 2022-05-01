@@ -1261,7 +1261,8 @@ void loadBDG(char* line, char** chr, uint32_t* start,
 void callPeaksLog(File in, bool gz, File out, bool gzOut,
     char* line, int xcount, char** xchrList, int xBedLen,
     Bed* xBed, float minPQval, bool qvalOpt, int minLen,
-    int maxGap, float minAUC, bool verbose) {
+    int maxGap, float minAUC, uint64_t genomeLen,
+    bool verbose) {
   // determine index of fields ([pq]-value) to analyze
   int idxQ = -1;
   int idxP = getIdx(in, gz, line, qvalOpt, &idxQ);
@@ -1276,8 +1277,8 @@ void callPeaksLog(File in, bool gz, File out, bool gzOut,
 
   // initialize counting variables
   int count = 0;
-  uint64_t genomeLen = 0;
   uint64_t peakBP = 0;
+  bool genomeOpt = genomeLen == 0;
 
   // initialize peak variables
   float auc = 0.0f;                     // area under the curve (signif.)
@@ -1395,7 +1396,8 @@ void callPeaksLog(File in, bool gz, File out, bool gzOut,
           minAUC, minLen, &peakBP);
         // reset peak variables
         resetVars(&peakStart, &summitVal, &summitLen, &auc);
-        genomeLen += bedPos - subStart; // update genome length
+        if (genomeOpt)
+          genomeLen += bedPos - subStart; // update genome length
       } else
         warn = true;
 
@@ -1412,7 +1414,8 @@ void callPeaksLog(File in, bool gz, File out, bool gzOut,
     start = subStart; // reset start coordinate
 
     // check [pq]-value for significance
-    genomeLen += end - start; // update genome length
+    if (genomeOpt)
+      genomeLen += end - start; // update genome length
     if (pqval > minPQval) {
 
       // interval reaches significance
@@ -1796,18 +1799,19 @@ void saveConst(Pileup* p, uint32_t* size, uint32_t* mem,
  *   lengths divided by total genome length.
  */
 float calcLambda(Chrom* chrom, int chromLen,
-    double fragLen) {
-  uint64_t genomeLen = 0;
-  for (int i = 0; i < chromLen; i++) {
-    Chrom* chr = chrom + i;
-    if (! chr->skip && chr->save) {
-      genomeLen += chr->len;
-      for (int j = 0; j < chr->bedLen; j += 2)
-        genomeLen -= chr->bed[j+1] - chr->bed[j];
+    double fragLen, uint64_t genomeLen) {
+  if (! genomeLen) {
+    for (int i = 0; i < chromLen; i++) {
+      Chrom* chr = chrom + i;
+      if (! chr->skip && chr->save) {
+        genomeLen += chr->len;
+        for (int j = 0; j < chr->bedLen; j += 2)
+          genomeLen -= chr->bed[j+1] - chr->bed[j];
+      }
     }
+    if (! genomeLen)
+      exit(error("", ERRGEN));
   }
-  if (! genomeLen)
-    exit(error("", ERRGEN));
   return fragLen / genomeLen;
 }
 
@@ -1861,8 +1865,9 @@ void saveLambda(Chrom* chr, float lambda) {
  *   pileup as the background lambda value.
  */
 void savePileupNoCtrl(Chrom* chrom, int chromLen,
-    double fragLen, bool verbose) {
-  float lambda = calcLambda(chrom, chromLen, fragLen);
+    double fragLen, uint64_t genomeLen, bool verbose) {
+  float lambda = calcLambda(chrom, chromLen, fragLen,
+    genomeLen);
   if (verbose)
     fprintf(stderr, "  Background pileup value: %f\n",
       lambda);
@@ -2029,10 +2034,10 @@ float calcFactor(Chrom* chrom, int chromLen,
  *   'diff' arrays and background lambda value.
  */
 void savePileupCtrl(Chrom* chrom, int chromLen,
-    double fragLen, bool verbose) {
+    double fragLen, uint64_t genomeLen, bool verbose) {
 
   // calculate background lambda value
-  float lambda = calcLambda(chrom, chromLen, fragLen);
+  float lambda = calcLambda(chrom, chromLen, fragLen, genomeLen);
   if (verbose)
     fprintf(stderr, "  Background pileup value: %f\n", lambda);
 
@@ -5220,7 +5225,7 @@ int loadBED(char* xFile, char* line, Bed** xBed) {
 void findPeaksOnly(char* logFile, char* outFile,
     bool gzOut, int xcount, char** xchrList, char* xFile,
     float pqvalue, bool qvalOpt, int minLen, int maxGap,
-    float minAUC, bool verbose) {
+    float minAUC, uint64_t genomeLen, bool verbose) {
 
   // save genomic regions to exclude
   char* line = (char*) memalloc(MAX_SIZE);
@@ -5240,7 +5245,7 @@ void findPeaksOnly(char* logFile, char* outFile,
   // call peaks
   callPeaksLog(in, gz, out, gzOut, line, xcount, xchrList,
     xBedLen, xBed, pqvalue, qvalOpt, minLen, maxGap,
-    minAUC, verbose);
+    minAUC, genomeLen, verbose);
 
   // free memory
   if (xcount) {
@@ -5369,13 +5374,13 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
     float asDiff, bool atacOpt, int atacLen5, int atacLen3,
     bool atacAdj, bool dupsOpt, char* dupsFile,
     bool peaksOpt, bool peaksOnly, bool sortOpt,
-    bool verbose) {
+    uint64_t genomeLen, bool verbose) {
 
   // option to call peaks only, from already produced log file
   if (peaksOnly) {
     findPeaksOnly(logFile, outFile, gzOut, xcount,
       xchrList, xFile, pqvalue, qvalOpt, minLen, maxGap,
-      minAUC, verbose);
+      minAUC, genomeLen, verbose);
     return;
   }
 
@@ -5455,7 +5460,7 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
             fprintf(stderr, "- control file #%d not provided -\n",
               sample);
           savePileupNoCtrl(chrom, chromLen, fragLen,
-            verbose);
+            genomeLen, verbose);
           break;
         }
       }
@@ -5540,7 +5545,8 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
 
       // save pileup values
       if (i)
-        savePileupCtrl(chrom, chromLen, fragLen, verbose);
+        savePileupCtrl(chrom, chromLen, fragLen, genomeLen,
+          verbose);
       else
         fragLen = savePileupExpt(chrom, chromLen);
 
@@ -5698,6 +5704,7 @@ void getArgs(int argc, char** argv) {
     *logFile = NULL, *pileFile = NULL, *bedFile = NULL,
     *xFile = NULL, *dupsFile = NULL;
   char* xchrom = NULL;
+  uint64_t genomeLen = 0;
   int extend = 0, minMapQ = 0, minLen = DEFMINLEN,
     maxGap = DEFMAXGAP, atacLen5 = DEFATAC, atacLen3 = 0;
   float asDiff = 0.0f, pqvalue = DEFPVAL, minAUC = DEFAUC;
@@ -5738,6 +5745,7 @@ void getArgs(int argc, char** argv) {
       case NOPEAKS: peaksOpt = false; break;
       case PEAKSONLY: peaksOnly = true; break;
       case SORTOPT: sortOpt = false; break;
+      case GENOMELEN: genomeLen = getInt(optarg); break;
       case VERBOSE: verbose = true; break;
       case VERSOPT: printVersion(); break;
       case HELP: usage(); break;
@@ -5776,6 +5784,8 @@ void getArgs(int argc, char** argv) {
     exit(error("", ERRMINAUC));
   if (asDiff < 0.0f)
     exit(error("", ERRASDIFF));
+  if (genomeLen < 0)
+    exit(error("", ERRGENLEN));
 
   // save list of chromosomes to exclude
   int xcount = 0;
@@ -5794,7 +5804,8 @@ void getArgs(int argc, char** argv) {
     avgExtOpt, minMapQ, xcount, xchrList, xFile, pqvalue,
     qvalOpt, minLen, maxGap, minAUC, asDiff,
     atacOpt, atacLen5, atacLen3, atacAdj, dupsOpt,
-    dupsFile, peaksOpt, peaksOnly, sortOpt, verbose);
+    dupsFile, peaksOpt, peaksOnly, sortOpt, genomeLen,
+    verbose);
 }
 
 /* int main()

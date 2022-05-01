@@ -53,7 +53,7 @@ enum bedGraph { CHR, START, END };
 #define SQRTLOG     0.944456478248262   // sqrt(log(2.44))
 
 // command-line options
-#define OPTIONS     "ht:c:o:f:k:b:zyw:xjd:De:E:m:s:p:q:a:l:g:rR:XPSvV"
+#define OPTIONS     "ht:c:o:f:k:b:zyw:xjd:De:E:m:s:p:q:a:l:g:rR:XPSL:vV"
 #define HELP        'h'
 #define INFILE      't'
 #define CTRLFILE    'c'
@@ -82,6 +82,7 @@ enum bedGraph { CHR, START, END };
 #define NOPEAKS     'X'
 #define PEAKSONLY   'P'
 #define SORTOPT     'S'
+#define GENOMELEN   'L'
 #define VERBOSE     'v'
 #define VERSOPT     'V'
 
@@ -101,7 +102,7 @@ enum errCode { ERRFILE, ERROPEN, ERROPENW, ERRCLOSE,
   ERRAUX, ERRBED, ERRLINEAR, ERRINDEX, ERRLOGIDX, ERRLOG,
   ERRISSUE, ERRALNS, ERRPILE, ERRPVAL, ERRARR, ERRARRC,
   ERRDF, ERRALNTYPE, ERRUNGET, ERRGZIP, ERRNAME, ERRCIGAR,
-  DEFERR
+  ERRGENLEN, DEFERR
 };
 const char* errMsg[] = { "Need input/output files",
   ": cannot open file for reading",
@@ -148,6 +149,7 @@ const char* errMsg[] = { "Need input/output files",
   "Cannot pipe in gzip-compressed file (use zcat instead)",
   ": output filename cannot start with '-'",
   ": unknown Op in CIGAR",
+  "Genome length must be a positive int",
   "Unknown error"
 };
 
