@@ -339,7 +339,8 @@ float* collectPval(Hash** table, uint64_t** pEnd,
  * Control q-value calculations.
  */
 void computeQval(Chrom* chrom, int chromLen,
-    uint64_t genomeLen, int n, bool verbose) {
+    uint64_t genomeLen, bool genomeOpt, int n,
+    bool verbose) {
 
   // create "pileup" arrays for q-values
   for (int i = 0; i < chromLen; i++) {
@@ -362,7 +363,7 @@ void computeQval(Chrom* chrom, int chromLen,
   float* pVal = collectPval(table, &pEnd, pLen, &checkLen);
 
   // check that collected p-value lengths match genomeLen
-  if (checkLen != genomeLen) {
+  if (genomeOpt && checkLen != genomeLen) {
     char msg[MAX_ALNS];
     sprintf(msg, "Genome length (%ld) does not match p-value length (%ld)",
       genomeLen, checkLen);
@@ -1064,7 +1065,8 @@ int callPeaks(File out, File log, bool logOpt, bool gzOut,
 void findPeaks(File out, File log, bool logOpt, bool gzOut,
     Chrom* chrom, int chromLen, int* sample,
     float minPQval, bool qvalOpt, int minLen, int maxGap,
-    float minAUC, bool peaksOpt, bool verbose) {
+    float minAUC, bool peaksOpt, uint64_t genomeLen,
+    bool verbose) {
 
   // calculate combined p-values for multiple replicates
   if (*sample > 1) {
@@ -1074,13 +1076,16 @@ void findPeaks(File out, File log, bool logOpt, bool gzOut,
 
   // calculate genome length (only chroms that are not
   //   skipped and have had p-values calculated)
-  uint64_t genomeLen = 0;
-  for (int i = 0; i < chromLen; i++) {
-    Chrom* chr = chrom + i;
-    if (! chr->skip && chr->pval[*sample - 1] != NULL) {
-      genomeLen += chr->len;
-      for (int j = 0; j < chr->bedLen; j += 2)
-        genomeLen -= chr->bed[j+1] - chr->bed[j];
+  bool genomeOpt = false;
+  if (! genomeLen) {
+    genomeOpt = true;
+    for (int i = 0; i < chromLen; i++) {
+      Chrom* chr = chrom + i;
+      if (! chr->skip && chr->pval[*sample - 1] != NULL) {
+        genomeLen += chr->len;
+        for (int j = 0; j < chr->bedLen; j += 2)
+          genomeLen -= chr->bed[j+1] - chr->bed[j];
+      }
     }
   }
 
@@ -1102,8 +1107,8 @@ void findPeaks(File out, File log, bool logOpt, bool gzOut,
 
   // compute q-values
   if (qvalOpt)
-    computeQval(chrom, chromLen, genomeLen, *sample - 1,
-      verbose);
+    computeQval(chrom, chromLen, genomeLen, genomeOpt,
+      *sample - 1, verbose);
 
   // call peaks
   if (peaksOpt) {
@@ -5586,7 +5591,7 @@ void runProgram(char* inFile, char* ctrlFile, char* outFile,
   // find peaks
   findPeaks(out, log, logFile != NULL, gzOut, chrom,
     chromLen, &sample, pqvalue, qvalOpt, minLen,
-    maxGap, minAUC, peaksOpt, verbose);
+    maxGap, minAUC, peaksOpt, genomeLen, verbose);
 
   // free memory
   if (xcount) {
