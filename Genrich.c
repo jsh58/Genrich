@@ -122,6 +122,17 @@ int getInt(char* in) {
   return ans;
 }
 
+/* uint64_t getLong(char*)
+ * Converts the given char* to an uint64_t.
+ */
+uint64_t getLong(char* in) {
+  char* endptr;
+  uint64_t ans = (uint64_t) strtol(in, &endptr, 10);
+  if (*endptr != '\0')
+    exit(error(in, ERRINT));
+  return ans;
+}
+
 /* char* getLine()
  * Reads the next line from a file.
  */
@@ -5750,7 +5761,7 @@ void getArgs(int argc, char** argv) {
       case NOPEAKS: peaksOpt = false; break;
       case PEAKSONLY: peaksOnly = true; break;
       case SORTOPT: sortOpt = false; break;
-      case GENOMELEN: genomeLen = getInt(optarg); break;
+      case GENOMELEN: genomeLen = getLong(optarg); break;
       case VERBOSE: verbose = true; break;
       case VERSOPT: printVersion(); break;
       case HELP: usage(); break;

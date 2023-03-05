@@ -443,6 +443,12 @@ The remainder of the peak-calling process (calculating pileups and significance 
 * When selected, Genrich does not verify that the sort order of the input SAM/BAM file is queryname, even though the file is still parsed under that assumption.  This is a convenience option, to be used only by those who understand the consequences.
 <br><br>
 
+```
+  -L <int>         Set genome length to given value
+```
+* As described [above](#genomelen), Genrich computes the genome length from the header of the SAM/BAM file by default.  With this option, the given value is instead set as the genome length.  This is a convenience option, to be used only by those who understand the consequences.
+<br><br>
+
 Other options:
 ```
   -v/--verbose     Option to print status updates/counts to stderr
