@@ -249,7 +249,7 @@ chr1    894450    894451    40.000000    2.477916    3.499948    1.427253    *
 chr1    894451    894460    41.000000    2.477916    3.541798    1.455938    *
 ```
 * With multiple replicates, this log file lists *p*-values of each replicate, combined *p*-value, *q*-value, and significance for each interval.
-* Note that this file (as well as the `-k` file, below) is called "bedgraph-ish" because it contains multiple `dataValue` fields, which isn't strictly allowed in the [bedGraph format](https://genome.ucsc.edu/goldenpath/help/bedgraph.html).  However, a simple application of `awk` can produce the desired bedgraph files for visualization purposes (see this [awk reference](http://kirste.userpage.fu-berlin.de/chemnet/use/info/gawk/gawk_7.html#SEC57) for a guide to printing specific fields of input records).
+* Note that this file (as well as the `-k` file, below) is called "bedgraph-ish" because it contains multiple `dataValue` fields, which isn't strictly allowed in the [bedGraph format](https://genome.ucsc.edu/goldenpath/help/bedgraph.html).  However, a simple application of `awk` can produce the desired bedgraph files for visualization purposes (see this [awk reference](https://www.tutorialspoint.com/awk/awk_basic_examples.htm) for a guide to printing specific fields of input records).
 * When peak-calling is skipped (`-X`), the significance column is not produced.
 * This file functions as the *input* when peak-calling directly from a log file ([`-P` option](#pparam)).
 <br><br>
