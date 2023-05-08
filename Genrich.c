@@ -4322,10 +4322,12 @@ void checkHeader(char* line, int* chromLen, Chrom** chrom,
         order = field + 3;
       field = strtok(NULL, TAB);
     }
-    // removing trailing '\n'
-    int i;
-    for (i = 0; order[i] != '\n' && order[i] != '\0'; i++) ;
-    order[i] = '\0';
+    if (order != NULL) {
+      // removing trailing '\n'
+      int i;
+      for (i = 0; order[i] != '\n' && order[i] != '\0'; i++) ;
+      order[i] = '\0';
+    }
 
     // sort order must be queryname
     if (sortOpt && (order == NULL
