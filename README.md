@@ -446,7 +446,7 @@ The remainder of the peak-calling process (calculating pileups and significance 
 ```
   -L <int>         Set genome length to given value
 ```
-* As described [above](#genomelen), Genrich computes the genome length from the header of the SAM/BAM file by default.  With this option, the given value is instead set as the genome length.  This is a convenience option, to be used only by those who understand the consequences.
+* As described [above](#genomelen), Genrich computes the genome length from the header of the SAM/BAM file by default.  With this option, the given value is instead set as the genome length.  The given value must be positive; `-L 0` is ignored, and values above `LLONG_MAX` are set to that value.  This is a convenience option, to be used only by those who understand the consequences.
 <br><br>
 
 Other options:

@@ -122,12 +122,12 @@ int getInt(char* in) {
   return ans;
 }
 
-/* uint64_t getLong(char*)
- * Converts the given char* to an uint64_t.
+/* int64_t getLong(char*)
+ * Converts the given char* to an int64_t.
  */
-uint64_t getLong(char* in) {
+int64_t getLong(char* in) {
   char* endptr;
-  uint64_t ans = (uint64_t) strtol(in, &endptr, 10);
+  int64_t ans = (int64_t) strtol(in, &endptr, 10);
   if (*endptr != '\0')
     exit(error(in, ERRINT));
   return ans;
@@ -5723,6 +5723,7 @@ void getArgs(int argc, char** argv) {
     *xFile = NULL, *dupsFile = NULL;
   char* xchrom = NULL;
   uint64_t genomeLen = 0;
+  int64_t genomeLenL = 0;
   int extend = 0, minMapQ = 0, minLen = DEFMINLEN,
     maxGap = DEFMAXGAP, atacLen5 = DEFATAC, atacLen3 = 0;
   float asDiff = 0.0f, pqvalue = DEFPVAL, minAUC = DEFAUC;
@@ -5763,7 +5764,7 @@ void getArgs(int argc, char** argv) {
       case NOPEAKS: peaksOpt = false; break;
       case PEAKSONLY: peaksOnly = true; break;
       case SORTOPT: sortOpt = false; break;
-      case GENOMELEN: genomeLen = getLong(optarg); break;
+      case GENOMELEN: genomeLenL = getLong(optarg); break;
       case VERBOSE: verbose = true; break;
       case VERSOPT: printVersion(); break;
       case HELP: usage(); break;
@@ -5802,8 +5803,10 @@ void getArgs(int argc, char** argv) {
     exit(error("", ERRMINAUC));
   if (asDiff < 0.0f)
     exit(error("", ERRASDIFF));
-  if (genomeLen < 0)
+  if (genomeLenL < 0)
     exit(error("", ERRGENLEN));
+  else if (genomeLenL != 0)
+    genomeLen = (uint64_t) genomeLenL;
 
   // save list of chromosomes to exclude
   int xcount = 0;
